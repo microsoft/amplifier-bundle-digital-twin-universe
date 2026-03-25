@@ -1,0 +1,49 @@
+# Simulating an Amplifier user's experience after making local changes only to
+# amplifier-module-provider-anthropic.
+#
+# Amplifier is installed and run as a user would. amplifier-core continues to
+# come from upstream packaging, while the Anthropic provider is rewritten from
+# GitHub to a mirrored Gitea repo so test-local changes can be observed.
+#
+# Variables (provided at launch via --var):
+#   GITEA_URL              -- Gitea base URL reachable from inside the
+#                             environment (e.g. http://10.0.0.1:10110)
+#   GITEA_TOKEN            -- API token for Gitea
+name: amplifier-user-sim-single-module
+description: >
+  Simulating an Amplifier user's experience after making local changes only to
+  amplifier-module-provider-anthropic
+base:
+  image: ubuntu:24.04
+
+url_rewrites:
+  auth:
+    username: admin
+    token_var: GITEA_TOKEN
+  rules:
+    - match: github.com/microsoft/amplifier-module-provider-anthropic
+      target: ${GITEA_URL}/admin/amplifier-module-provider-anthropic
+
+passthrough:
+  allow_external: true
+
+provision:
+  setup_cmds:
+    - apt-get update && apt-get install -y git curl
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - |
+      export PATH="/root/.local/bin:$PATH"
+      uv tool install -vv git+https://github.com/microsoft/amplifier
+    - |
+      mkdir -p /root/.amplifier
+      cat > /root/.amplifier/settings.yaml << EOF
+      config:
+        providers:
+          - module: provider-anthropic
+            source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@main
+            config:
+              api_key: $ANTHROPIC_API_KEY
+      EOF
+    - amplifier --version
+    - mkdir -p /home/user/project
+

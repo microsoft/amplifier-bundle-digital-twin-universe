@@ -1,0 +1,111 @@
+# Profile for simulating usage of an application that integrates with
+# email sending, collaborative document editing, and user authentication.
+#
+# Mailpit captures outbound email so the consumer can verify
+# message content via its REST API.
+#
+# Outline provides a self-hosted wiki/docs platform (Google Docs-like)
+# with a full REST API for document CRUD. It requires Postgres, Redis,
+# and an OIDC provider -- all included here.
+#
+# mock-oauth2-server provides a zero-config OIDC provider. At login,
+# type any username and optional JSON claims -- no pre-registered users needed.
+
+name: productivity-app
+description: >
+  Email, document editing, and auth environment. Mailpit for SMTP capture,
+  Outline wiki for collaborative docs, mock-oauth2-server for OIDC login,
+  plus Postgres and Redis.
+
+services:
+  mailpit:
+    image: axllent/mailpit:latest
+    env:
+      # https://mailpit.axllent.org/docs/configuration/runtime-options/#general
+      MP_DATABASE: /data/mailpit.db        # Persist messages to disk; default is a temp file deleted on exit
+      MP_MAX_MESSAGES: "5000"              # Cap stored messages (default 500); oldest auto-deleted beyond this
+      # https://mailpit.axllent.org/docs/configuration/runtime-options/#smtp-server
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"         # Accept any SMTP username/password including none, so consumers don't need credentials
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"     # Allow PLAIN/LOGIN auth without STARTTLS; needed since the DTU has no TLS certs
+    access:
+      web:
+        port: 8025
+        label: "Mailpit (email viewer)"
+      smtp:
+        port: 1025
+        label: "SMTP endpoint"
+
+  postgres:
+    image: postgres:16-alpine
+    env:
+      # https://github.com/docker-library/docs/blob/master/postgres/README.md#postgres_user
+      POSTGRES_USER: outline              # Superuser name; Outline's DATABASE_URL references this user
+      # https://github.com/docker-library/docs/blob/master/postgres/README.md#postgres_password
+      POSTGRES_PASSWORD: outline-dev-password  # Required by the image; sets the superuser password
+      # https://github.com/docker-library/docs/blob/master/postgres/README.md#postgres_db
+      POSTGRES_DB: outline                # Default database created on first start; must match DATABASE_URL
+
+  redis:
+    image: redis:7-alpine
+
+  mock-oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:2.1.10
+    env:
+      # https://github.com/navikt/mock-oauth2-server#configuration
+      SERVER_PORT: "8080"                  # HTTP listen port (default 8080); explicit here to match the access block
+      # https://github.com/navikt/mock-oauth2-server#json_config
+      JSON_CONFIG: '{"interactiveLogin": true, "httpServer": "NettyWrapper"}'  # interactiveLogin shows a login form; NettyWrapper is the production-grade HTTP backend
+    access:
+      web:
+        port: 8080
+        label: "Mock OIDC (login provider)"
+
+  outline:
+    image: docker.getoutline.com/outlinewiki/outline:latest
+    env:
+      # https://github.com/outline/outline/blob/main/.env.sample#L27
+      SECRET_KEY: "generated-at-launch"    # Hex-encoded 32-byte key for session encryption; must be unique per install
+      # https://github.com/outline/outline/blob/main/.env.sample#L31
+      UTILS_SECRET: "generated-at-launch"  # Separate secret for utility functions (e.g. API key hashing)
+      # https://github.com/outline/outline/blob/main/.env.sample#L43
+      DATABASE_URL: postgres://outline:outline-dev-password@postgres:5432/outline  # Postgres connection string; required minimum
+      # https://docs.getoutline.com/s/hosting/doc/redis-LGM4BFXYp4
+      REDIS_URL: redis://redis:6379        # Redis connection string; required for caching and websocket pub/sub
+      # https://github.com/outline/outline/blob/main/.env.sample#L5
+      URL: http://outline:3000             # Canonical public URL; used to generate links in emails and API responses
+      # https://github.com/outline/outline/blob/main/.env.sample#L9
+      PORT: "3000"                         # HTTP listen port; must match the access block and URL above
+      # https://github.com/outline/outline/blob/main/.env.sample#L52
+      PGSSLMODE: disable                   # Skip SSL for the Postgres connection; safe here since DB is on the same network
+      # https://docs.getoutline.com/s/hosting/doc/file-storage-N4M0T6Ypu7
+      FILE_STORAGE: local                  # Store uploads on disk instead of S3
+      # https://github.com/outline/outline/blob/main/.env.sample#L83
+      FILE_STORAGE_LOCAL_ROOT_DIR: /var/lib/outline/data  # Parent directory for local file uploads when FILE_STORAGE=local
+      # https://docs.getoutline.com/s/hosting/doc/oidc-8CPBm6uC0I
+      OIDC_CLIENT_ID: outline              # OAuth2 client ID registered with the OIDC provider
+      OIDC_CLIENT_SECRET: mock-secret      # OAuth2 client secret; mock-oauth2-server accepts any value
+      OIDC_AUTH_URI: http://mock-oidc:8080/default/authorize   # Authorization endpoint on the mock OIDC server
+      OIDC_TOKEN_URI: http://mock-oidc:8080/default/token      # Token exchange endpoint on the mock OIDC server
+      OIDC_USERINFO_URI: http://mock-oidc:8080/default/userinfo  # UserInfo endpoint for fetching profile claims
+      # https://github.com/outline/outline/blob/main/.env.sample#L172
+      OIDC_DISPLAY_NAME: "Dev Login"       # Label shown on the Outline login button
+      # https://github.com/outline/outline/blob/main/.env.sample#L175
+      OIDC_SCOPES: "openid profile email"  # OAuth2 scopes requested; openid is required, profile/email provide user info
+    access:
+      web:
+        port: 3000
+        label: "Outline (docs wiki)"
+
+passthrough:
+  allow_external: false
+
+# The consumer deploys their application into the DTU and wires it
+# to the services above (e.g. SMTP_HOST=mailpit, DOCS_URL=http://outline:3000).
+# provision:
+#   git:
+#     - name: my-app
+#       source: https://github.com/myorg/my-app.git
+#       ref: main
+#   setup_cmds:
+#     - cd my-app && npm install && npm run build
+#     - npm start

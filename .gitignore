@@ -1,0 +1,40 @@
+# Private settings
+.env
+*.local
+*.local.*
+
+# OS files
+**/.DS_Store
+**/Thumbs.db
+
+# Dependencies, build, test, and other generated files
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.cache
+*.egg
+*.egg-info
+.pytest_cache
+.coverage
+htmlcov/
+.tox/
+.ruff_cache
+dist/
+build/
+
+# Logs
+logs/
+*.log
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# uv
+uv.lock

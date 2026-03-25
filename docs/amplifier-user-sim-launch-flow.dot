@@ -1,0 +1,70 @@
+digraph amplifier_user_sim_launch_flow {
+    rankdir=TB
+    label="amplifier-bundle-digital-twin-universe launch flow: amplifier-user-sim"
+    labelloc=t
+    fontname="Helvetica"
+    fontsize=14
+    node [shape=box, style="rounded,filled", fillcolor="#e8f0fe", fontname="Helvetica"]
+    edge [fontname="Helvetica", fontsize=10]
+
+    subgraph cluster_pre {
+        label="Host pre-launch setup"
+        style=dashed
+        color="#6c757d"
+        fontcolor="#6c757d"
+        fontname="Helvetica"
+
+        create_gitea [label="Create Gitea\namplifier-gitea create", fillcolor="#f8d7da"]
+        mirror_core [label="Mirror amplifier-core\nfrom GitHub into Gitea", fillcolor="#f8d7da"]
+        mirror_provider [label="Mirror amplifier-module-provider-anthropic\nfrom GitHub into Gitea", fillcolor="#f8d7da"]
+        push_core [label="Push local amplifier-core changes\nto Gitea main", fillcolor="#f8d7da"]
+        push_provider [label="Push local provider changes\nto Gitea main", fillcolor="#f8d7da"]
+    }
+
+    profile [label="amplifier-user-sim.yaml", shape=note, fillcolor="#fff3cd"]
+    vars [label="--var GITEA_URL=...\n--var GITEA_TOKEN=...", shape=note, fillcolor="#fff3cd"]
+
+    load_profile [label="Load profile\n+ substitute variables"]
+    create_container [label="Create Incus container\nbase image: ubuntu:24.04"]
+    detect_gateway [label="Detect host gateway IP\nrewrite localhost / 127.0.0.1 vars"]
+    setup_proxy [label="Install mitmproxy\nrewrite provider GitHub URL to Gitea"]
+    setup_pypi [label="Clone amplifier-core from Gitea on the host\nbuild wheel + push to local pypiserver"]
+    write_env [label="Write environment variables\nHTTP(S)_PROXY, UV_EXTRA_INDEX_URL,\nPIP_EXTRA_INDEX_URL, ANTHROPIC_API_KEY"]
+    run_setup [label="Run provision.setup_cmds\ninstall git/curl/uv,\ninstall Amplifier,\nwrite settings.yaml,\nvalidate, create workspace"]
+    ready [label="Environment ready\nAmplifier installed in /root/.local/share/uv/tools/amplifier", shape=ellipse, fillcolor="#d4edda"]
+
+    subgraph cluster_post {
+        label="Post-launch usage"
+        style=dashed
+        color="#6c757d"
+        fontcolor="#6c757d"
+        fontname="Helvetica"
+
+        exec_shell [label="Exec into the environment\namplifier-digital-twin exec <id>", fillcolor="#f8d7da"]
+        run_amplifier [label="Run Amplifier from /home/user/project", fillcolor="#f8d7da"]
+        iterate [label="Push new repo changes to Gitea\nand relaunch for a fresh environment", fillcolor="#f8d7da"]
+    }
+
+    create_gitea -> mirror_core
+    create_gitea -> mirror_provider
+    mirror_core -> push_core
+    mirror_provider -> push_provider
+
+    push_core -> load_profile [label="amplifier-digital-twin launch"]
+    push_provider -> load_profile
+    profile -> load_profile
+    vars -> load_profile
+
+    load_profile -> create_container
+    create_container -> detect_gateway
+    detect_gateway -> setup_proxy
+    setup_proxy -> setup_pypi
+    setup_pypi -> write_env
+    write_env -> run_setup
+    run_setup -> ready
+
+    ready -> exec_shell [style=dashed]
+    exec_shell -> run_amplifier [style=dashed]
+    ready -> iterate [style=dashed]
+    iterate -> load_profile [style=dashed, label="launch again"]
+}

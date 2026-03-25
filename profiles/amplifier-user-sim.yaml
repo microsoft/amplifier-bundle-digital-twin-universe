@@ -1,0 +1,79 @@
+# Simulating an Amplifier user's experience after making local changes to amplifier-core and amplifier-module-provider-anthropic
+# Amplifier is installed and run as a user would.
+# 
+# amplifier-core is typically installed by amplifier from PyPI so we override with our built wheel.
+# amplifier-module-provider-anthropic is served through an external Gitea instance
+# (managed via amplifier-bundle-gitea) while all other dependencies come from upstream GitHub and PyPI.
+#
+#
+# Variables (provided at launch via --var):
+#   GITEA_URL              -- Gitea base URL reachable from inside the
+#                             environment (e.g. http://10.0.0.1:10110)
+#   GITEA_TOKEN            -- API token for Gitea
+name: amplifier-user-sim
+description: >
+  Simulating an Amplifier user's experience after making local changes to amplifier-core and amplifier-module-provider-anthropic
+base:
+  image: ubuntu:24.04
+
+# URL rewriting rules.
+url_rewrites:
+  auth:
+    username: admin
+    token_var: GITEA_TOKEN
+  rules:
+    - match: github.com/microsoft/amplifier-module-provider-anthropic
+      target: ${GITEA_URL}/admin/amplifier-module-provider-anthropic
+
+# PyPI overrides.
+#
+# A HTTPS proxy intercepts package-index requests for
+# these packages and redirects them to the index in Digital Twin that is hosted the modified version.
+pypi_overrides:
+  packages:
+    - name: amplifier-core
+      wheel_from_git:
+        repo: ${GITEA_URL}/admin/amplifier-core.git
+        ref: main
+        username: admin
+        token_var: GITEA_TOKEN
+        build_cmd: uv run --with maturin maturin build --release
+        wheel_glob: target/wheels/amplifier_core-*.whl
+
+passthrough:
+  allow_external: true
+  services:
+    - name: anthropic
+      key_env: ANTHROPIC_API_KEY
+
+provision:
+  setup_cmds:
+    # Core tooling
+    - apt-get update && apt-get install -y git curl
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    # Install Amplifier. amplifier-core is resolved from the local
+    # simple index / pypiserver override; everything else comes from
+    # the normal upstream GitHub / package index sources.
+    - |
+      export PATH="/root/.local/bin:$PATH"
+      uv tool install -vv git+https://github.com/microsoft/amplifier
+
+    # Configure Amplifier provider so the first-run wizard is skipped.
+    # $ANTHROPIC_API_KEY is available via passthrough env forwarding.
+    - |
+      mkdir -p /root/.amplifier
+      cat > /root/.amplifier/settings.yaml << EOF
+      config:
+        providers:
+          - module: provider-anthropic
+            source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@main
+            config:
+              api_key: $ANTHROPIC_API_KEY
+      EOF
+
+    # Validation
+    - amplifier --version
+
+    # Workspace -- empty dir where a user can launch Amplifier
+    - mkdir -p /home/user/project

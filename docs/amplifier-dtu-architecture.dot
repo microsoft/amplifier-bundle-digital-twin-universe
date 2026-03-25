@@ -1,0 +1,67 @@
+digraph dtu_architecture {
+    rankdir=TB
+    label="amplifier-bundle-digital-twin-universe"
+    labelloc=t
+    fontname="Helvetica"
+    fontsize=14
+    compound=true
+    node [shape=box, style="rounded,filled", fillcolor="#e8f0fe", fontname="Helvetica"]
+    edge [fontname="Helvetica", fontsize=10]
+
+    consumer [label="Consumer"]
+    profile [label="profile.yaml", shape=note, fillcolor="#fff8e1"]
+    exec_box [label="Exec", fillcolor="#f8d7da"]
+    observe_box [label="Observe", fillcolor="#f8d7da"]
+    simulate_box [label="Simulate", fillcolor="#f8d7da"]
+
+    subgraph cluster_dtu {
+        label="Digital Twin Universe  (on-demand, isolated)"
+        style="rounded,dashed"
+        color="#666666"
+        fontname="Helvetica"
+        fontsize=11
+
+        app [label="Application / system under test\n(clone, install, run)"]
+
+        subgraph cluster_catalog {
+            label="Profile-defined internals"
+            style="rounded,filled"
+            color="#999999"
+            fillcolor="#f5f5f5"
+            fontname="Helvetica"
+            fontsize=9
+
+            svc_a [label="Mock\nService"]
+            svc_b [label="Local dependency\nsource"]
+            svc_c [label="Other simulated\ninfrastructure"]
+            { rank=same; svc_a; svc_b; svc_c }
+        }
+
+        app [ordering=out]
+        app -> svc_a [label="calls"]
+        app -> svc_b [label="calls"]
+        app -> svc_c [style=invis]
+    }
+
+    external [label="External services\n(LLM, OAuth, Git hosting,\npackage registries, ...)", shape=cylinder, fillcolor="#f5f5f5"]
+
+    { rank=same; consumer; profile }
+    { rank=same; exec_box; observe_box; simulate_box }
+
+    // Profile defines what the DTU contains
+    profile -> app [label="defines", style=dashed, lhead=cluster_dtu]
+
+    // Meta: lifecycle management (targets DTU cluster boundary)
+    consumer -> app [label="Lifecycle:\ncreate / destroy", style=dashed, lhead=cluster_dtu]
+
+    // Simulation: consumer interacts with DTU like a real user
+    consumer -> exec_box
+    consumer -> observe_box
+    consumer -> simulate_box
+    exec_box -> app [lhead=cluster_dtu]
+    observe_box -> app [lhead=cluster_dtu]
+    simulate_box -> app [lhead=cluster_dtu]
+
+    // Passthrough: the environment can reach external services when allowed
+    app -> external [label="passthrough\n(credentials forwarded)", style=dotted, color="#888888", fontcolor="#888888", ltail=cluster_dtu]
+}
