@@ -74,23 +74,23 @@
 <title>consumer&#45;&gt;app</title>
 <path fill="none" stroke="black" stroke-dasharray="5,2" d="M231.13,-311.25C255.65,-303.65 284.13,-290.11 299,-266.44 309.5,-249.72 305.49,-230.32 296.34,-212.55"/>
 <polygon fill="black" stroke="black" points="299.13,-210.38 291.13,-203.43 293.05,-213.85 299.13,-210.38"/>
-<text text-anchor="middle" x="343.5" y="-251.44" font-family="Helvetica,sans-Serif" font-size="10.00">Lifecycle:</text>
-<text text-anchor="middle" x="343.5" y="-240.44" font-family="Helvetica,sans-Serif" font-size="10.00">create / destroy</text>
+<text text-anchor="middle" x="356.5" y="-251.44" font-family="Helvetica,sans-Serif" font-size="10.00">Lifecycle:</text>
+<text text-anchor="middle" x="356.5" y="-240.44" font-family="Helvetica,sans-Serif" font-size="10.00">launch / destroy / etc</text>
 </g>
 <!-- profile -->
 <g id="node2" class="node">
 <title>profile</title>
-<polygon fill="#fff8e1" stroke="black" points="482,-339.44 390,-339.44 390,-303.44 488,-303.44 488,-333.44 482,-339.44"/>
-<polyline fill="none" stroke="black" points="482,-339.44 482,-333.44 "/>
-<polyline fill="none" stroke="black" points="488,-333.44 482,-333.44 "/>
-<text text-anchor="middle" x="439" y="-317.74" font-family="Helvetica,sans-Serif" font-size="14.00">profile.yaml</text>
+<polygon fill="#fff8e1" stroke="black" points="508,-339.44 416,-339.44 416,-303.44 514,-303.44 514,-333.44 508,-339.44"/>
+<polyline fill="none" stroke="black" points="508,-339.44 508,-333.44 "/>
+<polyline fill="none" stroke="black" points="514,-333.44 508,-333.44 "/>
+<text text-anchor="middle" x="465" y="-317.74" font-family="Helvetica,sans-Serif" font-size="14.00">profile.yaml</text>
 </g>
 <!-- profile&#45;&gt;app -->
 <g id="edge4" class="edge">
 <title>profile&#45;&gt;app</title>
-<path fill="none" stroke="black" stroke-dasharray="5,2" d="M432.29,-303.34C423.9,-283.73 407.93,-251.58 386,-230.44 378,-222.72 369.02,-215.58 359.59,-209.04"/>
-<polygon fill="black" stroke="black" points="361.47,-206.08 351.21,-203.44 357.58,-211.9 361.47,-206.08"/>
-<text text-anchor="middle" x="431" y="-245.94" font-family="Helvetica,sans-Serif" font-size="10.00">defines</text>
+<path fill="none" stroke="black" stroke-dasharray="5,2" d="M458.69,-303.42C450.59,-283.58 434.79,-250.92 412,-230.44 403.16,-222.49 393.3,-215.27 382.94,-208.75"/>
+<polygon fill="black" stroke="black" points="384.5,-205.61 374.13,-203.44 380.89,-211.6 384.5,-205.61"/>
+<text text-anchor="middle" x="458" y="-245.94" font-family="Helvetica,sans-Serif" font-size="10.00">defines</text>
 </g>
 <!-- exec_box&#45;&gt;app -->
 <g id="edge9" class="edge">

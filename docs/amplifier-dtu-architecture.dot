@@ -52,7 +52,7 @@ digraph dtu_architecture {
     profile -> app [label="defines", style=dashed, lhead=cluster_dtu]
 
     // Meta: lifecycle management (targets DTU cluster boundary)
-    consumer -> app [label="Lifecycle:\ncreate / destroy", style=dashed, lhead=cluster_dtu]
+    consumer -> app [label="Lifecycle:\nlaunch / destroy / etc", style=dashed, lhead=cluster_dtu]
 
     // Simulation: consumer interacts with DTU like a real user
     consumer -> exec_box

@@ -85,6 +85,61 @@ Returns:
 ```
 
 
+### `status`
+
+Check whether an environment exists and is running.
+
+```bash
+amplifier-digital-twin status <id>
+```
+
+`<id>` (required)
+  Environment ID.
+
+Returns:
+
+```json
+{
+  "id": "dtu-a1b2c3d4",
+  "profile": "amplifier-user-sim",
+  "status": "running",
+  "created_at": "2026-03-23T16:00:00Z"
+}
+```
+
+`status` is the Incus container state (e.g. `"running"`, `"stopped"`).
+
+
+### `list`
+
+List all environments managed by this tool.
+
+Environments are discovered via Incus instance config keys. During `launch`,
+each container is tagged with `user.dtu.managed-by=amplifier-digital-twin`.
+`list` queries Incus for instances with that key.
+
+```bash
+amplifier-digital-twin list
+```
+
+Returns:
+
+```json
+[
+  {
+    "id": "dtu-a1b2c3d4",
+    "profile": "amplifier-user-sim",
+    "status": "running",
+    "created_at": "2026-03-23T16:00:00Z"
+  }
+]
+```
+
+Returns an empty array `[]` when no environments exist.
+
+`status` is the Incus container state (e.g. `"running"`, `"stopped"`).
+
+
 ### `destroy`
 
 Destroy an environment. Stops and deletes the Incus container and any associated storage.

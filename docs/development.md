@@ -36,9 +36,13 @@ used by the end-to-end test, see [manual_verification.md](manual_verification.md
 
 ## Tests
 
-> **Note:** The current tests destroy the environments they launch, but the
-> session-wide orphan cleanup hook is not implemented yet. If a test is
-> interrupted, you may need to destroy leftover environments manually.
+> **Warning:** Integration tests (`--run-integration`, `--run-e2e`) destroy
+> **all** `amplifier-digital-twin` managed containers when the test session
+> ends, not just the ones the tests created. Any environment you created
+> with `amplifier-digital-twin launch` will be removed. Run
+> `amplifier-digital-twin list` beforehand and `amplifier-digital-twin destroy`
+> anything you want cleanly shut down, or be aware that running environments
+> will be force-removed.
 
 Tests invoke `amplifier-digital-twin` as a subprocess via `uv run`, exactly as a
 user would on their machine. No in-process test runners or mocks.

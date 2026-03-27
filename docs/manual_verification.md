@@ -144,7 +144,16 @@ printf '%s\n' "$DIGITAL_TWIN_JSON"
 DIGITAL_TWIN_ID=$(python -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$DIGITAL_TWIN_JSON")
 ```
 
-## 6. Get Into The Environment
+## 6. Check Status
+
+```bash
+uv run amplifier-digital-twin status "$DIGITAL_TWIN_ID"
+```
+
+Confirm the output shows `"status": "Running"` before proceeding.
+
+
+## 7. Get Into The Environment
 
 ```bash
 uv run amplifier-digital-twin exec "$DIGITAL_TWIN_ID"
@@ -156,7 +165,7 @@ Or run one command at a time:
 uv run amplifier-digital-twin exec "$DIGITAL_TWIN_ID" -- amplifier --version
 ```
 
-## 7. Verify The Same Signals As The Test
+## 8. Verify The Same Signals As The Test
 
 First verify the installed Amplifier tool environment is using the overridden
 `amplifier-core` wheel:
@@ -188,7 +197,7 @@ Expected signals:
 - the output contains `HELLO_DTU_PROVIDER`
 - the CLI output also shows `AMPLIFIER_PROVIDER_ANTHROPIC_TEST_MARKER`
 
-## 8. Clean Up
+## 9. Clean Up
 
 ```bash
 # Type "exit" to leave the Digital Twin environment.

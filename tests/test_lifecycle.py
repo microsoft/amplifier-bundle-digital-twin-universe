@@ -66,6 +66,48 @@ def test_launch_profile_matches(dtu_env):
 
 
 # ---------------------------------------------------------------------------
+# Phase 1b: launch stores Incus metadata
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_launch_sets_incus_config_keys(dtu_env):
+    """Verify launch stores metadata as Incus user config keys.
+
+    This is the foundation for status and list -- if config keys are not
+    set, neither command can work.
+    """
+    import subprocess
+
+    env_id = dtu_env["id"]
+
+    for key, expected in [
+        ("user.dtu.managed-by", "amplifier-digital-twin"),
+        ("user.dtu.profile", "lifecycle-smoke"),
+    ]:
+        result = subprocess.run(
+            ["incus", "config", "get", env_id, key],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, f"Failed to get {key}: {result.stderr}"
+        assert result.stdout.strip() == expected, (
+            f"{key}: expected {expected!r}, got {result.stdout.strip()!r}"
+        )
+
+    # created-at should be a non-empty ISO 8601 string
+    result = subprocess.run(
+        ["incus", "config", "get", env_id, "user.dtu.created-at"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip(), "user.dtu.created-at should be non-empty"
+
+
+# ---------------------------------------------------------------------------
 # Phase 2: exec
 # ---------------------------------------------------------------------------
 
@@ -86,7 +128,98 @@ def test_exec_nonzero_exit(dtu_env):
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: destroy (standalone, creates own environment)
+# Phase 3: status
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_status_returns_valid_json(dtu_env):
+    """Verify status returns the expected fields for a running environment."""
+    data, _ = run_cli_json("status", dtu_env["id"])
+    required_keys = {"id", "profile", "status", "created_at"}
+    assert required_keys.issubset(data.keys()), (
+        f"Missing keys: {required_keys - data.keys()}"
+    )
+
+
+@pytest.mark.integration
+def test_status_matches_launch(dtu_env):
+    """Verify status fields are consistent with what launch returned."""
+    data, _ = run_cli_json("status", dtu_env["id"])
+    assert data["id"] == dtu_env["id"]
+    assert data["profile"] == dtu_env["profile"]
+    assert data["status"] == "Running"
+
+
+@pytest.mark.integration
+def test_status_nonexistent_id():
+    """Status with a nonexistent ID should fail."""
+    result = run_cli("status", "nonexistent-id-12345")
+    assert result.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: list
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_list_includes_running_environment(dtu_env):
+    """Verify list includes the environment we launched."""
+    data, _ = run_cli_json("list")
+    assert isinstance(data, list)
+    ids = [env["id"] for env in data]
+    assert dtu_env["id"] in ids
+
+
+@pytest.mark.integration
+def test_list_entry_matches_status(dtu_env):
+    """Verify the list entry has the same shape and values as status."""
+    list_data, _ = run_cli_json("list")
+    status_data, _ = run_cli_json("status", dtu_env["id"])
+    entry = next(e for e in list_data if e["id"] == dtu_env["id"])
+    assert entry == status_data
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: destroy removes from list (standalone, creates own environment)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_destroy_removes_from_list():
+    """Launch, destroy, verify the environment is gone from list."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory(prefix="dtu-lifecycle-list-") as tmp:
+        profile_path = Path(tmp) / "list-smoke.yaml"
+        profile_path.write_text(
+            """\
+name: lifecycle-smoke-list
+description: Minimal profile for list removal test
+
+base:
+  image: ubuntu:24.04
+"""
+        )
+        data, _ = run_cli_json("launch", str(profile_path), timeout=120)
+        env_id = data["id"]
+
+        # Confirm it shows up in list
+        list_data, _ = run_cli_json("list")
+        ids_before = [e["id"] for e in list_data]
+        assert env_id in ids_before
+
+        # Destroy and confirm it's gone
+        run_cli_json("destroy", env_id)
+        list_data, _ = run_cli_json("list")
+        ids_after = [e["id"] for e in list_data]
+        assert env_id not in ids_after
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: destroy (standalone, original test)
 # ---------------------------------------------------------------------------
 
 
@@ -116,8 +249,6 @@ base:
 
         result = run_cli("exec", env_id, "--", "echo", "hello")
         assert result.returncode != 0, "exec should fail for destroyed environment"
-
-
 
 
 # ---------------------------------------------------------------------------

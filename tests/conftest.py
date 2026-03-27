@@ -83,8 +83,30 @@ def free_port():
 @pytest.fixture(autouse=True, scope="session")
 def cleanup_orphaned_containers():
     yield
-    # TODO: Implement Incus-based cleanup once we decide on the labeling /
-    # metadata convention for DTU instances. For Gitea this uses Docker labels
-    # (label=managed-by=amplifier-gitea). The DTU equivalent might use Incus
-    # instance metadata, a name prefix filter (dtu-*), or Incus project
-    # isolation. Decide during launch implementation and update this fixture.
+    # Clean up any DTU containers left behind by interrupted tests.
+    # Uses the same Incus config key that `list` queries.
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "incus",
+            "list",
+            "user.dtu.managed-by=amplifier-digital-twin",
+            "--format=json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return
+
+    import json
+
+    for inst in json.loads(result.stdout):
+        name = inst["name"]
+        subprocess.run(
+            ["incus", "delete", name, "--force"],
+            capture_output=True,
+            timeout=30,
+        )

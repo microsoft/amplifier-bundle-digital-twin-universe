@@ -1,5 +1,7 @@
 # Amplifier Bundle Digital Twin Universe (DTU)
 
+> This project still in very early stages. Assume that every interface, CLI commands, profile schema, JSON output shapes, etc. is subject to change.
+
 By default AI generated software is verified in the environment and context that it was built. 
 This frequently leads to agents claiming it worked due to context poisoning, 
 leaving issues unsolved since they are not forced to consider deployment details, or specific setup present on the dev machine. 
@@ -67,6 +69,12 @@ amplifier-digital-twin exec dtu-a1b2c3d4 -- amplifier --version
 # Interactive shell
 amplifier-digital-twin exec dtu-a1b2c3d4
 
+# Check environment status
+amplifier-digital-twin status dtu-a1b2c3d4
+
+# List all managed environments
+amplifier-digital-twin list
+
 # Tear it down
 amplifier-digital-twin destroy dtu-a1b2c3d4
 ```
@@ -92,7 +100,7 @@ Mock services can advertise affordances (coordinates, API hooks) so agents inter
 
 - **Ephemeral lifecycle.** Environments are created, used, and destroyed on demand. Consumers can wipe and restart for a clean simulation at any time.
 
-- **CLI-first, JSON output.** All lifecycle commands (create, status, destroy) return JSON to stdout for programmatic consumption.
+- **CLI-first, JSON output.** All lifecycle commands (launch, status, list, destroy) return JSON to stdout for programmatic consumption.
 
 - **Mock service catalog (TBD)** Profiles reference mock services from a catalog of pre-built images. 
 Mock services can stand in for real external services (M365, Slack, GSuite, etc.) allowing unlimited use without rate limits, app registration overhead, or cost.

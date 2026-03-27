@@ -10,4 +10,5 @@ Please update these profiles anytime we make relevant changes.
 
 ### Documentation
 
+@docs/api-reference.md
 @docs/amplifier-user-sim-launch-flow.dot

@@ -81,6 +81,29 @@ def exec_(id: str, command: tuple[str, ...]) -> None:
 
 @main.command()
 @click.argument("id")
+def status(id: str) -> None:
+    """Check whether an environment exists and is running."""
+    try:
+        result = engine.status(id)
+        click.echo(json.dumps(result))
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
+@main.command(name="list")
+def list_() -> None:
+    """List all environments managed by this tool."""
+    try:
+        result = engine.list_environments()
+        click.echo(json.dumps(result))
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
+@main.command()
+@click.argument("id")
 def destroy(id: str) -> None:
     """Destroy an environment. Stops and deletes the Incus container and any associated storage."""
     try:

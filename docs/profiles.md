@@ -6,47 +6,8 @@ A profile can be launched by:
 - relative path to a YAML file
 - absolute path to a YAML file
 
-## Implemented Shape
+Examples can be found in the [profiles/](../profiles/) directory.
 
-The current loader supports this shape:
-
-```yaml
-name: amplifier-user-sim
-description: Human-readable description
-
-base:
-  image: ubuntu:24.04
-
-url_rewrites:
-  auth:
-    username: admin
-    token_var: GITEA_TOKEN
-  rules:
-    - match: github.com/microsoft/amplifier-module-provider-anthropic
-      target: ${GITEA_URL}/admin/amplifier-module-provider-anthropic
-
-pypi_overrides:
-  packages:
-    - name: amplifier-core
-      wheel_from_git:
-        repo: ${GITEA_URL}/admin/amplifier-core.git
-        ref: main
-        username: admin
-        token_var: GITEA_TOKEN
-        build_cmd: uv run --with maturin maturin build --release
-        wheel_glob: target/wheels/amplifier_core-*.whl
-
-passthrough:
-  allow_external: true
-  services:
-    - name: anthropic
-      key_env: ANTHROPIC_API_KEY
-
-provision:
-  setup_cmds:
-    - apt-get update && apt-get install -y git curl
-    - curl -LsSf https://astral.sh/uv/install.sh | sh
-```
 
 ## Variables
 
@@ -226,42 +187,3 @@ Current behavior:
 
 This is where the current built-in profiles install tools, write config files,
 and create working directories.
-
-## Built-In Profiles
-
-### `amplifier-user-sim`
-
-Current behavior:
-
-- base image `ubuntu:24.04`
-- rewrites `amplifier-module-provider-anthropic` from GitHub to Gitea
-- overrides `amplifier-core` through `wheel_from_git`
-- forwards `ANTHROPIC_API_KEY`
-- installs Amplifier with `uv tool install`
-- writes `/root/.amplifier/settings.yaml`
-- creates `/home/user/project`
-
-See [amplifier-user-sim.yaml](../profiles/amplifier-user-sim.yaml).
-
-### `amplifier-user-sim-single-module`
-
-Current behavior:
-
-- base image `ubuntu:24.04`
-- rewrites only `amplifier-module-provider-anthropic` from GitHub to Gitea
-- does not override `amplifier-core`
-- installs Amplifier with `uv tool install`
-- writes `/root/.amplifier/settings.yaml`
-- creates `/home/user/project`
-
-See [amplifier-user-sim-single-module.yaml](../profiles/amplifier-user-sim-single-module.yaml).
-
-### `productivity-app`
-
-This file is still a draft sketch of a future profile shape.
-
-It includes `services`, which are not currently loaded or launched by the
-implementation. Treat it as planning material, not as a reliable example of the
-current engine behavior.
-
-See [productivity-app.yaml](../profiles/productivity-app.yaml).

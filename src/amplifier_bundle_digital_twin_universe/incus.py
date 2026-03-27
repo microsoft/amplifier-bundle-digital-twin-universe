@@ -9,6 +9,7 @@ Docker.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 
@@ -247,3 +248,78 @@ def push_file(name: str, local_path: str, container_path: str) -> None:
     )
     if result.returncode != 0:
         raise IncusError(f"Failed to push file: {result.stderr.strip()}")
+
+
+# ---------------------------------------------------------------------------
+# Instance config (metadata)
+# ---------------------------------------------------------------------------
+
+
+def set_config(name: str, key: str, value: str) -> None:
+    """``incus config set <name> <key>=<value>``"""
+    result = subprocess.run(
+        ["incus", "config", "set", name, f"{key}={value}"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise IncusError(
+            f"Failed to set config {key} on {name}: {result.stderr.strip()}"
+        )
+
+
+def get_config(name: str, key: str) -> str:
+    """``incus config get <name> <key>`` -- returns the value or empty string."""
+    result = subprocess.run(
+        ["incus", "config", "get", name, key],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise IncusError(
+            f"Failed to get config {key} on {name}: {result.stderr.strip()}"
+        )
+    return result.stdout.strip()
+
+
+# ---------------------------------------------------------------------------
+# Instance listing / status
+# ---------------------------------------------------------------------------
+
+
+def get_instance_state(name: str) -> str:
+    """Return the Incus status string for *name* (e.g. ``"Running"``)."""
+    result = subprocess.run(
+        ["incus", "list", name, "--format=json"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise IncusError(f"Failed to query instance {name}: {result.stderr.strip()}")
+    instances = json.loads(result.stdout)
+    for inst in instances:
+        if inst["name"] == name:
+            return inst["status"]
+    raise IncusError(f"Instance {name} not found in incus list output")
+
+
+def list_instances(config_key: str, config_value: str) -> list[dict]:
+    """Return all instances where ``config_key == config_value``.
+
+    Each entry is the raw Incus JSON dict (keys: name, status, config, ...).
+    """
+    result = subprocess.run(
+        ["incus", "list", f"{config_key}={config_value}", "--format=json"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise IncusError(
+            f"Failed to list instances ({config_key}={config_value}): "
+            f"{result.stderr.strip()}"
+        )
+    return json.loads(result.stdout)

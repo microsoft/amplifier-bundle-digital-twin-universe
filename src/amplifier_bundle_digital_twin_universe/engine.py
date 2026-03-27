@@ -614,10 +614,19 @@ def launch(
     container_name = name or f"dtu-{uuid.uuid4().hex[:8]}"
     image = _resolve_image(host_profile.base.image)
 
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     print(f"Creating container {container_name} ({image})...", file=sys.stderr)
     incus.create_container(container_name, image)
 
     try:
+        # Store metadata so `status` and `list` can discover this instance.
+        incus.set_config(
+            container_name, "user.dtu.managed-by", "amplifier-digital-twin"
+        )
+        incus.set_config(container_name, "user.dtu.profile", host_profile.name)
+        incus.set_config(container_name, "user.dtu.created-at", now)
+
         # Detect host gateway IP (retries until networking is up).
         host_ip = _wait_for_gateway(container_name)
         print(f"  host gateway: {host_ip}", file=sys.stderr)
@@ -650,7 +659,6 @@ def launch(
             print("Running provisioning...", file=sys.stderr)
             _run_provisioning(container_name, profile.provision.setup_cmds)
 
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         print(f"DTU {container_name} ready.", file=sys.stderr)
         return {
             "id": container_name,
@@ -692,6 +700,41 @@ def exec_interactive(container_id: str) -> int:
         print(f"Error: Environment not found: {container_id}", file=sys.stderr)
         return 1
     return incus.exec_interactive(container_id)
+
+
+# ---------------------------------------------------------------------------
+# Metadata label used to discover DTU-managed instances.
+# ---------------------------------------------------------------------------
+
+_MANAGED_BY_KEY = "user.dtu.managed-by"
+_MANAGED_BY_VALUE = "amplifier-digital-twin"
+
+
+def _instance_info(name: str) -> dict:
+    """Build the status dict for a single managed instance.
+
+    Shared by ``status()`` and ``list_environments()`` so both return the
+    same shape.
+    """
+    return {
+        "id": name,
+        "profile": incus.get_config(name, "user.dtu.profile"),
+        "status": incus.get_instance_state(name),
+        "created_at": incus.get_config(name, "user.dtu.created-at"),
+    }
+
+
+def status(container_id: str) -> dict:
+    """Return status info for a single environment."""
+    if not incus.container_exists(container_id):
+        raise RuntimeError(f"Environment not found: {container_id}")
+    return _instance_info(container_id)
+
+
+def list_environments() -> list[dict]:
+    """Return status info for all DTU-managed environments."""
+    instances = incus.list_instances(_MANAGED_BY_KEY, _MANAGED_BY_VALUE)
+    return [_instance_info(inst["name"]) for inst in instances]
 
 
 def destroy(container_id: str) -> dict:
