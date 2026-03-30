@@ -1,5 +1,7 @@
 # Manual Verification
 
+![amplifier-user-sim launch flow](amplifier-user-sim-launch-flow.svg)
+
 This walkthrough mirrors the same flow used by
 `tests/test_e2e_amplifier_user_sim.py`:
 

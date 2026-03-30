@@ -35,8 +35,6 @@ The [amplifier-user-sim](profiles/amplifier-user-sim.yaml) profile simulates an 
 environment: LLM API passthrough, repos served from Gitea, the Amplifier CLI installed,
 and the Anthropic provider pre-configured so Amplifier is ready to use immediately.
 
-![amplifier-user-sim launch flow](docs/amplifier-user-sim-launch-flow.svg)
-
 ### Example: amplifier-chat
 
 The [amplifier-chat profile](profiles/amplifier-chat.yaml) launches a browser-accessible
