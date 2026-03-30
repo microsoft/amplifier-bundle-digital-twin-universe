@@ -1,0 +1,15 @@
+bundle:
+  name: digital-twin-universe-behavior
+  version: 0.1.0
+  description: Adds digital twin environment capability via the amplifier-digital-twin CLI
+
+tools:
+  - module: tool-skills
+    source: git+https://github.com/microsoft/amplifier-module-tool-skills@main
+    config:
+      skills:
+        - "git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe@main#subdirectory=skills"
+
+context:
+  include:
+    - digital-twin-universe:context/dtu-awareness.md

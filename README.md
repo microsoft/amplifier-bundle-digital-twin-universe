@@ -66,7 +66,20 @@ uv tool install git+https://github.com/microsoft/amplifier-bundle-digital-twin-u
 
 ### Amplifier Bundle
 
-TBD. Later we will have skills and context related to how Amplifier can consume this, setup it up for the user, etc.
+This repo is also an Amplifier bundle. The bundle provides a `digital-twin-universe` skill and context awareness so the AI model knows how to use the `amplifier-digital-twin` CLI. 
+The CLI must be installed separately (see above).
+
+For interactive Amplifier sessions, install as an app bundle (recommended):
+```bash
+amplifier bundle add git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe@main --app
+```
+
+To compose into an existing bundle:
+```bash
+amplifier bundle add "git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe@main#subdirectory=behaviors/digital-twin-universe.yaml"
+```
+
+Otherwise, consider using the CLI directly.
 
 
 ## Quick Start
