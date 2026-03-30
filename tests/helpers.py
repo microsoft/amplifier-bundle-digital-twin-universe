@@ -5,6 +5,7 @@
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -101,7 +102,9 @@ def resolve_github_token() -> str | None:
     return None
 
 
-def git(*args: str, cwd: Path | None = None, timeout: int = 60) -> subprocess.CompletedProcess[str]:
+def git(
+    *args: str, cwd: Path | None = None, timeout: int = 60
+) -> subprocess.CompletedProcess[str]:
     """Run a git command."""
     return subprocess.run(
         ["git", *args],
@@ -176,7 +179,33 @@ def commit_all(repo_dir: Path, message: str) -> None:
     )
 
 
-def push_repo_to_gitea(repo_dir: Path, clone_url: str, refspec: str = "HEAD:main") -> None:
+def push_repo_to_gitea(
+    repo_dir: Path, clone_url: str, refspec: str = "HEAD:main"
+) -> None:
     """Push *repo_dir* to Gitea using *clone_url*."""
     git_checked("remote", "set-url", "origin", clone_url, cwd=repo_dir)
     git_checked("push", "origin", refspec, "--force", cwd=repo_dir, timeout=180)
+
+
+# ---------------------------------------------------------------------------
+# Readiness polling
+# ---------------------------------------------------------------------------
+
+
+def poll_readiness(env_id: str, timeout: int = 120, interval: int = 3) -> dict:
+    """Poll ``check-readiness`` until ready or *timeout* seconds elapse."""
+    deadline = time.monotonic() + timeout
+    data: dict = {}
+    while time.monotonic() < deadline:
+        result = run_cli("check-readiness", env_id, timeout=30)
+        if result.returncode == 2:
+            raise RuntimeError(
+                f"check-readiness error: {result.stderr or result.stdout}"
+            )
+        data = json.loads(result.stdout)
+        if data.get("ready") is True:
+            return data
+        time.sleep(interval)
+    raise TimeoutError(
+        f"Environment {env_id} not ready within {timeout}s. Last result: {data}"
+    )

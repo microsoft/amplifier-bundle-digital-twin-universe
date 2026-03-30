@@ -225,3 +225,59 @@ Current behavior:
 
 This is where the current built-in profiles install tools, write config files,
 and create working directories.
+
+
+## `readiness`
+
+Optional. A list of checks that define when services inside the environment are
+ready to accept connections. When present, the engine stores the checks as
+container metadata so the `check-readiness` command can evaluate them.
+
+Readiness checks are evaluated on demand (not during launch). Use
+`amplifier-digital-twin check-readiness <id>` to poll.
+
+Each check has a `name` and exactly one of `http`, `tcp`, or `command`:
+
+```yaml
+readiness:
+  - name: amplifierd-ready
+    http:
+      url: http://localhost:8410/ready
+      expect_json: { "ready": true }
+
+  - name: db-port
+    tcp:
+      port: 5432
+
+  - name: custom-setup
+    command: "test -f /tmp/provisioning-done"
+```
+
+### `http`
+
+Runs `curl -sf <url>` inside the container. Passes on HTTP 200.
+
+`expect_json` (optional) does a key-value subset match on the response body:
+every key in `expect_json` must be present in the response with the same value,
+but the response may contain additional keys.
+
+### `tcp`
+
+Opens a TCP connection to `localhost:<port>` inside the container. Passes when
+the port accepts connections.
+
+### `command`
+
+Runs the command via `incus exec`. Passes when exit code is 0.
+
+### Polling
+
+`check-readiness` is stateless -- each invocation runs all checks once and
+returns the result. The caller owns the polling loop:
+
+```bash
+while ! amplifier-digital-twin check-readiness dtu-a1b2c3d4 \
+    | jq -e '.ready'; do
+  sleep 3
+done
+```

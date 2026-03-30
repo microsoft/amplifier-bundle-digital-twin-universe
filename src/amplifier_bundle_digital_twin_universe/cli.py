@@ -102,6 +102,27 @@ def list_() -> None:
         sys.exit(1)
 
 
+@main.command(name="check-readiness")
+@click.argument("id")
+def check_readiness(id: str) -> None:
+    """Run readiness checks for an environment.
+
+    Exit codes: 0 = ready, 1 = not ready, 2 = error.
+    """
+    try:
+        result = engine.check_readiness(id)
+        click.echo(json.dumps(result))
+        if result.get("ready") is True:
+            sys.exit(0)
+        elif result.get("ready") is None:
+            sys.exit(0)
+        else:
+            sys.exit(1)
+    except Exception as exc:
+        click.echo(json.dumps({"error": str(exc)}), err=True)
+        sys.exit(2)
+
+
 @main.command()
 @click.argument("id")
 def destroy(id: str) -> None:

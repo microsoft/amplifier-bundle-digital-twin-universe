@@ -681,6 +681,43 @@ def launch(
         else:
             container_ip = None
 
+        # Store readiness config as metadata for check-readiness.
+        info: list[str] = []
+        if profile.readiness:
+            readiness_config = [
+                {
+                    "name": c.name,
+                    **(
+                        {
+                            "http": {
+                                "url": c.http.url,
+                                **(
+                                    {"expect_json": c.http.expect_json}
+                                    if c.http.expect_json
+                                    else {}
+                                ),
+                            }
+                        }
+                        if c.http
+                        else {}
+                    ),
+                    **({"tcp": {"port": c.tcp.port}} if c.tcp else {}),
+                    **({"command": c.command} if c.command else {}),
+                }
+                for c in profile.readiness
+            ]
+            import json as _json
+
+            incus.set_config(
+                container_name,
+                "user.dtu.readiness",
+                _json.dumps(readiness_config),
+            )
+            info.append(
+                f"Readiness checks configured. Poll with: "
+                f"amplifier-digital-twin check-readiness {container_name}"
+            )
+
         print(f"DTU {container_name} ready.", file=sys.stderr)
         result: dict = {
             "id": container_name,
@@ -688,6 +725,7 @@ def launch(
             "profile": profile.name,
             "status": "running",
             "created_at": now,
+            "info": info,
         }
         if container_ip:
             result["container_ip"] = container_ip
@@ -762,6 +800,55 @@ def list_environments() -> list[dict]:
     """Return status info for all DTU-managed environments."""
     instances = incus.list_instances(_MANAGED_BY_KEY, _MANAGED_BY_VALUE)
     return [_instance_info(inst["name"]) for inst in instances]
+
+
+def check_readiness(container_id: str) -> dict:
+    """Run readiness checks for *container_id*.  Returns a JSON-serialisable dict."""
+    if not incus.container_exists(container_id):
+        raise RuntimeError(f"Environment not found: {container_id}")
+
+    import json as _json
+
+    from amplifier_bundle_digital_twin_universe.profile import (
+        ReadinessCheck,
+        ReadinessCheckHttp,
+        ReadinessCheckTcp,
+    )
+    from amplifier_bundle_digital_twin_universe.readiness import (
+        check_readiness as _do_checks,
+    )
+
+    raw = incus.get_config(container_id, "user.dtu.readiness")
+    if not raw:
+        return {"ready": None, "message": "profile has no readiness checks"}
+
+    config = _json.loads(raw)
+    checks: list[ReadinessCheck] = []
+    for item in config:
+        http_check = None
+        tcp_check = None
+        command_check = None
+
+        if "http" in item:
+            http_check = ReadinessCheckHttp(
+                url=item["http"]["url"],
+                expect_json=item["http"].get("expect_json"),
+            )
+        if "tcp" in item:
+            tcp_check = ReadinessCheckTcp(port=int(item["tcp"]["port"]))
+        if "command" in item:
+            command_check = item["command"]
+
+        checks.append(
+            ReadinessCheck(
+                name=item["name"],
+                http=http_check,
+                tcp=tcp_check,
+                command=command_check,
+            )
+        )
+
+    return _do_checks(container_id, checks)
 
 
 def destroy(container_id: str) -> dict:

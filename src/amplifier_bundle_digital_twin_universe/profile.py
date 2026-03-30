@@ -98,6 +98,25 @@ class Access:
 
 
 @dataclass
+class ReadinessCheckHttp:
+    url: str
+    expect_json: dict | None = None
+
+
+@dataclass
+class ReadinessCheckTcp:
+    port: int
+
+
+@dataclass
+class ReadinessCheck:
+    name: str
+    http: ReadinessCheckHttp | None = None
+    tcp: ReadinessCheckTcp | None = None
+    command: str | None = None
+
+
+@dataclass
 class Profile:
     path: Path
     name: str
@@ -108,6 +127,7 @@ class Profile:
     provision: Provision | None = None
     pypi_overrides: PypiOverrides | None = None
     access: Access | None = None
+    readiness: list[ReadinessCheck] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +318,54 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
         ]
         access = Access(ports=ports)
 
+    # readiness (optional)
+    readiness = None
+    readiness_data = data.get("readiness")
+    if readiness_data:
+        checks: list[ReadinessCheck] = []
+        for item in readiness_data:
+            if "name" not in item:
+                raise ValueError("Each readiness check must have a 'name' field")
+
+            http_check = None
+            tcp_check = None
+            command_check = None
+
+            http_data = item.get("http")
+            tcp_data = item.get("tcp")
+            command_data = item.get("command")
+
+            sources = [
+                http_data is not None,
+                tcp_data is not None,
+                command_data is not None,
+            ]
+            if sum(sources) != 1:
+                raise ValueError(
+                    f"Readiness check {item['name']!r} must specify exactly one of "
+                    "http, tcp, or command"
+                )
+
+            if http_data:
+                http_check = ReadinessCheckHttp(
+                    url=http_data["url"],
+                    expect_json=http_data.get("expect_json"),
+                )
+            if tcp_data:
+                tcp_check = ReadinessCheckTcp(port=int(tcp_data["port"]))
+            if command_data:
+                command_check = command_data
+
+            checks.append(
+                ReadinessCheck(
+                    name=item["name"],
+                    http=http_check,
+                    tcp=tcp_check,
+                    command=command_check,
+                )
+            )
+        readiness = checks
+
     return Profile(
         path=path,
         name=name,
@@ -308,4 +376,5 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
         provision=provision,
         pypi_overrides=pypi_overrides,
         access=access,
+        readiness=readiness,
     )

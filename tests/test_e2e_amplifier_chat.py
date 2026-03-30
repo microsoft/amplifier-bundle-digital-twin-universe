@@ -18,35 +18,12 @@ Run with::
 """
 
 import json
-import time
 import urllib.request
 import urllib.error
 
 import pytest
 
-from helpers import run_cli, run_cli_json
-
-# Maximum seconds to wait for amplifierd readiness after launch.
-_READY_TIMEOUT = 120
-_READY_POLL_INTERVAL = 3
-
-
-def _wait_for_ready(base_url: str, timeout: int = _READY_TIMEOUT) -> None:
-    """Poll ``/ready`` until amplifierd reports ``{ready: true}``."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            req = urllib.request.Request(f"{base_url}/ready")
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                body = json.loads(resp.read())
-                if body.get("ready") is True:
-                    return
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError):
-            pass
-        time.sleep(_READY_POLL_INTERVAL)
-    raise TimeoutError(
-        f"amplifierd did not become ready within {timeout}s at {base_url}/ready"
-    )
+from helpers import poll_readiness, run_cli, run_cli_json
 
 
 # -- Fixtures ---------------------------------------------------------------
@@ -58,8 +35,7 @@ def dtu_env(require_anthropic_key):
     data, _ = run_cli_json("launch", "amplifier-chat", timeout=900)
     assert isinstance(data, dict), "Expected launch to return a JSON object"
     # Wait for amplifierd prewarm to finish so the full app is ready.
-    ip = data.get("container_ip", "localhost")
-    _wait_for_ready(f"http://{ip}:8410")
+    poll_readiness(data["id"], timeout=120, interval=3)
     yield data
     run_cli("destroy", data["id"], timeout=60)
 

@@ -154,6 +154,16 @@ uv run amplifier-digital-twin status "$DIGITAL_TWIN_ID"
 
 Confirm the output shows `"status": "Running"` before proceeding.
 
+For profiles with readiness checks (e.g. `amplifier-chat`), poll until the
+environment is ready:
+
+```bash
+while ! uv run amplifier-digital-twin check-readiness "$DIGITAL_TWIN_ID" \
+    | jq -e '.ready'; do
+  sleep 3
+done
+```
+
 
 ## 7. Get Into The Environment
 
