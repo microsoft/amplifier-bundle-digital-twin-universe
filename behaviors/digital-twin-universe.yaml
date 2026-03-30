@@ -3,6 +3,10 @@ bundle:
   version: 0.1.0
   description: Adds digital twin environment capability via the amplifier-digital-twin CLI
 
+agents:
+  include:
+    - digital-twin-universe:dtu-browser-tester
+
 tools:
   - module: tool-skills
     source: git+https://github.com/microsoft/amplifier-module-tool-skills@main

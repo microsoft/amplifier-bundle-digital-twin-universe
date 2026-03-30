@@ -128,6 +128,10 @@ Mock services can advertise affordances (coordinates, API hooks) so agents inter
 
 - **CLI-first, JSON output.** All lifecycle commands (launch, status, list, destroy) return JSON to stdout for programmatic consumption.
 
+- **Browser-based verification agent.** The bundle includes a [`dtu-browser-tester`](agents/dtu-browser-tester.md) agent that launches a DTU environment, waits for readiness, then drives a real browser against the web UI to verify it works end-to-end — navigating, interacting, screenshotting, and reporting results.
+
+- **Amplifier skill.** The bundle ships a `digital-twin-universe` [skill](skills/) for help installing the CLI, understanding profiles, and using environments within Amplifier sessions.
+
 - **Mock service catalog (TBD)** Profiles reference mock services from a catalog of pre-built images. 
 Mock services can stand in for real external services (M365, Slack, GSuite, etc.) allowing unlimited use without rate limits, app registration overhead, or cost.
 

@@ -25,6 +25,13 @@ You have access to `amplifier-digital-twin`, a CLI for on-demand isolated enviro
 
 All commands output JSON to stdout.
 
+## Browser-Based Verification
+
+For profiles with web UIs, delegate to `digital-twin-universe:dtu-browser-tester`
+to launch an environment and verify the UI works with a real browser. Triggers:
+- "test the web UI", "verify the app works in the browser"
+- "launch and test", "browser test the DTU"
+
 ## Example Profiles
 
 - `amplifier-user-sim` — simulates an Amplifier user environment with LLM passthrough and Gitea repos
