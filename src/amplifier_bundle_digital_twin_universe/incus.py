@@ -323,3 +323,65 @@ def list_instances(config_key: str, config_value: str) -> list[dict]:
             f"{result.stderr.strip()}"
         )
     return json.loads(result.stdout)
+
+
+def get_container_ip(name: str) -> str:
+    """Return the first global IPv4 address of *name*.
+
+    Parses ``incus list <name> --format=json`` and finds the first
+    ``inet`` address with ``global`` scope on any interface.
+    """
+    result = subprocess.run(
+        ["incus", "list", name, "--format=json"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise IncusError(f"Failed to query container {name}: {result.stderr.strip()}")
+    instances = json.loads(result.stdout)
+    for inst in instances:
+        if inst["name"] != name:
+            continue
+        network = inst.get("state", {}).get("network", {})
+        for _iface, info in network.items():
+            for addr in info.get("addresses", []):
+                if addr.get("family") == "inet" and addr.get("scope") == "global":
+                    return addr["address"]
+    raise IncusError(f"No global IPv4 address found for container {name}")
+
+
+def add_proxy_device(
+    name: str,
+    device_name: str,
+    host_port: int,
+    container_port: int,
+) -> None:
+    """Add a TCP proxy device forwarding host_port -> container_port.
+
+    Uses ``incus config device add`` to create a proxy that listens on
+    ``0.0.0.0:<host_port>`` on the host and forwards to
+    ``127.0.0.1:<container_port>`` inside the container.  The device is
+    automatically removed when the container is deleted.
+    """
+    result = subprocess.run(
+        [
+            "incus",
+            "config",
+            "device",
+            "add",
+            name,
+            device_name,
+            "proxy",
+            f"listen=tcp:0.0.0.0:{host_port}",
+            f"connect=tcp:127.0.0.1:{container_port}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise IncusError(
+            f"Failed to add proxy device {device_name} on {name}: "
+            f"{result.stderr.strip()}"
+        )

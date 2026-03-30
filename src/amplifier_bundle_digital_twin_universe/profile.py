@@ -85,6 +85,19 @@ class PypiOverrides:
 
 
 @dataclass
+class PortMapping:
+    host: int
+    container: int
+    label: str = ""
+    path: str = "/"
+
+
+@dataclass
+class Access:
+    ports: list[PortMapping] = field(default_factory=list)
+
+
+@dataclass
 class Profile:
     path: Path
     name: str
@@ -94,6 +107,7 @@ class Profile:
     passthrough: Passthrough | None = None
     provision: Provision | None = None
     pypi_overrides: PypiOverrides | None = None
+    access: Access | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +283,21 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
             packages.append(package)
         pypi_overrides = PypiOverrides(packages=packages)
 
+    # access (optional)
+    access = None
+    ac = data.get("access")
+    if ac:
+        ports = [
+            PortMapping(
+                host=int(p["host"]),
+                container=int(p["container"]),
+                label=p.get("label", ""),
+                path=p.get("path", "/"),
+            )
+            for p in ac.get("ports", [])
+        ]
+        access = Access(ports=ports)
+
     return Profile(
         path=path,
         name=name,
@@ -278,4 +307,5 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
         passthrough=passthrough,
         provision=provision,
         pypi_overrides=pypi_overrides,
+        access=access,
     )

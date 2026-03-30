@@ -1,0 +1,65 @@
+# Amplifier Chat web UI backed by amplifierd.
+# All dependencies fetched from upstream GitHub and PyPI.
+name: amplifier-chat
+description: >
+  Amplifier Chat web UI backed by amplifierd.
+  All dependencies fetched from upstream.
+base:
+  image: ubuntu:24.04
+
+access:
+  ports:
+    - host: 8410
+      container: 8410
+      label: Chat UI
+      path: /chat/
+
+passthrough:
+  allow_external: true
+  services:
+    - name: anthropic
+      key_env: ANTHROPIC_API_KEY
+
+provision:
+  setup_cmds:
+    # System deps
+    - apt-get update && apt-get install -y git curl
+
+    # Install uv
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    # Install amplifier-chat (standalone extra pulls in amplifierd)
+    - |
+      export PATH="/root/.local/bin:$PATH"
+      uv tool install "amplifier-chat[standalone] @ git+https://github.com/microsoft/amplifier-chat"
+
+    # Configure Amplifier provider so sessions can reach the LLM.
+    # $ANTHROPIC_API_KEY is available via passthrough env forwarding.
+    - |
+      mkdir -p /root/.amplifier
+      cat > /root/.amplifier/settings.yaml << EOF
+      config:
+        providers:
+          - module: provider-anthropic
+            source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@main
+            config:
+              api_key: $ANTHROPIC_API_KEY
+      EOF
+
+    # Start the server in background
+    - |
+      nohup amplifier-chat --host 0.0.0.0 --port 8410 --no-browser \
+        > /var/log/amplifier-chat.log 2>&1 &
+
+    # Wait for the server to be ready
+    - |
+      for i in $(seq 1 30); do
+        if curl -sf http://localhost:8410/chat/health > /dev/null 2>&1; then
+          echo "amplifier-chat is ready"
+          exit 0
+        fi
+        sleep 2
+      done
+      echo "amplifier-chat failed to start within 60s"
+      cat /var/log/amplifier-chat.log
+      exit 1

@@ -37,6 +37,19 @@ and the Anthropic provider pre-configured so Amplifier is ready to use immediate
 
 ![amplifier-user-sim launch flow](docs/amplifier-user-sim-launch-flow.svg)
 
+### Example: amplifier-chat
+
+The [amplifier-chat](profiles/amplifier-chat.yaml) profile launches a browser-accessible
+[amplifier-chat](https://github.com/microsoft/amplifier-chat) UI backed by amplifierd. 
+It installs the app from upstream, configures the Anthropic provider, 
+and uses `access.ports` to forward port 8410 to `localhost` so you can open 
+`http://localhost:8410/chat/` in your browser immediately after launch.
+
+```bash
+amplifier-digital-twin launch amplifier-chat
+# => {"access": [{"label": "Chat UI", "url": "http://localhost:8410/chat/"}], ...}
+```
+
 
 ## Installation
 
@@ -92,8 +105,9 @@ Profiles are self-contained and launchable on their own.
 - **DNS rewriting.** Services within the environment can be addressed by their real-world hostnames. 
 DNS rewriting and URL redirection make mock services feel like the real thing to code running inside.
 
-- **Human access.** Users can interact with a running environment and experience it as close to the real thing as possible -- launching apps, clicking through UIs, interacting with services. 
-The mechanism is TBD (remote desktop, remote shell + browser sessions, or something in between) but the goal is that a general info worker could intuit and "get it."
+- **Human access.** Profiles can declare `access.ports` to forward ports from the container to `localhost` on the host via Incus proxy devices. 
+This works seamlessly on WSL2 (Windows auto-forwards WSL2 localhost ports to the Windows host). 
+Users can open a browser and interact with web apps running inside the environment as if they were local.
 
 - **Agent interaction surfaces.** Agents can reach into the environment from the outside and drive "as a user" experiences via browser-tester, terminal-tester, and similar mechanisms. 
 Mock services can advertise affordances (coordinates, API hooks) so agents interact through the same surfaces as human users.

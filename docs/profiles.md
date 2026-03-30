@@ -167,6 +167,44 @@ Current behavior:
 - each `services[].key_env` is copied from the host into the environment if it exists
 - `amplifier-user-sim` uses this to forward `ANTHROPIC_API_KEY`
 
+## `access`
+
+Optional. When present, launch sets up Incus proxy devices to forward ports from
+the host to the container. This makes services inside the container reachable via
+`localhost` on the host machine (including through WSL2 to a Windows browser).
+
+Proxy devices are automatically removed when the container is destroyed.
+
+```yaml
+access:
+  ports:
+    - host: 8410
+      container: 8410
+      label: Chat UI
+      path: /chat/
+```
+
+Fields:
+
+- `host` (required) -- port to listen on the host
+- `container` (required) -- port to forward to inside the container
+- `label` (optional) -- human-readable name shown in launch output
+- `path` (optional, default `/`) -- URL path appended when constructing access URLs
+
+When `access.ports` is defined, the launch JSON includes additional fields:
+
+```json
+{
+  "container_ip": "10.x.x.x",
+  "access": [
+    {"label": "Chat UI", "url": "http://localhost:8410/chat/"}
+  ]
+}
+```
+
+`amplifier-chat` uses this to expose the web UI on `localhost:8410`.
+
+
 ## `provision`
 
 Optional. Right now only `provision.setup_cmds` is implemented.

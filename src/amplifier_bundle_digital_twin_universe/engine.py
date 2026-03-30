@@ -659,14 +659,41 @@ def launch(
             print("Running provisioning...", file=sys.stderr)
             _run_provisioning(container_name, profile.provision.setup_cmds)
 
+        # Port forwarding via Incus proxy devices
+        access_urls: list[dict[str, str]] = []
+        if profile.access and profile.access.ports:
+            container_ip = incus.get_container_ip(container_name)
+            for pm in profile.access.ports:
+                device = f"proxy-{pm.host}"
+                incus.add_proxy_device(
+                    container_name,
+                    device,
+                    pm.host,
+                    pm.container,
+                )
+                url = f"http://localhost:{pm.host}{pm.path}"
+                label = pm.label or f"port {pm.host}"
+                access_urls.append({"label": label, "url": url})
+                print(
+                    f"  forwarding :{pm.host} -> :{pm.container} ({label})",
+                    file=sys.stderr,
+                )
+        else:
+            container_ip = None
+
         print(f"DTU {container_name} ready.", file=sys.stderr)
-        return {
+        result: dict = {
             "id": container_name,
             "name": container_name,
             "profile": profile.name,
             "status": "running",
             "created_at": now,
         }
+        if container_ip:
+            result["container_ip"] = container_ip
+        if access_urls:
+            result["access"] = access_urls
+        return result
     except Exception:
         # Best-effort cleanup on failure.
         try:

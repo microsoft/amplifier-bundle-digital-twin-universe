@@ -32,17 +32,24 @@ amplifier-digital-twin launch <profile> \
 `--name` (optional)
   Human-readable name. Defaults to `dtu-<uuid8>`.
 
-Returns:
+Returns (example):
 
 ```json
 {
   "id": "dtu-a1b2c3d4",
   "name": "dtu-a1b2c3d4",
-  "profile": "amplifier-user-sim",
+  "profile": "amplifier-chat",
   "status": "running",
-  "created_at": "2026-03-23T16:00:00Z"
+  "created_at": "2026-03-23T16:00:00Z",
+  "container_ip": "10.231.68.42",
+  "access": [
+    {"label": "Chat UI", "url": "http://localhost:8410/chat/"}
+  ]
 }
 ```
+
+`container_ip` and `access` are present when the profile defines `access.ports`.
+See [profiles.md](profiles.md) for the `access` schema.
 
 
 ### `exec`

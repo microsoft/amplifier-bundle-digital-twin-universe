@@ -108,11 +108,25 @@ launches `amplifier-user-sim`, and verifies:
 uv run pytest tests/test_e2e_amplifier_user_sim.py --run-e2e -v -s
 ```
 
+#### amplifier-chat web UI test
+
+Launches `amplifier-chat`, verifies the health endpoint, chat UI, and
+LLM execution are reachable from the host via the Incus proxy device.
+
+**Prerequisites:**
+- Incus running
+- `ANTHROPIC_API_KEY`
+
+```bash
+uv run pytest tests/test_e2e_amplifier_chat.py --run-e2e -v -s
+```
+
 To run all end-to-end suites:
 
 ```bash
 uv run pytest tests/test_e2e_pypi.py \
   tests/test_e2e_amplifier_user_sim_single_module.py \
   tests/test_e2e_amplifier_user_sim.py \
+  tests/test_e2e_amplifier_chat.py \
   --run-e2e -v -s
 ```
