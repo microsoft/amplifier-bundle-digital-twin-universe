@@ -39,8 +39,8 @@ and the Anthropic provider pre-configured so Amplifier is ready to use immediate
 
 ### Example: amplifier-chat
 
-The [amplifier-chat](profiles/amplifier-chat.yaml) profile launches a browser-accessible
-[amplifier-chat](https://github.com/microsoft/amplifier-chat) UI backed by amplifierd. 
+The [amplifier-chat profile](profiles/amplifier-chat.yaml) launches a browser-accessible
+[amplifier-chat UI](https://github.com/microsoft/amplifier-chat) backed by amplifierd. 
 It installs the app from upstream, configures the Anthropic provider, 
 and uses `access.ports` to forward port 8410 to `localhost` so you can open 
 `http://localhost:8410/chat/` in your browser immediately after launch.
