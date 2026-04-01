@@ -29,6 +29,9 @@ services, networking, and provisioning needed to launch a complete environment.
 
 See [docs/profiles.md](docs/profiles.md) for the full profile reference and [profiles/](profiles/) for examples.
 
+Profiles can include mock services as Docker sidecars with transparent DNS rewriting.
+See [docs/mock-authoring.md](docs/mock-authoring.md) for how to build a mock and a list of community mocks.
+
 ### Example: amplifier-user-sim
 
 The [amplifier-user-sim](profiles/amplifier-user-sim.yaml) profile simulates an Amplifier user
