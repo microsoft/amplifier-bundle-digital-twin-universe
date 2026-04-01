@@ -4,7 +4,7 @@
 
 - [uv](https://docs.astral.sh/uv/) (package manager and runner)
 - [Incus](https://linuxcontainers.org/incus/) (container runtime)
-- [Docker Engine](https://docs.docker.com/engine/install/) (for Gitea instances)
+- [Docker Engine](https://docs.docker.com/engine/install/) (for Gitea instances and mock service sidecars)
 - [amplifier-gitea](https://github.com/microsoft/amplifier-bundle-gitea) on PATH
 
 ```bash

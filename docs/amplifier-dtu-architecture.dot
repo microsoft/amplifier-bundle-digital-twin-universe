@@ -23,7 +23,7 @@ digraph dtu_architecture {
 
         app [label="Application / system under test\n(clone, install, run)"]
 
-        subgraph cluster_catalog {
+        subgraph cluster_internals {
             label="Profile-defined internals"
             style="rounded,filled"
             color="#999999"
@@ -31,16 +31,27 @@ digraph dtu_architecture {
             fontname="Helvetica"
             fontsize=9
 
-            svc_a [label="Mock\nService"]
-            svc_b [label="Local dependency\nsource"]
-            svc_c [label="Other simulated\ninfrastructure"]
-            { rank=same; svc_a; svc_b; svc_c }
+            proxy [label="mitmproxy\n(URL rewrites,\ndomain routing)"]
+            dep_source [label="Local dependency\nsource"]
+            pypi [label="Local\npypiserver"]
+            { rank=same; proxy; dep_source; pypi }
         }
 
         app [ordering=out]
-        app -> svc_a [label="calls"]
-        app -> svc_b [label="calls"]
-        app -> svc_c [style=invis]
+        app -> proxy [label="HTTPS traffic"]
+        app -> dep_source [label="calls"]
+    }
+
+    subgraph cluster_sidecars {
+        label="Mock service Docker sidecars  (host-side)"
+        style="rounded,dashed"
+        color="#b07d2b"
+        fontname="Helvetica"
+        fontsize=10
+
+        mock_a [label="Mock\nService A", fillcolor="#fff3cd"]
+        mock_b [label="Mock\nService B", fillcolor="#fff3cd"]
+        { rank=same; mock_a; mock_b }
     }
 
     external [label="External services\n(LLM, OAuth, Git hosting,\npackage registries, ...)", shape=cylinder, fillcolor="#f5f5f5"]
@@ -61,6 +72,10 @@ digraph dtu_architecture {
     exec_box -> app [lhead=cluster_dtu]
     observe_box -> app [lhead=cluster_dtu]
     simulate_box -> app [lhead=cluster_dtu]
+
+    // mitmproxy routes intercepted domains to mock sidecars
+    proxy -> mock_a [label="domain\nrouting", color="#b07d2b", fontcolor="#b07d2b"]
+    proxy -> mock_b [style=dashed, color="#b07d2b"]
 
     // Passthrough: the environment can reach external services when allowed
     app -> external [label="passthrough\n(credentials forwarded)", style=dotted, color="#888888", fontcolor="#888888", ltail=cluster_dtu]

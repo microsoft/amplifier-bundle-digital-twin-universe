@@ -117,6 +117,12 @@ class ReadinessCheck:
 
 
 @dataclass
+class ServiceEntry:
+    source: str
+    config: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class Profile:
     path: Path
     name: str
@@ -128,6 +134,7 @@ class Profile:
     pypi_overrides: PypiOverrides | None = None
     access: Access | None = None
     readiness: list[ReadinessCheck] | None = None
+    mock_services: list[ServiceEntry] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +373,20 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
             )
         readiness = checks
 
+    # mock_services (optional)
+    mock_service_entries: list[ServiceEntry] = []
+    mock_services_data = data.get("mock_services")
+    if mock_services_data:
+        for s in mock_services_data:
+            if "source" not in s:
+                raise ValueError("Each mock_services entry must have a 'source' field")
+            mock_service_entries.append(
+                ServiceEntry(
+                    source=s["source"],
+                    config=s.get("config", {}),
+                )
+            )
+
     return Profile(
         path=path,
         name=name,
@@ -377,4 +398,5 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
         pypi_overrides=pypi_overrides,
         access=access,
         readiness=readiness,
+        mock_services=mock_service_entries,
     )

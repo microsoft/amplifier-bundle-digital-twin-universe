@@ -10,7 +10,8 @@ All commands return JSON to stdout unless noted otherwise.
 ### `launch`
 
 Launch a new Digital Twin Universe from a profile. Creates an Incus container,
-sets up the HTTPS rewriting proxy (if `url_rewrites` is configured), runs
+starts mock service Docker sidecars (if `mock_services` is configured), sets up the
+HTTPS rewriting proxy (if `url_rewrites` or `mock_services` require it), runs
 provisioning, and returns connection details.
 
 ```bash
@@ -45,15 +46,29 @@ Returns (example):
   "access": [
     {"label": "Chat UI", "url": "http://localhost:8410/chat/"}
   ],
+  "mock_services": [
+    {
+      "name": "slack",
+      "container_id": "a1b2c3d4e5f6",
+      "host_port": 38421,
+      "domains": ["api.slack.com", "slack.com"]
+    }
+  ],
   "info": [
     "Readiness checks configured. Poll with: amplifier-digital-twin check-readiness dtu-a1b2c3d4"
   ]
 }
 ```
 
-`container_ip` and `access` are present when the profile defines `access.ports`. `info` is a list of guidance strings. 
-Contains a readiness hint when the profile defines `readiness` checks. Empty list when there are none.
-See [profiles.md](profiles.md) for the `access` and `readiness` schemas.
+Optional fields:
+
+- `container_ip` and `access` -- present when the profile defines `access.ports`
+- `mock_services` -- present when the profile defines `mock_services`. Each entry includes
+  the mock service name, Docker container ID, ephemeral host port, and intercepted domains.
+- `info` -- list of guidance strings. Contains a readiness hint when the profile defines
+  `readiness` checks. Empty list when there are none.
+
+See [profiles.md](profiles.md) for the `access`, `mock_services`, and `readiness` schemas.
 
 
 ### `exec`
@@ -216,7 +231,9 @@ Returns an empty array `[]` when no environments exist.
 
 ### `destroy`
 
-Destroy an environment. Stops and deletes the Incus container and any associated storage.
+Destroy an environment. Stops and removes any mock service Docker containers
+associated with the environment, then stops and deletes the Incus container
+and any associated storage.
 
 
 ```bash

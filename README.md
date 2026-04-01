@@ -134,8 +134,11 @@ Mock services can advertise affordances (coordinates, API hooks) so agents inter
 
 - **Amplifier skill.** The bundle ships a `digital-twin-universe` [skill](skills/) for help installing the CLI, understanding profiles, and using environments within Amplifier sessions.
 
-- **Mock service catalog (TBD)** Profiles reference mock services from a catalog of pre-built images. 
-Mock services can stand in for real external services (M365, Slack, GSuite, etc.) allowing unlimited use without rate limits, app registration overhead, or cost.
+- **Mock service sidecars.** Profiles can declare `mock_services` that are resolved (cloned or local), built into Docker images, and started as sidecar containers alongside the Incus environment. 
+mitmproxy routes traffic for declared domains from inside the environment to the mock, including WebSocket upgrades. 
+See [docs/profiles.md](docs/profiles.md#mock_services) for the `mock_services` schema and mock manifest format.
+
+- **Mock service catalog (TBD).** A catalog of pre-built mock images for common external services (M365, Slack, GSuite, etc.) allowing for testing without rate limits, manual app registration overhead, etc.
 
 
 ## Installing Incus

@@ -205,6 +205,73 @@ When `access.ports` is defined, the launch JSON includes additional fields:
 `amplifier-chat` uses this to expose the web UI on `localhost:8410`.
 
 
+## `mock_services`
+
+Optional. A list of mock services to run as Docker sidecar containers alongside
+the Incus environment. Each service is resolved from a source (local directory or
+git URL), built into a Docker image, and started with an ephemeral port mapping.
+Mock services are meant to exercise the provisioned code with as close to real-world conditions as possible.
+
+Traffic from inside the Incus container to service domains is routed through
+mitmproxy automatically -- code running inside the environment can address mock
+services by their real-world hostnames.
+
+```yaml
+mock_services:
+  - source: /path/to/my-mock-service
+    config:
+      api_key: my-secret
+```
+
+Fields:
+
+- `source` (required) -- local directory path or git URL to the mock service
+  repository. Must contain a `digital-twin-mock.yaml` manifest at its root.
+- `config` (optional) -- key-value map passed as environment variables to the
+  Docker container (keys are uppercased).
+
+### Mock service manifest
+
+Each mock service must have a `digital-twin-mock.yaml` at its root:
+
+```yaml
+name: my-service
+version: 0.1.0
+description: Mock for an external API
+
+runtime:
+  type: docker
+  build: Dockerfile    # optional, defaults to "Dockerfile"
+  port: 3000           # container port the service listens on
+
+domains:
+  - api.example.com
+  - example.com
+```
+
+Fields:
+
+- `name` (required) -- service identifier
+- `version` (optional, default `0.0.0`)
+- `description` (optional)
+- `runtime.type` -- currently only `docker` is supported
+- `runtime.build` (optional) -- Dockerfile path relative to the service root
+- `runtime.image` (optional) -- pre-built image to use instead of building
+- `runtime.port` (required) -- container port the service listens on
+- `domains` (optional) -- hostnames that mitmproxy will intercept and route to
+  this service. Enables DNS rewriting so code inside the environment can use
+  real-world hostnames to reach the mock.
+
+### Lifecycle
+
+Mock service containers are:
+
+- built and started during `launch`, before the mitmproxy proxy is configured
+- tracked with Docker labels (`dtu.env-id`, `dtu.mock-name`)
+- stopped and removed during `destroy`
+- cleaned up on launch failure (best-effort)
+
+
 ## `provision`
 
 Optional. Right now only `provision.setup_cmds` is implemented.

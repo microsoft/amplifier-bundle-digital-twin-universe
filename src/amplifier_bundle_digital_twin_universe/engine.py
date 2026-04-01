@@ -25,6 +25,10 @@ from urllib.parse import quote
 
 from amplifier_bundle_digital_twin_universe import incus
 from amplifier_bundle_digital_twin_universe.incus import IncusError
+from dataclasses import dataclass
+
+import yaml as _yaml
+
 from amplifier_bundle_digital_twin_universe.profile import (
     Profile,
     has_unresolved_vars,
@@ -95,8 +99,17 @@ def _rewrite_localhost(variables: dict[str, str], host_ip: str) -> dict[str, str
 # ---------------------------------------------------------------------------
 
 
-def _should_setup_proxy(profile: Profile) -> bool:
+def _should_setup_proxy(
+    profile: Profile,
+    running_services: list[RunningService] | None = None,
+) -> bool:
     """Return *True* if the proxy should be configured."""
+    # Services with domains always need the proxy.
+    if running_services:
+        for svc in running_services:
+            if svc.domains:
+                return True
+
     if not profile.url_rewrites or not profile.url_rewrites.rules:
         return False
     # Skip proxy when required variables are still unresolved.
@@ -139,6 +152,7 @@ def _exec_checked(container_name: str, command: str, timeout: int = 600) -> str:
 
 
 _ADDON_TEMPLATE = """\
+import json as _json
 import sys
 from mitmproxy import http
 from urllib.parse import urlparse
@@ -146,6 +160,7 @@ from urllib.parse import urlparse
 RULES = {rules!r}
 PYPI_OVERRIDES = {pypi_overrides!r}
 PYPI_SERVER_PORT = {pypi_server_port}
+SERVICE_DOMAINS = {service_domains!r}
 
 def _log(msg):
     print(f"[rewrite] {{msg}}", file=sys.stderr, flush=True)
@@ -155,6 +170,17 @@ class RewriteAddon:
     def request(self, flow: http.HTTPFlow) -> None:
         host = flow.request.pretty_host
         path = flow.request.path
+
+        # Mock service domain rewrites (HTTP + WebSocket upgrade).
+        if host in SERVICE_DOMAINS:
+            target = SERVICE_DOMAINS[host]
+            _log(f"SERVICE {{host}}{{path}} -> {{target['host']}}:{{target['port']}}")
+            # Stash the original domain so the response hook can find it.
+            flow.metadata["dtu_service_domain"] = host
+            flow.request.scheme = "http"
+            flow.request.host = target["host"]
+            flow.request.port = target["port"]
+            return
 
         # URL rewrite rules (GitHub -> Gitea etc.)
         for rule in RULES:
@@ -198,43 +224,90 @@ class RewriteAddon:
                     return
             _log(f"PYPI PASS-THROUGH {{host}}{{path}}")
 
+    def response(self, flow: http.HTTPFlow) -> None:
+        # Rewrite Socket Mode WebSocket URLs in apps.connections.open responses.
+        # The mock returns ws://HOST:PORT/ws but inside the container that IP
+        # is only reachable without TLS.  Rewrite the URL to use the original
+        # service domain so the bot connects via wss:// through mitmproxy,
+        # which routes it to the mock transparently.
+        original_domain = flow.metadata.get("dtu_service_domain")
+        if not original_domain:
+            return
+        path = flow.request.path
+        if "/apps.connections.open" not in path:
+            return
+        if not flow.response or not flow.response.content:
+            return
+        try:
+            body = _json.loads(flow.response.content)
+            if body.get("ok") and "url" in body:
+                old_url = body["url"]
+                # Replace ws://HOST:PORT/path with wss://DOMAIN/path so the
+                # bot connects via TLS through mitmproxy, which intercepts
+                # the domain and routes it to the mock transparently.
+                parsed = urlparse(old_url)
+                new_url = f"wss://{{original_domain}}{{parsed.path}}"
+                if parsed.query:
+                    new_url += f"?{{parsed.query}}"
+                body["url"] = new_url
+                flow.response.content = _json.dumps(body).encode()
+                _log(f"REWRITE apps.connections.open: {{old_url}} -> {{new_url}}")
+        except Exception:
+            pass
+
 
 addons = [RewriteAddon()]
 """
 
 
-def _generate_addon_script(profile: Profile, variables: dict[str, str]) -> str:
-    """Generate the mitmproxy rewrite addon from *profile*'s url_rewrites.
+def _generate_addon_script(
+    profile: Profile,
+    variables: dict[str, str],
+    running_services: list[RunningService] | None = None,
+    host_ip: str = "10.0.0.1",
+) -> str:
+    """Generate the mitmproxy rewrite addon.
 
-    Supports two kinds of interception:
+    Supports three kinds of interception:
 
-    1. **URL rewrites** -- redirect git/HTTPS requests matching a host+path
+    1. **Mock service domains** -- redirect all traffic (HTTP + WebSocket) for
+       domains declared by mock services to the Docker sidecar.
+    2. **URL rewrites** -- redirect git/HTTPS requests matching a host+path
        prefix to a different target (e.g. GitHub -> Gitea).
-    2. **PyPI overrides** -- intercept PyPI Simple API requests for specific
+    3. **PyPI overrides** -- intercept PyPI Simple API requests for specific
        packages and redirect them to a local pypiserver.
     """
     rules: list[dict[str, str]] = []
-    assert profile.url_rewrites is not None  # caller checked
 
-    auth_header = ""
-    if profile.url_rewrites.auth:
-        token = variables.get(profile.url_rewrites.auth.token_var, "")
-        username = profile.url_rewrites.auth.username
-        cred = base64.b64encode(f"{username}:{token}".encode()).decode()
-        auth_header = f"Basic {cred}"
+    if profile.url_rewrites and profile.url_rewrites.rules:
+        auth_header = ""
+        if profile.url_rewrites.auth:
+            token = variables.get(profile.url_rewrites.auth.token_var, "")
+            username = profile.url_rewrites.auth.username
+            cred = base64.b64encode(f"{username}:{token}".encode()).decode()
+            auth_header = f"Basic {cred}"
 
-    for rule in profile.url_rewrites.rules:
-        parts = rule.match.split("/", 1)
-        match_host = parts[0]
-        match_path_prefix = "/" + parts[1] if len(parts) > 1 else "/"
-        rules.append(
-            {
-                "match_host": match_host,
-                "match_path_prefix": match_path_prefix,
-                "target_url": rule.target,
-                "auth_header": auth_header,
-            }
-        )
+        for rule in profile.url_rewrites.rules:
+            parts = rule.match.split("/", 1)
+            match_host = parts[0]
+            match_path_prefix = "/" + parts[1] if len(parts) > 1 else "/"
+            rules.append(
+                {
+                    "match_host": match_host,
+                    "match_path_prefix": match_path_prefix,
+                    "target_url": rule.target,
+                    "auth_header": auth_header,
+                }
+            )
+
+    # Build service domain -> (host, port) mapping.
+    # The mock Docker container publishes a port on the host.  From inside
+    # the Incus container we reach it via the bridge gateway IP.
+    service_domains: dict[str, dict[str, object]] = {}
+    if running_services:
+        for svc in running_services:
+            for domain in svc.domains:
+                service_domains[domain] = {"host": host_ip, "port": svc.host_port}
 
     # Collect PyPI override package names (PEP 503 normalized).
     pypi_overrides: list[str] = []
@@ -246,11 +319,16 @@ def _generate_addon_script(profile: Profile, variables: dict[str, str]) -> str:
         rules=rules,
         pypi_overrides=pypi_overrides,
         pypi_server_port=_PYPI_SERVER_PORT,
+        service_domains=service_domains,
     )
 
 
 def _setup_proxy(
-    container_name: str, profile: Profile, variables: dict[str, str]
+    container_name: str,
+    profile: Profile,
+    variables: dict[str, str],
+    running_services: list[RunningService] | None = None,
+    host_ip: str = "10.0.0.1",
 ) -> None:
     """Install mitmproxy inside *container_name* and start the rewrite daemon."""
     # 1. Install mitmproxy, pypiserver, and dependencies
@@ -266,7 +344,9 @@ def _setup_proxy(
 
     # 2. Push the rewrite addon script
     _exec_checked(container_name, "mkdir -p /opt/dtu")
-    addon_script = _generate_addon_script(profile, variables)
+    addon_script = _generate_addon_script(
+        profile, variables, running_services=running_services, host_ip=host_ip
+    )
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         f.write(addon_script)
         local_addon = f.name
@@ -292,16 +372,22 @@ def _setup_proxy(
     # overhead, much faster.  Since LLM API traffic (SSE/streaming) is
     # tunnelled rather than intercepted, it streams natively without needing
     # the stream_large_bodies setting.
-    assert profile.url_rewrites is not None  # caller checked
-    rewrite_hosts = {rule.match.split("/", 1)[0] for rule in profile.url_rewrites.rules}
+    rewrite_hosts: set[str] = set()
+
+    if profile.url_rewrites and profile.url_rewrites.rules:
+        rewrite_hosts.update(
+            rule.match.split("/", 1)[0] for rule in profile.url_rewrites.rules
+        )
 
     # If pypi_overrides are configured, also intercept PyPI TLS traffic.
-    # Both pypi.org (Simple API index) and files.pythonhosted.org (wheel
-    # downloads) need TLS interception so mitmproxy can rewrite requests
-    # for overridden packages to the local pypiserver.
     if profile.pypi_overrides and profile.pypi_overrides.packages:
         rewrite_hosts.add("pypi.org")
         rewrite_hosts.add("files.pythonhosted.org")
+
+    # Add domains from mock services.
+    if running_services:
+        for svc in running_services:
+            rewrite_hosts.update(svc.domains)
 
     allow_hosts_re = "|".join(re.escape(h) for h in sorted(rewrite_hosts))
 
@@ -508,6 +594,215 @@ def _setup_pypi_overrides(
 
 
 # ---------------------------------------------------------------------------
+# Mock services -- Docker sidecar lifecycle
+# ---------------------------------------------------------------------------
+
+_DOCKER_LABEL_MANAGED_BY = "dtu.managed-by"
+_DOCKER_LABEL_ENV_ID = "dtu.env-id"
+_DOCKER_LABEL_MOCK_NAME = "dtu.mock-name"
+
+
+@dataclass
+class MockManifest:
+    """Parsed ``digital-twin-mock.yaml`` from a mock service repo."""
+
+    name: str
+    version: str
+    description: str
+    runtime_type: str
+    runtime_build: str | None
+    runtime_image: str | None
+    runtime_port: int
+    domains: list[str]
+
+
+@dataclass
+class RunningService:
+    """Tracking info for a running mock service container."""
+
+    name: str
+    container_id: str
+    host_port: int
+    domains: list[str]
+
+
+def _resolve_service_source(source: str) -> Path:
+    """Clone from GitHub or resolve a local path.  Returns local directory."""
+    if source.startswith(("http://", "https://", "github.com")):
+        url = source if "://" in source else f"https://{source}"
+        clone_dir = Path(tempfile.mkdtemp(prefix="dtu-mock-"))
+        _run_host_command(
+            ["git", "clone", "--depth", "1", url, str(clone_dir)],
+            timeout=120,
+        )
+        return clone_dir
+    # Local path (absolute or relative to CWD).
+    local = Path(source).resolve()
+    if not local.is_dir():
+        raise RuntimeError(f"Mock service source is not a directory: {local}")
+    return local
+
+
+def _read_mock_manifest(service_dir: Path) -> MockManifest:
+    """Parse ``digital-twin-mock.yaml`` from *service_dir*."""
+    manifest_path = service_dir / "digital-twin-mock.yaml"
+    if not manifest_path.exists():
+        raise RuntimeError(
+            f"Mock manifest not found: {manifest_path}\n"
+            f"Each mock service must have a digital-twin-mock.yaml at its root."
+        )
+    raw = _yaml.safe_load(manifest_path.read_text())
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"Mock manifest must be a YAML mapping, got {type(raw).__name__}"
+        )
+
+    runtime = raw.get("runtime", {})
+    return MockManifest(
+        name=raw["name"],
+        version=raw.get("version", "0.0.0"),
+        description=raw.get("description", ""),
+        runtime_type=runtime.get("type", "docker"),
+        runtime_build=runtime.get("build"),
+        runtime_image=runtime.get("image"),
+        runtime_port=int(runtime.get("port", 3000)),
+        domains=raw.get("domains", []),
+    )
+
+
+def _build_mock_image(manifest: MockManifest, service_dir: Path) -> str:
+    """Build a Docker image for the mock.  Returns the image tag."""
+    tag = f"dtu-mock-{manifest.name}:{manifest.version}"
+    dockerfile = manifest.runtime_build or "Dockerfile"
+    _run_host_command(
+        ["docker", "build", "-t", tag, "-f", dockerfile, "."],
+        cwd=service_dir,
+        timeout=300,
+    )
+    return tag
+
+
+def _start_mock_container(
+    env_id: str,
+    manifest: MockManifest,
+    config: dict[str, str],
+    image: str,
+) -> tuple[str, int]:
+    """Start a Docker container for the mock.
+
+    Returns ``(container_id, host_port)``.
+    """
+    container_name = f"dtu-mock-{manifest.name}-{env_id}"
+    cmd: list[str] = [
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        container_name,
+        "--label",
+        f"{_DOCKER_LABEL_MANAGED_BY}=amplifier-digital-twin",
+        "--label",
+        f"{_DOCKER_LABEL_ENV_ID}={env_id}",
+        "--label",
+        f"{_DOCKER_LABEL_MOCK_NAME}={manifest.name}",
+        "-p",
+        f"0:{manifest.runtime_port}",
+    ]
+
+    # Pass config as environment variables.
+    for k, v in config.items():
+        env_key = k.upper()
+        cmd.extend(["-e", f"{env_key}={v}"])
+
+    cmd.append(image)
+
+    stdout = _run_host_command(cmd, timeout=60)
+    container_id = stdout.strip()[:12]
+
+    # Read the assigned host port.
+    port_output = _run_host_command(
+        ["docker", "port", container_name, str(manifest.runtime_port)],
+        timeout=10,
+    )
+    # Output is like "0.0.0.0:38421" or "[::]:38421"
+    host_port = int(port_output.strip().rsplit(":", 1)[-1])
+
+    return container_id, host_port
+
+
+def _stop_mock_containers(env_id: str) -> None:
+    """Stop and remove all Docker mock containers for *env_id*."""
+    result = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            f"label={_DOCKER_LABEL_ENV_ID}={env_id}",
+            "--format",
+            "{{.Names}}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return
+    names = [n.strip() for n in result.stdout.strip().split("\n") if n.strip()]
+    for name in names:
+        subprocess.run(
+            ["docker", "rm", "-f", name],
+            capture_output=True,
+            timeout=30,
+        )
+
+
+def _setup_services(
+    env_id: str,
+    profile: Profile,
+) -> list[RunningService]:
+    """Resolve, build, and start all mock services declared in *profile*.
+
+    Returns a list of :class:`RunningService` for wiring into mitmproxy.
+    """
+    running: list[RunningService] = []
+    for svc in profile.mock_services:
+        source = svc.source
+        if has_unresolved_vars(source):
+            raise RuntimeError(
+                f"Service source has unresolved variables: {source!r}. "
+                f"Pass the required --var at launch time."
+            )
+
+        print(f"  resolving mock service: {source}", file=sys.stderr)
+        service_dir = _resolve_service_source(source)
+        manifest = _read_mock_manifest(service_dir)
+
+        print(f"  building Docker image: dtu-mock-{manifest.name}...", file=sys.stderr)
+        image = _build_mock_image(manifest, service_dir)
+
+        print(f"  starting mock container: {manifest.name}...", file=sys.stderr)
+        container_id, host_port = _start_mock_container(
+            env_id, manifest, svc.config, image
+        )
+        print(
+            f"  mock {manifest.name} running on host port {host_port}",
+            file=sys.stderr,
+        )
+
+        running.append(
+            RunningService(
+                name=manifest.name,
+                container_id=container_id,
+                host_port=host_port,
+                domains=manifest.domains,
+            )
+        )
+
+    return running
+
+
+# ---------------------------------------------------------------------------
 # Environment variables
 # ---------------------------------------------------------------------------
 
@@ -635,14 +930,26 @@ def launch(
         rewritten_vars = _rewrite_localhost(variables, host_ip)
         profile = load_profile(profile_arg, rewritten_vars)
 
+        # Mock services -- resolve, build, and start Docker sidecars.
+        running_services: list[RunningService] = []
+        if profile.mock_services:
+            print("Setting up mock services...", file=sys.stderr)
+            running_services = _setup_services(container_name, profile)
+
         # Proxy
-        proxy_enabled = _should_setup_proxy(profile)
+        proxy_enabled = _should_setup_proxy(profile, running_services)
         if proxy_enabled:
             print("Setting up mitmproxy...", file=sys.stderr)
-            _setup_proxy(container_name, profile, rewritten_vars)
+            _setup_proxy(
+                container_name,
+                profile,
+                rewritten_vars,
+                running_services=running_services,
+                host_ip=host_ip,
+            )
         else:
             print(
-                "Skipping proxy (no url_rewrites or unresolved vars).",
+                "Skipping proxy (no url_rewrites, mock_services, or unresolved vars).",
                 file=sys.stderr,
             )
 
@@ -731,9 +1038,23 @@ def launch(
             result["container_ip"] = container_ip
         if access_urls:
             result["access"] = access_urls
+        if running_services:
+            result["mock_services"] = [
+                {
+                    "name": svc.name,
+                    "container_id": svc.container_id,
+                    "host_port": svc.host_port,
+                    "domains": svc.domains,
+                }
+                for svc in running_services
+            ]
         return result
     except Exception:
         # Best-effort cleanup on failure.
+        try:
+            _stop_mock_containers(container_name)
+        except Exception:
+            pass
         try:
             incus.delete_container(container_name, force=True)
         except Exception:
@@ -855,6 +1176,9 @@ def destroy(container_id: str) -> dict:
     """Destroy the environment.  Returns ``{id, destroyed}``."""
     if not incus.container_exists(container_id):
         raise RuntimeError(f"Environment not found: {container_id}")
+
+    # Stop mock service Docker containers before destroying the Incus container.
+    _stop_mock_containers(container_id)
 
     incus.stop_container(container_id)
     incus.delete_container(container_id)
