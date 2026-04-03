@@ -25,11 +25,15 @@ If `amplifier-digital-twin` is not found:
 uv tool install git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe@main
 ```
 
-If Incus is not installed or running, see the Installing Incus section in the README:
+If Incus is not installed or running, read the install guide for platform-specific steps and verification:
 ```
-read_file("@digital-twin-universe:README.md")
+read_file("@digital-twin-universe:docs/installing-incus.md")
 ```
-and consult the official documentation: https://linuxcontainers.org/incus/docs/main/installing/
+
+If Docker is needed (profiles with Gitea or mock services) and `docker version` fails:
+```
+read_file("@digital-twin-universe:docs/installing-docker.md")
+```
 
 **If prerequisites are missing, report clearly and stop. Do not attempt workarounds.**
 

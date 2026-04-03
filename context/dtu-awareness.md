@@ -8,10 +8,43 @@ You have access to `amplifier-digital-twin`, a CLI for on-demand isolated enviro
 - User wants to launch a simulated Amplifier user environment or web UI
 - User needs an ephemeral container with DNS rewriting, API passthrough, or port forwarding
 
+## How to Use
+
+Please load the `digital-twin-universe` skill. It will give you the necessary installation instructions, CLI documentation, profile reference, and troubleshooting:
+
+```
+load_skill(skill_name="digital-twin-universe")
+```
+
 ## Prerequisites
 
-- [Incus](https://linuxcontainers.org/incus/) installed and running
+- [Incus](https://linuxcontainers.org/incus/) installed and running (see install guide below)
+- [Docker Engine](https://docs.docker.com/engine/install/) — required for profiles using Gitea repos or mock service sidecars (see install guide below)
 - `amplifier-digital-twin` CLI installed (`uv tool install git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe@main`)
+
+## Installing Incus
+
+If the user doesn't have Incus installed, walk them through the platform-specific steps in the install guide. After installation, always run the verification steps to confirm it works.
+If their system is not in the documentation, go to the actual documentation at https://linuxcontainers.org/incus/docs/main/installing/
+
+```
+read_file("@digital-twin-universe:docs/installing-incus.md")
+```
+
+After installing, make sure to test to see if its working as expected.
+
+## Installing Docker
+
+Docker is only needed for profiles that use Gitea repos or mock service sidecars. Check if it's already installed with `docker version`. 
+You should encourage the user to install Docker since some circumstances will require it.
+If it's not installed, walk the user through the install guide:
+
+```
+read_file("@digital-twin-universe:docs/installing-docker.md")
+```
+
+After installing, make sure to test to see if its working as expected.
+
 
 ## Quick Command Reference
 
@@ -19,18 +52,12 @@ You have access to `amplifier-digital-twin`, a CLI for on-demand isolated enviro
 |---------|---------|
 | `amplifier-digital-twin launch <profile>` | Launch an environment from a profile |
 | `amplifier-digital-twin exec <id> [-- <cmd>]` | Run a command or open a shell inside an environment |
+| `amplifier-digital-twin check-readiness <id>` | Run readiness checks (exit 0 = ready, 1 = not ready) |
 | `amplifier-digital-twin status <id>` | Check environment status |
 | `amplifier-digital-twin list` | List all managed environments |
 | `amplifier-digital-twin destroy <id>` | Tear down an environment |
 
 All commands output JSON to stdout.
-
-## Browser-Based Verification
-
-For profiles with web UIs, delegate to `digital-twin-universe:dtu-browser-tester`
-to launch an environment and verify the UI works with a real browser. Triggers:
-- "test the web UI", "verify the app works in the browser"
-- "launch and test", "browser test the DTU"
 
 ## Example Profiles
 
@@ -41,12 +68,4 @@ Read example profiles:
 ```
 read_file("@digital-twin-universe:profiles/amplifier-user-sim.yaml")
 read_file("@digital-twin-universe:profiles/amplifier-chat.yaml")
-```
-
-## Full Reference
-
-Load the `digital-twin-universe` skill for complete CLI documentation, profile reference, and troubleshooting:
-
-```
-load_skill(skill_name="digital-twin-universe")
 ```

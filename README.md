@@ -59,7 +59,8 @@ amplifier-digital-twin launch amplifier-chat
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) (package manager and runner)
-- [Incus](https://linuxcontainers.org/incus/) (container runtime) -- see [Installing Incus](#installing-incus) below
+- [Incus](https://linuxcontainers.org/incus/) (container runtime) -- see [docs/installing-incus.md](docs/installing-incus.md)
+- [Docker Engine](https://docs.docker.com/engine/install/) (for Gitea repos and mock service sidecars) -- see [docs/installing-docker.md](docs/installing-docker.md)
 
 ### CLI
 
@@ -142,56 +143,6 @@ mitmproxy routes traffic for declared domains from inside the environment to the
 See [docs/profiles.md](docs/profiles.md#mock_services) for the `mock_services` schema and mock manifest format.
 
 - **Mock service catalog (TBD).** A catalog of pre-built mock images for common external services (M365, Slack, GSuite, etc.) allowing for testing without rate limits, manual app registration overhead, etc.
-
-
-## Installing Incus
-
-Incus is the container runtime used by the Digital Twin Universe.
-
-### Ubuntu / WSL2 (Ubuntu 24.04+)
-
-```bash
-# Install
-sudo apt update && sudo apt install -y incus
-
-# Initialize with defaults
-sudo incus admin init --minimal
-
-# Grant your user permission to manage containers
-sudo usermod -aG incus-admin $USER
-newgrp incus-admin
-```
-
-Verify:
-
-```bash
-incus version                                          # should show Client + Server versions
-incus launch images:ubuntu/24.04 test-hello            # create a test container
-incus exec test-hello -- echo "hello from container"   # run a command inside it
-incus delete test-hello --force                         # clean up
-```
-
-If `incus version` shows `Server version: unreachable`, your shell session
-doesn't have the `incus-admin` group yet. Run `newgrp incus-admin` or log out
-and back in.
-
-### WSL2 networking (Docker + Incus)
-
-If Docker is also installed on the same WSL2 instance, by default it might set the kernel's FORWARD chain policy to DROP when it starts. 
-This blocks all forwarded traffic including Incus bridge traffic and incus containers will fail to reach the internet.
-To fix this run:
-
-```bash
-# Configure Docker to leave the FORWARD chain alone
-echo '{"ip-forward-no-drop": true}' | sudo tee /etc/docker/daemon.json
-
-# Restart WSL to make sure the change is applied
-wsl --shutdown
-```
-
-### Other Platforms
-
-See the [Incus installation docs](https://linuxcontainers.org/incus/docs/main/installing/).
 
 
 ## Development
