@@ -46,7 +46,7 @@ meta:
     The --headed flag opens a visible Chromium window for the user to observe.
     </commentary>
     </example>
-  model_role: [coding, vision, general]
+model_role: [coding, vision, general]
 provider_preferences:
   - provider: anthropic
     model: claude-opus-*

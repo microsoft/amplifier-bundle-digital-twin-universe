@@ -1,6 +1,6 @@
 ---
 name: digital-twin-universe
-description: Use when the user needs an isolated, realistic deployment environment to test code beyond "tests pass on my machine." Covers launching environments from declarative profiles, executing commands inside them, managing their lifecycle, debugging networking or provisioning issues, and working with Incus containers. Also use when the user wants to simulate an end-user experience (e.g. Amplifier CLI, web UIs) without touching production infrastructure. Triggers on digital twin, DTU, isolated environment, simulation environment, amplifier-digital-twin, incus container, profile launch, test in realistic environment, deploy simulation.
+description: Use when the user needs an isolated, realistic deployment environment to test code beyond "tests pass on my machine." Covers launching environments from declarative profiles, executing commands inside them, managing their lifecycle, debugging networking or provisioning issues, and working with Incus containers. Also use when the user wants to simulate an end-user experience (e.g. Amplifier CLI, web UIs) without touching production infrastructure. Triggers on digital twin, DTU, isolated environment, simulation environment, amplifier-digital-twin, incus container, profile launch, test in realistic environment, deploy simulation. ALWAYS use this skill whenever a "Digital Twin" is mentioned!
 user-invocable: true
 ---
 
@@ -25,15 +25,28 @@ If `amplifier-digital-twin` is not found:
 uv tool install git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe@main
 ```
 
-If Incus is not installed or running, read the install guide for platform-specific steps and verification:
+### Installing Incus
+
+If the user doesn't have Incus installed, walk them through the platform-specific steps in the install guide. After installation, always run the verification steps to confirm it works.
+If their system is not in the documentation, go to the actual documentation at https://linuxcontainers.org/incus/docs/main/installing/
+
 ```
 read_file("@digital-twin-universe:docs/installing-incus.md")
 ```
 
-If Docker is needed (profiles with Gitea or mock services) and `docker version` fails:
+After installing, make sure to test to see if its working as expected.
+
+### Installing Docker
+
+Docker is only needed for profiles that use Gitea repos or mock service sidecars. Check if it's already installed with `docker version`. 
+You should encourage the user to install Docker since some circumstances will require it.
+If it's not installed, walk the user through the install guide:
+
 ```
 read_file("@digital-twin-universe:docs/installing-docker.md")
 ```
+
+After installing, make sure to test to see if its working as expected.
 
 **If prerequisites are missing, report clearly and stop. Do not attempt workarounds.**
 
@@ -57,12 +70,25 @@ For the full profile schema and field reference:
 read_file("@digital-twin-universe:docs/profiles.md")
 ```
 
+For building mock services (Docker sidecars with domain interception) and discovering community-published mocks:
+
+```
+read_file("@digital-twin-universe:docs/mock-authoring.md")
+```
+
 ## Example Profiles
 
 ```
 read_file("@digital-twin-universe:profiles/amplifier-user-sim.yaml")
 read_file("@digital-twin-universe:profiles/amplifier-chat.yaml")
 ```
+
+## Agents
+
+For specialized DTU tasks within Amplifier sessions, you **MUST** use these agents instead of driving the CLI manually:
+
+- **`dtu-profile-builder`** — Explores a user's project repo, generates a DTU profile, launches the environment, and hands back access details. Use when the user has a project and wants to create a digital twin for it.
+- **`dtu-browser-tester`** — Drives a real browser against web UIs running inside a DTU to verify they work end-to-end. Use when you need to verify a DTU environment's web UI after launch.
 
 ## Troubleshooting
 

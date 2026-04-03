@@ -49,7 +49,7 @@ meta:
     The agent installs service dependencies in-container and configures passthrough for external APIs.
     </commentary>
     </example>
-  model_role: [reasoning, coding, general]
+model_role: [reasoning, coding, general]
 provider_preferences:
   - provider: anthropic
     model: claude-opus-*
