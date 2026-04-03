@@ -84,7 +84,9 @@ Then reopen your WSL terminal.
 
 ## Verifying the installation
 
-Run each command one at a time. All four must succeed.
+Run ALL of these verification commands yourself. All four must succeed.
+None require sudo. Report results to the user. If any fail, diagnose
+using the troubleshooting table before asking the user for help.
 
 Check that the Incus client and server are reachable:
 ```bash
@@ -106,7 +108,7 @@ Clean up:
 incus delete test-incus --force
 ```
 
-If `incus version` shows `Server version: unreachable`, your shell doesn't have the `incus-admin` group yet. Run `newgrp incus-admin` or close and reopen your terminal.
+If `incus version` shows `Server version: unreachable`, the shell doesn't have the `incus-admin` group yet. The user needs to run `newgrp incus-admin` or close and reopen their terminal.
 
 ## Troubleshooting
 

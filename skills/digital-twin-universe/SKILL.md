@@ -27,14 +27,14 @@ uv tool install git+https://github.com/microsoft/amplifier-bundle-digital-twin-u
 
 ### Installing Incus
 
-If the user doesn't have Incus installed, walk them through the platform-specific steps in the install guide. After installation, always run the verification steps to confirm it works.
+If the user doesn't have Incus installed, walk them through the platform-specific steps in the install guide. Present sudo commands to the user one at a time.
 If their system is not in the documentation, go to the actual documentation at https://linuxcontainers.org/incus/docs/main/installing/
 
 ```
 read_file("@digital-twin-universe:docs/installing-incus.md")
 ```
 
-After installing, make sure to test to see if its working as expected.
+After the user completes the install steps, run the verification commands yourself (`incus version`, launch a test container, exec into it, delete it). Report results to the user rather than asking them to run verification.
 
 ### Installing Docker
 
