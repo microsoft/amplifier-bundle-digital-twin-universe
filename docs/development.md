@@ -36,13 +36,10 @@ used by the end-to-end test, see [manual_verification.md](manual_verification.md
 
 ## Tests
 
-> **Warning:** Integration tests (`--run-integration`, `--run-e2e`) destroy
-> **all** `amplifier-digital-twin` managed containers when the test session
-> ends, not just the ones the tests created. Any environment you created
-> with `amplifier-digital-twin launch` will be removed. Run
-> `amplifier-digital-twin list` beforehand and `amplifier-digital-twin destroy`
-> anything you want cleanly shut down, or be aware that running environments
-> will be force-removed.
+> **Note:** Integration tests clean up only the containers they created.
+> Each test fixture registers its instance ID at launch time, and the
+> session-scoped cleanup fixture force-deletes only those registered IDs.
+> Environments created by other sessions or manual use are not affected.
 
 Tests invoke `amplifier-digital-twin` as a subprocess via `uv run`, exactly as a
 user would on their machine. No in-process test runners or mocks.

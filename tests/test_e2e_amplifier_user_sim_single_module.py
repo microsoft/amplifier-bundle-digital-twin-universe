@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import register_dtu_instance
 from helpers import (
     clone_local_repo,
     commit_all,
@@ -47,9 +48,7 @@ def _inject_provider_marker(repo_dir: Path) -> None:
     _replace_once(
         init_py,
         "    if not api_key:\n",
-        f'    logger.warning("{PROVIDER_MARKER}")\n'
-        "\n"
-        "    if not api_key:\n",
+        f'    logger.warning("{PROVIDER_MARKER}")\n\n    if not api_key:\n',
     )
 
 
@@ -100,6 +99,7 @@ def dtu_env(mirrored_gitea_env):
         timeout=900,
     )
     assert isinstance(data, dict)
+    register_dtu_instance(data["id"])
     yield data
     run_cli("destroy", data["id"], timeout=60)
 

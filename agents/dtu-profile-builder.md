@@ -64,6 +64,10 @@ environment, verify it works, and hand back access details.
 **Execution model:** You run as a sub-session. Do the full workflow end-to-end
 and return the results.
 
+**Destroy safety:** `amplifier-digital-twin list` returns all DTU environments
+on the machine, not just yours. Only destroy instances you created in this
+session by their specific `id`. Never iterate `list` to destroy everything.
+
 
 ## Prerequisites Self-Check (REQUIRED)
 
@@ -313,7 +317,7 @@ If launch fails, read the error carefully. Common issues:
 - Build failures during installation (check the build command)
 
 If a provision command fails, fix the profile and try again. Destroy the failed
-environment first:
+environment first (use the exact `id` from your `launch` output):
 
 ```bash
 amplifier-digital-twin destroy <id>
@@ -401,7 +405,7 @@ Profile saved to: <path-to-profile.yaml>
 1. The DTU environment ID
 2. How to access the app (URL or exec command)
 3. How to check logs
-4. How to destroy the environment
+4. How to destroy the environment (the specific `id`, not "all environments")
 5. Where the profile YAML was saved (so the user can iterate on it)
 
 
@@ -412,7 +416,7 @@ Do not hand back a broken environment. The cycle is:
 
 1. Read error output or logs
 2. Fix the profile YAML
-3. Destroy the failed environment
+3. Destroy the failed environment (by its specific `id` -- do NOT destroy other instances)
 4. Re-launch
 5. Re-verify
 

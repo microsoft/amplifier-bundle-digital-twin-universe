@@ -10,6 +10,7 @@ Run with: uv run pytest tests/test_lifecycle.py --run-integration -v
 
 import pytest
 
+from conftest import register_dtu_instance
 from helpers import run_cli, run_cli_json
 
 
@@ -35,6 +36,7 @@ def dtu_env(lifecycle_profile):
     """Create a minimal DTU environment shared by this module."""
     data, _ = run_cli_json("launch", lifecycle_profile, timeout=120)
     assert isinstance(data, dict), "Expected launch to return a JSON object"
+    register_dtu_instance(data["id"])
     yield data
     run_cli("destroy", data["id"], timeout=30)
 
@@ -205,6 +207,7 @@ base:
         )
         data, _ = run_cli_json("launch", str(profile_path), timeout=120)
         env_id = data["id"]
+        register_dtu_instance(env_id)
 
         # Confirm it shows up in list
         list_data, _ = run_cli_json("list")
@@ -242,6 +245,7 @@ base:
         )
         data, _ = run_cli_json("launch", str(profile_path), timeout=120)
         env_id = data["id"]
+        register_dtu_instance(env_id)
 
         destroy_data, _ = run_cli_json("destroy", env_id)
         assert destroy_data["id"] == env_id

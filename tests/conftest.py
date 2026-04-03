@@ -80,33 +80,33 @@ def free_port():
         return s.getsockname()[1]
 
 
+# Session-wide registry of DTU instance IDs created by tests.
+# Only these instances are cleaned up at session end -- instances from other
+# sessions or manual use are left untouched.
+_test_created_dtu_ids: set[str] = set()
+
+
+def register_dtu_instance(instance_id: str) -> None:
+    """Register a DTU instance ID for cleanup at session end.
+
+    Call this immediately after ``launch`` in every test fixture or standalone
+    test that creates a DTU environment.  The session-scoped cleanup fixture
+    will force-delete any registered IDs that still exist when the test suite
+    finishes (e.g. because a test was interrupted before its own teardown ran).
+    """
+    _test_created_dtu_ids.add(instance_id)
+
+
 @pytest.fixture(autouse=True, scope="session")
-def cleanup_orphaned_containers():
+def cleanup_test_containers():
     yield
-    # Clean up any DTU containers left behind by interrupted tests.
-    # Uses the same Incus config key that `list` queries.
+    # Clean up DTU containers created by THIS test session only.
+    # Instances from other sessions or manual use are NOT touched.
     import subprocess
 
-    result = subprocess.run(
-        [
-            "incus",
-            "list",
-            "user.dtu.managed-by=amplifier-digital-twin",
-            "--format=json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if result.returncode != 0:
-        return
-
-    import json
-
-    for inst in json.loads(result.stdout):
-        name = inst["name"]
+    for instance_id in _test_created_dtu_ids:
         subprocess.run(
-            ["incus", "delete", name, "--force"],
+            ["incus", "delete", instance_id, "--force"],
             capture_output=True,
             timeout=30,
         )

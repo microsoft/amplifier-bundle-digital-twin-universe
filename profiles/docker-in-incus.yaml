@@ -1,0 +1,68 @@
+# Minimal Docker-in-Incus test profile.
+#
+# Proves the full nested container networking path:
+#   Host -> Incus proxy device -> Container:8080 -> Docker bridge -> nginx:80
+#
+# Usage:
+#   amplifier-digital-twin launch docker-in-incus
+#   curl http://localhost:${PORT}
+#
+name: docker-in-incus
+description: >
+  Minimal test for running Docker containers inside an Incus-based
+  Digital Twin Universe environment. Exercises nested container networking
+  end-to-end: host -> Incus proxy -> Docker bridge -> nginx.
+
+base:
+  image: ubuntu:24.04
+  config:
+    security.nesting: "true"
+
+access:
+  ports:
+    - host: ${PORT}
+      container: 8080
+      label: nginx via Docker
+      path: /
+
+provision:
+  setup_cmds:
+    - apt-get update && apt-get install -y ca-certificates curl gnupg lsb-release
+
+    # Install Docker Engine
+    - |
+      install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+        -o /etc/apt/keyrings/docker.asc
+      chmod a+r /etc/apt/keyrings/docker.asc
+      echo \
+        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+        https://download.docker.com/linux/ubuntu \
+        $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+        | tee /etc/apt/sources.list.d/docker.list > /dev/null
+      apt-get update
+      apt-get install -y docker-ce docker-ce-cli containerd.io
+
+    # Start Docker daemon (no systemd inside Incus)
+    - |
+      dockerd &>/var/log/dockerd.log &
+      for i in $(seq 1 30); do
+        docker info &>/dev/null && break
+        sleep 1
+      done
+      docker info &>/dev/null || { echo "Docker failed to start"; cat /var/log/dockerd.log; exit 1; }
+
+    # Run nginx via Docker
+    - |
+      docker run -d --name nginx-test -p 8080:80 nginx:alpine
+      for i in $(seq 1 15); do
+        curl -sf http://localhost:8080 &>/dev/null && break
+        sleep 1
+      done
+      curl -sf http://localhost:8080 &>/dev/null \
+        || { echo "nginx failed to start"; docker logs nginx-test; exit 1; }
+
+readiness:
+  - name: nginx-via-docker
+    http:
+      url: http://localhost:8080

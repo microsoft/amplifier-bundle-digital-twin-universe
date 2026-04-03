@@ -912,7 +912,9 @@ def launch(
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     print(f"Creating container {container_name} ({image})...", file=sys.stderr)
-    incus.create_container(container_name, image)
+    incus.create_container(
+        container_name, image, config=host_profile.base.config or None
+    )
 
     try:
         # Store metadata so `status` and `list` can discover this instance.

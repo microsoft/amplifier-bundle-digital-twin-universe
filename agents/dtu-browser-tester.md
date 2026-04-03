@@ -191,8 +191,13 @@ agent-browser close
 amplifier-digital-twin destroy <id>
 ```
 
-Always destroy the environment when done unless the user explicitly wants to
-keep it running.
+**Only destroy the specific instance you launched.** The `list` command shows
+all DTU environments on the machine -- other users or sessions may have their
+own running instances. Always destroy by the exact `id` from your `launch`
+output, never by iterating `list`.
+
+Destroy the environment when done unless the user explicitly wants to keep it
+running.
 
 
 ## Snapshot Reference

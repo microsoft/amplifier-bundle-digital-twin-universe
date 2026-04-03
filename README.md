@@ -101,10 +101,10 @@ amplifier-digital-twin exec dtu-a1b2c3d4
 # Check environment status
 amplifier-digital-twin status dtu-a1b2c3d4
 
-# List all managed environments
+# List all managed environments on this machine
 amplifier-digital-twin list
 
-# Tear it down
+# Tear down a specific environment (use the id from your launch output)
 amplifier-digital-twin destroy dtu-a1b2c3d4
 ```
 

@@ -54,6 +54,7 @@ class Passthrough:
 @dataclass
 class Base:
     image: str
+    config: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -231,7 +232,13 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
     base_data = data.get("base", {})
     if not base_data.get("image"):
         raise ValueError("Profile must specify base.image")
-    base = Base(image=base_data["image"])
+    base_config = base_data.get("config", {})
+    if not isinstance(base_config, dict):
+        raise ValueError("base.config must be a mapping of key: value pairs")
+    base = Base(
+        image=base_data["image"],
+        config={str(k): str(v) for k, v in base_config.items()},
+    )
 
     # url_rewrites (optional)
     url_rewrites = None

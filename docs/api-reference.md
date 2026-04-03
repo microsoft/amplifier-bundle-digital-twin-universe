@@ -68,7 +68,7 @@ Optional fields:
 - `info` -- list of guidance strings. Contains a readiness hint when the profile defines
   `readiness` checks. Empty list when there are none.
 
-See [profiles.md](profiles.md) for the `access`, `mock_services`, and `readiness` schemas.
+See [profiles.md](profiles.md) for the `access`, `base.config`, `mock_services`, and `readiness` schemas.
 
 
 ### `exec`
@@ -203,6 +203,11 @@ Returns:
 
 List all environments managed by this tool.
 
+> **Machine-wide scope.** This command returns **every** DTU environment on the
+> machine, not just ones created by your session. Other users or concurrent
+> Amplifier sessions may have running environments. Use `id` and `created_at`
+> to identify the instances you own before taking action on them.
+
 Environments are discovered via Incus instance config keys. During `launch`,
 each container is tagged with `user.dtu.managed-by=amplifier-digital-twin`.
 `list` queries Incus for instances with that key.
@@ -235,6 +240,10 @@ Destroy an environment. Stops and removes any mock service Docker containers
 associated with the environment, then stops and deletes the Incus container
 and any associated storage.
 
+> **Only destroy instances you created.** The `list` command returns all DTU
+> environments on the machine. Other users or sessions may have running
+> instances. Always destroy by specific `id` from your own `launch` output --
+> never iterate `list` and destroy everything.
 
 ```bash
 amplifier-digital-twin destroy <id>

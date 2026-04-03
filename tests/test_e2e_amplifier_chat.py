@@ -23,6 +23,7 @@ import urllib.error
 
 import pytest
 
+from conftest import register_dtu_instance
 from helpers import poll_readiness, run_cli, run_cli_json
 
 
@@ -34,6 +35,7 @@ def dtu_env(require_anthropic_key):
     """Launch the amplifier-chat profile and tear down after all tests."""
     data, _ = run_cli_json("launch", "amplifier-chat", timeout=900)
     assert isinstance(data, dict), "Expected launch to return a JSON object"
+    register_dtu_instance(data["id"])
     # Wait for amplifierd prewarm to finish so the full app is ready.
     poll_readiness(data["id"], timeout=120, interval=3)
     yield data

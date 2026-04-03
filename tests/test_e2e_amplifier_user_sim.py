@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import register_dtu_instance
 from helpers import (
     clone_local_repo,
     commit_all,
@@ -74,9 +75,7 @@ def _inject_provider_marker(repo_dir: Path) -> None:
     _replace_once(
         init_py,
         "    if not api_key:\n",
-        f'    logger.warning("{PROVIDER_MARKER}")\n'
-        "\n"
-        "    if not api_key:\n",
+        f'    logger.warning("{PROVIDER_MARKER}")\n\n    if not api_key:\n',
     )
 
 
@@ -149,6 +148,7 @@ def dtu_env(mirrored_gitea_env, require_anthropic_key):
         timeout=900,
     )
     assert isinstance(data, dict)
+    register_dtu_instance(data["id"])
     yield data
     run_cli("destroy", data["id"], timeout=60)
 
@@ -163,10 +163,10 @@ def test_amplifier_user_sim_uses_overridden_dependencies(dtu_env):
         "bash",
         "-lc",
         (
-            'TOOL_PYTHON=$(find /root/.local/share/uv/tools/amplifier '
+            "TOOL_PYTHON=$(find /root/.local/share/uv/tools/amplifier "
             '-path "*/bin/python3" | head -1); '
             '"$TOOL_PYTHON" -c '
-            '\'import amplifier_core._engine as engine; print(engine.__version__)\''
+            "'import amplifier_core._engine as engine; print(engine.__version__)'"
         ),
         timeout=120,
     )
@@ -195,4 +195,3 @@ def test_amplifier_user_sim_uses_overridden_dependencies(dtu_env):
     )
     assert EXPECTED_RESPONSE in run_data["stdout"]
     assert PROVIDER_MARKER in combined_output
-

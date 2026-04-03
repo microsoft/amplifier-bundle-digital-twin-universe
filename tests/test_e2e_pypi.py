@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import register_dtu_instance
 from helpers import git_checked, run_cli, run_cli_json
 
 _DUMMY_PKG_NAME = "dtu-test-pkg"
@@ -106,6 +107,7 @@ def dtu_env(pypi_test_profile):
     print("[E2E-pypi] Launching wheel_from_git profile...", file=sys.stderr)
     data, _ = run_cli_json("launch", pypi_test_profile, timeout=600)
     assert isinstance(data, dict), "Expected launch to return a JSON object"
+    register_dtu_instance(data["id"])
     yield data
     run_cli("destroy", data["id"], timeout=60)
 
@@ -119,10 +121,7 @@ def test_wheel_from_git_installs_expected_version(dtu_env):
         "--",
         "python3",
         "-c",
-        (
-            f"import {_DUMMY_PKG_MODULE}; "
-            f"print({_DUMMY_PKG_MODULE}.__version__)"
-        ),
+        (f"import {_DUMMY_PKG_MODULE}; print({_DUMMY_PKG_MODULE}.__version__)"),
     )
     assert data["exit_code"] == 0, (
         f"Import failed (exit {data['exit_code']}):\n"
@@ -169,10 +168,7 @@ def test_pypiserver_serves_package_index(dtu_env):
         "--",
         "bash",
         "-lc",
-        (
-            f"curl -fsS http://localhost:8081/simple/{_DUMMY_PKG_NAME}/ "
-            "| tail -20"
-        ),
+        (f"curl -fsS http://localhost:8081/simple/{_DUMMY_PKG_NAME}/ | tail -20"),
     )
     assert data["exit_code"] == 0, (
         "Expected package-specific response from local pypiserver:\n"

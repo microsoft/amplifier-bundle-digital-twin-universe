@@ -76,12 +76,24 @@ For building mock services (Docker sidecars with domain interception) and discov
 read_file("@digital-twin-universe:docs/mock-authoring.md")
 ```
 
+For running Docker inside a Digital Twin Universe environment (nested containers), including platform-specific setup and troubleshooting:
+
+```
+read_file("@digital-twin-universe:docs/docker-in-incus.md")
+```
+
 ## Example Profiles
 
 ```
 read_file("@digital-twin-universe:profiles/amplifier-user-sim.yaml")
 read_file("@digital-twin-universe:profiles/amplifier-chat.yaml")
+read_file("@digital-twin-universe:profiles/docker-in-incus.yaml")
 ```
+
+The `docker-in-incus` profile is a minimal test for running Docker containers
+inside an Incus-based environment. Use it to verify that nested container
+networking works on a given host before attempting more complex profiles that
+depend on Docker.
 
 ## Agents
 
@@ -90,7 +102,47 @@ For specialized DTU tasks within Amplifier sessions, you **MUST** use these agen
 - **`dtu-profile-builder`** — Explores a user's project repo, generates a DTU profile, launches the environment, and hands back access details. Use when the user has a project and wants to create a digital twin for it.
 - **`dtu-browser-tester`** — Drives a real browser against web UIs running inside a DTU to verify they work end-to-end. Use when you need to verify a DTU environment's web UI after launch.
 
+## Cleanup Safety
+
+`amplifier-digital-twin list` returns **all** DTU environments on the machine,
+not just ones from your session. Other users or concurrent sessions may have
+running instances.
+
+**Safe pattern:** Note the `id` returned by `launch` and only `destroy` that
+specific ID when you are done.
+
+**Dangerous pattern:** Iterating `list` and destroying every entry. This will
+tear down environments belonging to other sessions.
+
+There is currently no owner or session identifier in the `list` output. If you
+need to identify your instance, match on the `id` you received from `launch`,
+or use `created_at` to narrow down which instance is yours. 
+If you are unsure, leave it and tell the user to clean up when they are ready.
+
+
 ## Troubleshooting
+
+### Docker Inside a Digital Twin Universe Environment
+
+If a profile needs to run Docker inside the Incus container (e.g. spawning
+worker containers, running Docker Compose stacks), it should declare
+`security.nesting: "true"` in `base.config`:
+
+```yaml
+base:
+  image: ubuntu:24.04
+  config:
+    security.nesting: "true"
+```
+
+At anypoint it is even a possibility that Docker in Incus might be required, you MUST read the full guide on platform-specific issues and networking paths:
+
+```
+read_file("@digital-twin-universe:docs/docker-in-incus.md")
+```
+
+The `docker-in-incus` profile can be used to verify the setup works before
+attempting more complex profiles.
 
 ### Networking: Docker + Incus conflict (WSL2)
 

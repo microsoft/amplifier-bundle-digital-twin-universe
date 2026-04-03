@@ -49,9 +49,19 @@ Required.
 ```yaml
 base:
   image: ubuntu:24.04
+  config:                              # optional
+    security.nesting: "true"
 ```
 
-Right now the engine only consumes `base.image`.
+`base.image` (required) selects the container image.
+
+`base.config` (optional) passes Incus container config flags at creation time.
+Each key-value pair becomes an `incus launch --config key=value` argument. Use
+this for Incus-level settings like `security.nesting` (required for running
+Docker inside the environment), `limits.cpu`, `limits.memory`, etc.
+
+See [docs/docker-in-incus.md](docker-in-incus.md) for the Docker nesting use
+case.
 
 ## `url_rewrites`
 
