@@ -125,6 +125,42 @@ def check_readiness(id: str) -> None:
 
 @main.command()
 @click.argument("id")
+@click.option(
+    "--var",
+    multiple=True,
+    help="Variable substitution for ${VAR} references in the profile. Format: KEY=VALUE. Repeatable.",
+)
+@click.option(
+    "--skip-readiness",
+    is_flag=True,
+    default=False,
+    help="Skip readiness checks after update.",
+)
+def update(id: str, var: tuple[str, ...], skip_readiness: bool) -> None:
+    """Update provisioned software in a running environment.
+
+    Re-runs the profile's update section: optionally refreshes PyPI
+    overrides (rebuilds wheels), then executes the update commands.
+    Readiness checks are re-run automatically unless --skip-readiness is set.
+    """
+    variables: dict[str, str] = {}
+    for v in var:
+        if "=" not in v:
+            click.echo(f"Invalid --var format: {v!r}. Expected KEY=VALUE.", err=True)
+            sys.exit(1)
+        key, _, value = v.partition("=")
+        variables[key] = value
+
+    try:
+        result = engine.update(id, variables, skip_readiness=skip_readiness)
+        click.echo(json.dumps(result))
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
+@main.command()
+@click.argument("id")
 def destroy(id: str) -> None:
     """Destroy an environment. Stops and deletes the Incus container and any associated storage."""
     try:

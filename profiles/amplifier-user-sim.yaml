@@ -77,3 +77,10 @@ provision:
 
     # Workspace -- empty dir where a user can launch Amplifier
     - mkdir -p /home/user/project
+
+update:
+  refresh_pypi: true
+  cmds:
+    # Clear cached modules so Amplifier re-clones from the (rewritten) URLs.
+    - rm -rf /root/.amplifier/cache/
+    - uv tool install --reinstall --force git+https://github.com/microsoft/amplifier

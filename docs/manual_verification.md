@@ -209,7 +209,34 @@ Expected signals:
 - the output contains `HELLO_DTU_PROVIDER`
 - the CLI output also shows `AMPLIFIER_PROVIDER_ANTHROPIC_TEST_MARKER`
 
-## 9. Clean Up
+## 9. Update Without Relaunching
+
+Instead of destroying and relaunching after code changes, use `update` to pull
+fresh changes and reinstall in-place. Push a new version to Gitea, then run:
+
+```bash
+# (After pushing new changes to Gitea)
+uv run amplifier-digital-twin update "$DIGITAL_TWIN_ID" \
+  --var "GITEA_URL=${GITEA_URL}" \
+  --var "GITEA_TOKEN=${GITEA_TOKEN}"
+```
+
+This rebuilds the `amplifier-core` wheel from the updated Gitea repo (because
+`refresh_pypi: true`), reinstalls Amplifier, and clears the module cache. Verify
+the new version is live:
+
+```bash
+uv run amplifier-digital-twin exec "$DIGITAL_TWIN_ID" -- bash -lc '
+  TOOL_PYTHON=$(find /root/.local/share/uv/tools/amplifier -path "*/bin/python3" | head -1)
+  "$TOOL_PYTHON" -c "import amplifier_core._engine as engine; print(engine.__version__)"
+'
+```
+
+This is the same fast iteration loop the E2E test exercises: `launch` once,
+then `update` as many times as needed.
+
+
+## 10. Clean Up
 
 ```bash
 # Type "exit" to leave the Digital Twin environment.

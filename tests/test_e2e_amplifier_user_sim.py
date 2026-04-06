@@ -34,7 +34,9 @@ PROVIDER_GITHUB_REPO = (
     "https://github.com/microsoft/amplifier-module-provider-anthropic"
 )
 AMPLIFIER_CORE_VERSION = "99.0.0"
+UPDATED_CORE_VERSION = "99.1.0"
 PROVIDER_MARKER = "AMPLIFIER_PROVIDER_ANTHROPIC_TEST_MARKER"
+UPDATED_PROVIDER_MARKER = "AMPLIFIER_PROVIDER_ANTHROPIC_UPDATED_MARKER"
 EXPECTED_RESPONSE = "HELLO_DTU_PROVIDER"
 WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 AMPLIFIER_CORE_LOCAL_REPO = WORKSPACE_ROOT / "amplifier-core"
@@ -195,3 +197,168 @@ def test_amplifier_user_sim_uses_overridden_dependencies(dtu_env):
     )
     assert EXPECTED_RESPONSE in run_data["stdout"]
     assert PROVIDER_MARKER in combined_output
+
+
+# -- Update helpers ---------------------------------------------------------
+
+
+def _mutate_amplifier_core_for_update(repo_dir: Path) -> None:
+    """Replace the initial test version with the updated version."""
+    _replace_once(
+        repo_dir / "pyproject.toml",
+        f'version = "{AMPLIFIER_CORE_VERSION}"',
+        f'version = "{UPDATED_CORE_VERSION}"',
+    )
+    _replace_once(
+        repo_dir / "bindings/python/Cargo.toml",
+        f'version = "{AMPLIFIER_CORE_VERSION}"',
+        f'version = "{UPDATED_CORE_VERSION}"',
+    )
+    _replace_once(
+        repo_dir / "crates/amplifier-core/Cargo.toml",
+        f'version = "{AMPLIFIER_CORE_VERSION}"',
+        f'version = "{UPDATED_CORE_VERSION}"',
+    )
+    _replace_once(
+        repo_dir / "python/amplifier_core/__init__.py",
+        f'__version__ = "{AMPLIFIER_CORE_VERSION}"',
+        f'__version__ = "{UPDATED_CORE_VERSION}"',
+    )
+
+
+def _inject_updated_provider_marker(repo_dir: Path) -> None:
+    """Replace the initial marker with the updated marker."""
+    init_py = repo_dir / "amplifier_module_provider_anthropic/__init__.py"
+    _replace_once(
+        init_py,
+        f'    logger.warning("{PROVIDER_MARKER}")',
+        f'    logger.warning("{UPDATED_PROVIDER_MARKER}")',
+    )
+
+
+# -- Update test ------------------------------------------------------------
+
+
+@pytest.mark.e2e
+def test_update_picks_up_new_code(dtu_env, mirrored_gitea_env, tmp_path_factory):
+    """Verify ``amplifier-digital-twin update`` pulls fresh code changes.
+
+    Phase 1: verify initial state (same as launch test).
+    Phase 2: push *new* mutations to Gitea (updated version + marker).
+    Phase 3: run ``update`` and check return JSON.
+    Phase 4: verify the updated code is live inside the same container.
+    """
+    env_id = dtu_env["id"]
+    gitea_url = mirrored_gitea_env["gitea_url"]
+    token = mirrored_gitea_env["token"]
+    port = mirrored_gitea_env["port"]
+
+    # -- Phase 1: verify initial state --
+    version_data, _ = run_cli_json(
+        "exec",
+        env_id,
+        "--",
+        "bash",
+        "-lc",
+        (
+            "TOOL_PYTHON=$(find /root/.local/share/uv/tools/amplifier "
+            '-path "*/bin/python3" | head -1); '
+            '"$TOOL_PYTHON" -c '
+            "'import amplifier_core._engine as engine; print(engine.__version__)'"
+        ),
+        timeout=120,
+    )
+    assert version_data["exit_code"] == 0
+    assert AMPLIFIER_CORE_VERSION in version_data["stdout"]
+
+    # -- Phase 2: push updated mutations to Gitea --
+    print("[E2E-update] Pushing updated amplifier-core to Gitea...", file=sys.stderr)
+    core_repo_dir = clone_local_repo(
+        AMPLIFIER_CORE_LOCAL_REPO,
+        tmp_path_factory.mktemp("core-update-clone") / "amplifier-core",
+    )
+    _mutate_amplifier_core(core_repo_dir)  # initial mutation (99.0.0)
+    _mutate_amplifier_core_for_update(core_repo_dir)  # then 99.0.0 -> 99.1.0
+    commit_all(core_repo_dir, "test: update amplifier-core version for update test")
+    push_repo_to_gitea(
+        core_repo_dir,
+        gitea_clone_url(port, token, github_repo_name(AMPLIFIER_CORE_GITHUB_REPO)),
+    )
+
+    print("[E2E-update] Pushing updated provider marker to Gitea...", file=sys.stderr)
+    provider_repo_dir = clone_local_repo(
+        PROVIDER_LOCAL_REPO,
+        tmp_path_factory.mktemp("provider-update-clone")
+        / "amplifier-module-provider-anthropic",
+    )
+    _inject_provider_marker(provider_repo_dir)  # initial marker
+    _inject_updated_provider_marker(provider_repo_dir)  # replace with updated
+    commit_all(
+        provider_repo_dir, "test: inject updated provider marker for update test"
+    )
+    push_repo_to_gitea(
+        provider_repo_dir,
+        gitea_clone_url(port, token, github_repo_name(PROVIDER_GITHUB_REPO)),
+    )
+
+    # -- Phase 3: run update --
+    print("[E2E-update] Running amplifier-digital-twin update...", file=sys.stderr)
+    update_data, _ = run_cli_json(
+        "update",
+        env_id,
+        "--var",
+        f"GITEA_URL={gitea_url}",
+        "--var",
+        f"GITEA_TOKEN={token}",
+        timeout=900,
+    )
+    assert update_data["status"] == "updated"
+    assert update_data["pypi_refreshed"] is True
+    assert update_data["cmds_run"] >= 1
+
+    # -- Phase 4: verify updated state --
+    print("[E2E-update] Verifying updated amplifier-core version...", file=sys.stderr)
+    version_data, _ = run_cli_json(
+        "exec",
+        env_id,
+        "--",
+        "bash",
+        "-lc",
+        (
+            "TOOL_PYTHON=$(find /root/.local/share/uv/tools/amplifier "
+            '-path "*/bin/python3" | head -1); '
+            '"$TOOL_PYTHON" -c '
+            "'import amplifier_core._engine as engine; print(engine.__version__)'"
+        ),
+        timeout=120,
+    )
+    assert version_data["exit_code"] == 0, (
+        f"Failed to read updated version:\n"
+        f"stdout: {version_data['stdout']}\nstderr: {version_data['stderr']}"
+    )
+    assert UPDATED_CORE_VERSION in version_data["stdout"], (
+        f"Expected {UPDATED_CORE_VERSION} in version output, "
+        f"got: {version_data['stdout']}"
+    )
+
+    print("[E2E-update] Verifying updated provider marker...", file=sys.stderr)
+    run_data, _ = run_cli_json(
+        "exec",
+        env_id,
+        "--",
+        "bash",
+        "-lc",
+        (
+            "cd /home/user/project && "
+            f"amplifier run 'respond with exactly: {EXPECTED_RESPONSE}'"
+        ),
+        timeout=180,
+    )
+    combined_output = f"{run_data['stdout']}\n{run_data['stderr']}"
+    assert run_data["exit_code"] == 0, (
+        f"amplifier run failed (exit {run_data['exit_code']}):\n"
+        f"stdout: {run_data['stdout']}\nstderr: {run_data['stderr']}"
+    )
+    assert UPDATED_PROVIDER_MARKER in combined_output, (
+        f"Expected {UPDATED_PROVIDER_MARKER} in output, got:\n{combined_output}"
+    )

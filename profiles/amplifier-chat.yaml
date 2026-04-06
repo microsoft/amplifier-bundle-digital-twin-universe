@@ -52,6 +52,17 @@ provision:
         > /var/log/amplifier-chat.log 2>&1 &
       sleep 1
 
+update:
+  cmds:
+    # [a] trick prevents pkill from matching its own bash -lc command line.
+    - pkill -f '[a]mplifier-chat' || true
+    # Re-install from upstream to pick up latest code.
+    - uv tool install --reinstall --force "amplifier-chat[standalone] @ git+https://github.com/microsoft/amplifier-chat"
+    - |
+      nohup amplifier-chat --host 0.0.0.0 --port 8410 --no-browser \
+        > /var/log/amplifier-chat.log 2>&1 &
+      sleep 1
+
 readiness:
   - name: amplifierd-ready
     http:

@@ -42,7 +42,8 @@ digraph amplifier_user_sim_launch_flow {
 
         exec_shell [label="Exec into the environment\namplifier-digital-twin exec <id>", fillcolor="#f8d7da"]
         run_amplifier [label="Run Amplifier from /home/user/project", fillcolor="#f8d7da"]
-        iterate [label="Push new repo changes to Gitea\nand relaunch for a fresh environment", fillcolor="#f8d7da"]
+        update_env [label="Push new repo changes to Gitea,\nthen update in-place\namplifier-digital-twin update <id>", fillcolor="#d4edda"]
+        iterate [label="Or relaunch for a\nclean environment", fillcolor="#f8d7da"]
     }
 
     create_gitea -> mirror_core
@@ -65,6 +66,8 @@ digraph amplifier_user_sim_launch_flow {
 
     ready -> exec_shell [style=dashed]
     exec_shell -> run_amplifier [style=dashed]
+    ready -> update_env [style=dashed]
+    update_env -> run_amplifier [style=dashed, label="test updated code"]
     ready -> iterate [style=dashed]
     iterate -> load_profile [style=dashed, label="launch again"]
 }

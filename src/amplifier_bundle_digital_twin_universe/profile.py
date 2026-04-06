@@ -63,6 +63,12 @@ class Provision:
 
 
 @dataclass
+class Update:
+    cmds: list[str] = field(default_factory=list)
+    refresh_pypi: bool = False
+
+
+@dataclass
 class PypiOverrideGitSource:
     repo: str
     ref: str = "main"
@@ -132,6 +138,7 @@ class Profile:
     url_rewrites: UrlRewrites | None = None
     passthrough: Passthrough | None = None
     provision: Provision | None = None
+    update: Update | None = None
     pypi_overrides: PypiOverrides | None = None
     access: Access | None = None
     readiness: list[ReadinessCheck] | None = None
@@ -276,6 +283,15 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
     if prov:
         provision = Provision(setup_cmds=prov.get("setup_cmds", []))
 
+    # update (optional)
+    update = None
+    upd = data.get("update")
+    if upd:
+        update = Update(
+            cmds=upd.get("cmds", []),
+            refresh_pypi=bool(upd.get("refresh_pypi", False)),
+        )
+
     # pypi_overrides (optional)
     pypi_overrides = None
     po = data.get("pypi_overrides")
@@ -402,6 +418,7 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
         url_rewrites=url_rewrites,
         passthrough=passthrough,
         provision=provision,
+        update=update,
         pypi_overrides=pypi_overrides,
         access=access,
         readiness=readiness,

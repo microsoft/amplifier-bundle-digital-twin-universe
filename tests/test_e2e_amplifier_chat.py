@@ -128,3 +128,49 @@ def test_session_execute(dtu_env):
         result = json.loads(resp.read())
     assert "response" in result, f"No response in execute result: {result}"
     assert len(result["response"]) > 0, "Empty response from LLM"
+
+
+# -- Update tests -----------------------------------------------------------
+
+
+@pytest.mark.e2e
+def test_update_keeps_environment_running(dtu_env):
+    """Run ``update`` and verify the chat UI is still healthy afterward.
+
+    The update kills and restarts amplifier-chat. Readiness checks run
+    automatically and confirm the service is back.
+    """
+    # Verify healthy before update.
+    url = "http://localhost:8410/chat/health"
+    req = urllib.request.Request(url)
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        body = json.loads(resp.read())
+    assert body["status"] == "ok", f"Pre-update health check failed: {body}"
+
+    # Run update.
+    update_data, _ = run_cli_json("update", dtu_env["id"], timeout=300)
+    assert update_data["status"] == "updated"
+    assert update_data["cmds_run"] >= 1
+    assert "readiness" in update_data
+
+    # Wait for service to be ready again after restart.
+    poll_readiness(dtu_env["id"], timeout=120, interval=3)
+
+    # Verify healthy after update.
+    req = urllib.request.Request(url)
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        body = json.loads(resp.read())
+    assert body["status"] == "ok", f"Post-update health check failed: {body}"
+
+
+@pytest.mark.e2e
+def test_update_skip_readiness(dtu_env):
+    """Run ``update --skip-readiness`` and verify readiness is omitted."""
+    update_data, _ = run_cli_json(
+        "update", dtu_env["id"], "--skip-readiness", timeout=300
+    )
+    assert update_data["status"] == "updated"
+    assert "readiness" not in update_data
+
+    # Service should still be running -- poll readiness separately.
+    poll_readiness(dtu_env["id"], timeout=120, interval=3)

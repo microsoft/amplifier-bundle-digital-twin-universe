@@ -304,6 +304,41 @@ This is where the current built-in profiles install tools, write config files,
 and create working directories.
 
 
+## `update`
+
+Optional. Defines commands to re-run when updating provisioned software in a
+running environment without destroying it. Used by the `update` CLI command.
+
+```yaml
+update:
+  refresh_pypi: true
+  cmds:
+    - uv tool install --reinstall --force amplifier
+```
+
+`refresh_pypi` (optional, default `false`)
+  When `true`, the `update` command re-runs the `pypi_overrides` pipeline before
+  executing the update commands. This rebuilds wheels from the current state of
+  the source repos (e.g. Gitea), pushes them into the container, and restarts
+  pypiserver. The `pypi_overrides` section must be defined in the same profile.
+
+`cmds` (required)
+  List of shell commands to run in order with `bash -lc`. Same execution model
+  as `provision.setup_cmds` -- proxy variables, PATH, and passthrough secrets are
+  available.
+
+The typical workflow:
+
+```bash
+amplifier-digital-twin launch amplifier-user-sim --var ...    # full setup
+# make code changes, push to Gitea
+amplifier-digital-twin update dtu-a1b2c3d4 --var ...          # pull + reinstall
+# test in the DTU
+# iterate: change code -> update -> test
+amplifier-digital-twin destroy dtu-a1b2c3d4                   # done
+```
+
+
 ## `readiness`
 
 Optional. A list of checks that define when services inside the environment are

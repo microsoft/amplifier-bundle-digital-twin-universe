@@ -1064,6 +1064,87 @@ def launch(
         raise
 
 
+def update(
+    container_id: str,
+    variables: dict[str, str],
+    skip_readiness: bool = False,
+) -> dict:
+    """Update provisioned software in a running environment.
+
+    Re-runs the ``update`` section of the profile: optionally refreshes PyPI
+    overrides (rebuild wheels, re-push), then executes the update commands.
+    If the profile defines readiness checks they are re-run unless
+    *skip_readiness* is True.
+    """
+    incus.check_incus()
+
+    if not incus.container_exists(container_id):
+        raise RuntimeError(f"Environment not found: {container_id}")
+
+    state = incus.get_instance_state(container_id)
+    if state != "Running":
+        raise RuntimeError(
+            f"Environment {container_id} is not running (state: {state})"
+        )
+
+    # Retrieve profile name stored at launch time.
+    profile_name = incus.get_config(container_id, "user.dtu.profile")
+    if not profile_name:
+        raise RuntimeError(f"Environment {container_id} has no stored profile name")
+
+    # Detect host gateway and reload profile with rewritten variables.
+    host_ip = _wait_for_gateway(container_id)
+    rewritten_vars = _rewrite_localhost(variables, host_ip)
+    profile = load_profile(profile_name, rewritten_vars)
+
+    if not profile.update:
+        raise RuntimeError(
+            f"Profile {profile_name!r} does not define an 'update' section"
+        )
+
+    # Refresh PyPI overrides if requested and available.
+    pypi_refreshed = False
+    if (
+        profile.update.refresh_pypi
+        and profile.pypi_overrides
+        and profile.pypi_overrides.packages
+    ):
+        print("Refreshing PyPI overrides...", file=sys.stderr)
+        # Kill existing pypiserver and clear old wheels.
+        incus.exec_command(
+            container_id,
+            ["bash", "-c", "pkill -f pypi-server || true"],
+            timeout=10,
+        )
+        incus.exec_command(
+            container_id,
+            ["bash", "-c", "rm -f /opt/dtu/wheels/*.whl"],
+            timeout=10,
+        )
+        _setup_pypi_overrides(container_id, profile, variables)
+        pypi_refreshed = True
+
+    # Run update commands.
+    print("Running update commands...", file=sys.stderr)
+    _run_provisioning(container_id, profile.update.cmds)
+
+    result: dict = {
+        "id": container_id,
+        "profile": profile_name,
+        "status": "updated",
+        "pypi_refreshed": pypi_refreshed,
+        "cmds_run": len(profile.update.cmds),
+    }
+
+    # Re-run readiness checks unless skipped.
+    if not skip_readiness:
+        readiness_result = check_readiness(container_id)
+        result["readiness"] = readiness_result
+
+    print(f"DTU {container_id} updated.", file=sys.stderr)
+    return result
+
+
 def exec_command(container_id: str, command: list[str]) -> dict:
     """Run *command* inside the environment.  Returns JSON status dict."""
     if not incus.container_exists(container_id):

@@ -95,6 +95,9 @@ amplifier-digital-twin launch amplifier-user-sim
 # Execute a command inside it
 amplifier-digital-twin exec dtu-a1b2c3d4 -- amplifier --version
 
+# Update provisioned software without restarting the environment
+amplifier-digital-twin update dtu-a1b2c3d4
+
 # Interactive shell
 amplifier-digital-twin exec dtu-a1b2c3d4
 
@@ -130,7 +133,9 @@ Mock services can advertise affordances (coordinates, API hooks) so agents inter
 
 - **Ephemeral lifecycle.** Environments are created, used, and destroyed on demand. Consumers can wipe and restart for a clean simulation at any time.
 
-- **CLI-first, JSON output.** All lifecycle commands (launch, status, list, destroy) return JSON to stdout for programmatic consumption.
+- **In-place updates.** Profiles can define an `update` section with commands to pull fresh code and reinstall without destroying the environment. PyPI overrides can be rebuilt automatically. This enables a fast `launch` -> `update` -> `test` iteration loop.
+
+- **CLI-first, JSON output.** All lifecycle commands (launch, update, status, list, destroy) return JSON to stdout for programmatic consumption.
 
 - **Amplifier agents.** The bundle includes agents for working with DTU environments within Amplifier sessions.
   - [`dtu-profile-builder`](agents/dtu-profile-builder.md) explores a user's project repository, generates a complete DTU profile, launches the environment, and hands back access details.

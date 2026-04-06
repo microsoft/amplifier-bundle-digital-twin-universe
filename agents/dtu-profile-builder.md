@@ -276,6 +276,12 @@ provision:
     # Create a workspace directory for the user
     - mkdir -p /home/user/project
 
+# Only if the user will iterate on code and update the environment in-place
+update:
+  refresh_pypi: false  # set true if pypi_overrides is defined and should be rebuilt
+  cmds:
+    - <commands to pull fresh code and reinstall>
+
 # Only for apps that run as servers
 readiness:
   - name: <check-name>
@@ -419,6 +425,11 @@ Do not hand back a broken environment. The cycle is:
 3. Destroy the failed environment (by its specific `id` -- do NOT destroy other instances)
 4. Re-launch
 5. Re-verify
+
+If the profile has an `update` section and the environment is already running,
+prefer `amplifier-digital-twin update <id>` over destroy + re-launch when
+iterating on code changes. This is faster because it reuses the existing
+container, proxy, and networking setup.
 
 Limit to 3 full retry cycles. If it's still broken after 3 attempts, hand back
 what you have with a clear description of what's failing and what you tried.

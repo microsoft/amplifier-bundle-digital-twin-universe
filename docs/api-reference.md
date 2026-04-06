@@ -174,6 +174,57 @@ done
 ```
 
 
+### `update`
+
+Update provisioned software in a running environment without destroying it.
+Re-runs the profile's `update` section: optionally refreshes PyPI overrides
+(rebuilds and re-pushes wheels), then executes the update commands. Readiness
+checks are re-run automatically unless `--skip-readiness` is set.
+
+```bash
+amplifier-digital-twin update <id> \
+  [--var KEY=VALUE ...] \
+  [--skip-readiness]
+```
+
+`<id>` (required)
+  Environment ID.
+
+`--var` (optional, repeatable)
+  Variable substitution for `${VAR}` references in the profile (same as
+  `launch`). Required when the profile's `update` or `pypi_overrides` sections
+  reference variables (e.g. `GITEA_URL`, `GITEA_TOKEN`).
+
+`--skip-readiness` (optional)
+  Skip readiness checks after update. By default, if the profile defines
+  readiness checks they are re-run after the update commands complete.
+
+Returns:
+
+```json
+{
+  "id": "dtu-a1b2c3d4",
+  "profile": "amplifier-user-sim",
+  "status": "updated",
+  "pypi_refreshed": true,
+  "cmds_run": 1,
+  "readiness": {
+    "ready": true,
+    "message": "all checks passed"
+  }
+}
+```
+
+Optional fields:
+
+- `readiness` -- present unless `--skip-readiness` was used. Contains the
+  result of running readiness checks after the update.
+- `pypi_refreshed` -- `true` when PyPI overrides were rebuilt and re-pushed.
+
+Requires the profile to define an `update` section. See
+[profiles.md](profiles.md#update) for the schema.
+
+
 ### `status`
 
 Check whether an environment exists and is running.

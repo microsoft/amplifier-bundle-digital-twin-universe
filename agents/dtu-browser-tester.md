@@ -184,7 +184,15 @@ agent-browser screenshot dtu-02-filled.png    # After filling form
 agent-browser screenshot dtu-03-response.png  # After receiving response
 ```
 
-### 6. Clean Up
+### 6. Re-Verify After Update (if applicable)
+
+If the user ran `amplifier-digital-twin update <id>` to push new code changes
+into a running environment, you can re-verify without relaunching. Skip
+steps 1-2 (the environment is already running) and go straight to opening the
+browser and re-running verification. Re-run readiness polling first since
+the update may restart services.
+
+### 7. Clean Up
 
 ```bash
 agent-browser close

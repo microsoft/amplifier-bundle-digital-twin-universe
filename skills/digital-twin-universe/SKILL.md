@@ -6,7 +6,7 @@ user-invocable: true
 
 # Digital Twin Universe Environments
 
-`amplifier-digital-twin` is a CLI for on-demand, isolated environments launched from declarative profiles. All commands output JSON to stdout.
+`amplifier-digital-twin` is a CLI for on-demand, isolated environments launched from declarative profiles. Environments can be updated in-place (pull fresh code, reinstall) without destroying and relaunching. All commands output JSON to stdout.
 
 ## Prerequisites Check
 
@@ -81,6 +81,23 @@ For running Docker inside a Digital Twin Universe environment (nested containers
 ```
 read_file("@digital-twin-universe:docs/docker-in-incus.md")
 ```
+
+## Updating Running Environments
+
+Profiles can define an `update` section with commands to pull fresh code and
+reinstall without destroying the environment:
+
+```bash
+amplifier-digital-twin update <id> [--var K=V ...] [--skip-readiness]
+```
+
+This enables a fast `launch` -> `update` -> `test` iteration loop. If the
+profile has `refresh_pypi: true` in the `update` section, PyPI overrides are
+rebuilt from the current state of the source repos before running update commands.
+
+See `api-reference.md` for the full `update` command reference and `profiles.md`
+for the `update` profile schema.
+
 
 ## Example Profiles
 

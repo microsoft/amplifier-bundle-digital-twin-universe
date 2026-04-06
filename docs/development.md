@@ -93,6 +93,9 @@ launches `amplifier-user-sim`, and verifies:
   wheel
 - running Amplifier loads the rewritten `amplifier-module-provider-anthropic`
   source and completes a real Anthropic-backed run
+- after pushing updated mutations and running `amplifier-digital-twin update`,
+  the new amplifier-core version and new provider marker are live without
+  relaunching
 
 **Prerequisites:**
 - Incus running
@@ -109,6 +112,8 @@ uv run pytest tests/test_e2e_amplifier_user_sim.py --run-e2e -v -s
 
 Launches `amplifier-chat`, verifies the health endpoint, chat UI, and
 LLM execution are reachable from the host via the Incus proxy device.
+Also exercises `amplifier-digital-twin update` to restart the service
+and confirm it remains healthy afterward.
 
 **Prerequisites:**
 - Incus running
