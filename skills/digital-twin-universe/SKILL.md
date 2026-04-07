@@ -13,7 +13,7 @@ user-invocable: true
 Before any DTU operation, verify the environment:
 
 ```bash
-# 1. Is the CLI installed?
+# 1. Double check the CLI is installed
 which amplifier-digital-twin
 
 # 2. Is Incus available and running?

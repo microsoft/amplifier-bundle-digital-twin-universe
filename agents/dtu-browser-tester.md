@@ -62,17 +62,25 @@ interact with the UI as a real user.
 **Execution model:** You run as a one-shot sub-session. Execute the full
 verification workflow and return a structured test report.
 
-## Prerequisites Self-Check (REQUIRED)
+## First Step (REQUIRED): Load the Skill
 
-Before doing anything, verify both CLIs are available:
+Before doing ANYTHING else, load the Digital Twin Universe skill:
 
-```bash
-which amplifier-digital-twin && which agent-browser && agent-browser --version
+```
+load_skill(skill_name="digital-twin-universe")
 ```
 
-If `amplifier-digital-twin` is missing:
+This gives you the full CLI reference, troubleshooting guides, and example profiles. Do NOT proceed without it.
+
+
+## Prerequisites Self-Check (REQUIRED)
+
+Follow the prerequisites check from the skill for `amplifier-digital-twin` and Incus.
+
+Also verify `agent-browser` is available:
+
 ```bash
-uv tool install git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe@main
+which agent-browser && agent-browser --version
 ```
 
 If `agent-browser` is missing:
@@ -82,12 +90,7 @@ agent-browser install
 # Linux: agent-browser install --with-deps
 ```
 
-Also verify Incus is running:
-```bash
-incus version
-```
-
-Do NOT skip these checks. If either tool is missing, everything downstream fails.
+Do NOT skip these checks. If any tool is missing, everything downstream fails.
 
 
 ## Core Workflow
@@ -199,13 +202,8 @@ agent-browser close
 amplifier-digital-twin destroy <id>
 ```
 
-**Only destroy the specific instance you launched.** The `list` command shows
-all DTU environments on the machine -- other users or sessions may have their
-own running instances. Always destroy by the exact `id` from your `launch`
-output, never by iterating `list`.
-
-Destroy the environment when done unless the user explicitly wants to keep it
-running.
+Follow the cleanup safety rules from the skill -- only destroy by the specific `id` from your launch output.
+Destroy the environment when done unless the user explicitly wants to keep it running.
 
 
 ## Snapshot Reference
@@ -333,9 +331,9 @@ DTU environment: dtu-a1b2c3d4 (destroyed / still running)
 1. The results table
 2. The list of screenshot files with descriptions of what they show
 3. Whether the DTU was destroyed or left running
+4. A **state changes** section listing anything you changed on the host (installed CLIs, created/destroyed DTU environments, modified config, created files)
+5. A **issues encountered** section listing anything that failed, timed out, or required workarounds -- even if you resolved it
 
-
-@digital-twin-universe:context/dtu-awareness.md
 
 @digital-twin-universe:docs/api-reference.md
 

@@ -64,34 +64,23 @@ environment, verify it works, and hand back access details.
 **Execution model:** You run as a sub-session. Do the full workflow end-to-end
 and return the results.
 
-**Destroy safety:** `amplifier-digital-twin list` returns all DTU environments
-on the machine, not just yours. Only destroy instances you created in this
-session by their specific `id`. Never iterate `list` to destroy everything.
+
+## First Step (REQUIRED): Load the Skill
+
+Before doing ANYTHING else, load the Digital Twin Universe skill:
+
+```
+load_skill(skill_name="digital-twin-universe")
+```
+
+This gives you the full CLI reference, profile schema, troubleshooting guides, and example profiles. Do NOT proceed without it.
 
 
 ## Prerequisites Self-Check (REQUIRED)
 
-Before doing anything, verify the required CLIs are available:
-
-```bash
-which amplifier-digital-twin && amplifier-digital-twin --help > /dev/null 2>&1
-incus version
-```
-
-If `amplifier-digital-twin` is missing:
-```bash
-uv tool install git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe@main
-```
-
-If Incus is not running, stop and tell the user to install it (see the DTU README).
-
-If the project needs Gitea (you'll determine this in the exploration phase), also check:
-```bash
-which amplifier-gitea && docker info > /dev/null 2>&1
-```
-
-If `amplifier-gitea` or Docker is missing, stop and tell the user to install them.
-The Gitea skill (automatically available via the bundle) has full installation guidance.
+Follow the prerequisites check from the skill. Verify `amplifier-digital-twin`, Incus, and
+(if the project needs Gitea) `amplifier-gitea` + Docker are all available. Do not proceed
+until prerequisites pass.
 
 
 ## Core Workflow
@@ -163,8 +152,7 @@ Based on what you found, decide:
 
 ### 4. Set Up Gitea (if needed)
 
-Only if the project has local unpublished code that needs to be served as a git repo
-inside the DTU.
+Only if the project has local unpublished code. See the skill's Gitea guidance for when this applies.
 
 ```bash
 # Create a Gitea environment
@@ -199,25 +187,7 @@ the localhost URL via `--var`.
 
 ### 5. Generate the Profile YAML
 
-**Where to save the profile:**
-
-By default, write the profile to `.amplifier/digital-twin-universe/profiles/<profile-name>.yaml`
-relative to the current workspace or working directory. Create the directory if it doesn't exist.
-
-```bash
-mkdir -p .amplifier/digital-twin-universe/profiles
-```
-
-Do NOT `git add` or commit the profile unless the user explicitly asks you to.
-Profiles are often ephemeral and workspace-specific, so they should not be
-committed by default.
-
-If the user explicitly wants the profile committed and shipped with a specific
-repo, place it at `<repo>/.amplifier/digital-twin-universe/profiles/<profile-name>.yaml`
-inside that repo and let them decide when to commit it.
-
-**Naming:** Use dashes, not underscores. Match the profile `name` field
-(e.g., a profile with `name: my-fastapi-app` goes in `my-fastapi-app.yaml`).
+Follow the profile placement convention from the skill for where to save profiles.
 
 The profile structure (include only sections that are needed):
 
@@ -427,6 +397,8 @@ Profile saved to: .amplifier/digital-twin-universe/profiles/<profile-name>.yaml
 3. How to check logs
 4. How to destroy the environment (the specific `id`, not "all environments")
 5. Where the profile YAML was saved (so the user can iterate on it)
+6. A **state changes** section listing anything you changed on the host (installed CLIs, created Gitea environments, modified config, created files/directories)
+7. A **issues encountered** section listing anything that failed, timed out, or required workarounds -- even if you resolved it
 
 
 ## Iteration
@@ -449,8 +421,6 @@ Limit to 3 full retry cycles. If it's still broken after 3 attempts, hand back
 what you have with a clear description of what's failing and what you tried.
 You can also write feedback that can be given to the author of the Digital Twin CLI.
 
-
-@digital-twin-universe:context/dtu-awareness.md
 
 @digital-twin-universe:docs/api-reference.md
 
