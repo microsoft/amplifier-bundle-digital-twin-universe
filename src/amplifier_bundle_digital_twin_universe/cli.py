@@ -104,13 +104,22 @@ def list_() -> None:
 
 @main.command(name="check-readiness")
 @click.argument("id")
-def check_readiness(id: str) -> None:
+@click.option(
+    "--skip-access-check",
+    is_flag=True,
+    default=False,
+    help="Skip host-side access port verification.",
+)
+def check_readiness(id: str, skip_access_check: bool) -> None:
     """Run readiness checks for an environment.
+
+    Includes host-side verification of access.ports by default.
+    Use --skip-access-check to disable.
 
     Exit codes: 0 = ready, 1 = not ready, 2 = error.
     """
     try:
-        result = engine.check_readiness(id)
+        result = engine.check_readiness(id, skip_access_check=skip_access_check)
         click.echo(json.dumps(result))
         if result.get("ready") is True:
             sys.exit(0)

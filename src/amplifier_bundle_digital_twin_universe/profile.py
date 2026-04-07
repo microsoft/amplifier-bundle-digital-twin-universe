@@ -97,6 +97,9 @@ class PortMapping:
     container: int
     label: str = ""
     path: str = "/"
+    verify: bool = True
+    verify_timeout: int = 30
+    verify_interval: int = 2
 
 
 @dataclass
@@ -343,6 +346,9 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
                 container=int(p["container"]),
                 label=p.get("label", ""),
                 path=p.get("path", "/"),
+                verify=bool(p.get("verify", True)),
+                verify_timeout=int(p.get("verify_timeout", 30)),
+                verify_interval=int(p.get("verify_interval", 2)),
             )
             for p in ac.get("ports", [])
         ]

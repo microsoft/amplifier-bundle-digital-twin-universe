@@ -990,6 +990,28 @@ def launch(
         else:
             container_ip = None
 
+        # Store access.ports config as metadata for check-readiness.
+        if profile.access and profile.access.ports:
+            import json as _json_access
+
+            access_config = [
+                {
+                    "host": pm.host,
+                    "container": pm.container,
+                    "label": pm.label,
+                    "path": pm.path,
+                    "verify": pm.verify,
+                    "verify_timeout": pm.verify_timeout,
+                    "verify_interval": pm.verify_interval,
+                }
+                for pm in profile.access.ports
+            ]
+            incus.set_config(
+                container_name,
+                "user.dtu.access-ports",
+                _json_access.dumps(access_config),
+            )
+
         # Store readiness config as metadata for check-readiness.
         info: list[str] = []
         if profile.readiness:
@@ -1206,53 +1228,109 @@ def list_environments() -> list[dict]:
     return [_instance_info(inst["name"]) for inst in instances]
 
 
-def check_readiness(container_id: str) -> dict:
-    """Run readiness checks for *container_id*.  Returns a JSON-serialisable dict."""
+def check_readiness(
+    container_id: str,
+    skip_access_check: bool = False,
+) -> dict:
+    """Run readiness checks for *container_id*.  Returns a JSON-serialisable dict.
+
+    When *skip_access_check* is False (the default), host-side access
+    verification is included for any ``access.ports`` entries stored at
+    launch time.
+    """
     if not incus.container_exists(container_id):
         raise RuntimeError(f"Environment not found: {container_id}")
 
     import json as _json
 
     from amplifier_bundle_digital_twin_universe.profile import (
+        PortMapping,
         ReadinessCheck,
         ReadinessCheckHttp,
         ReadinessCheckTcp,
     )
     from amplifier_bundle_digital_twin_universe.readiness import (
         check_readiness as _do_checks,
+        verify_access_ports,
     )
 
+    # -- In-container readiness checks --
     raw = incus.get_config(container_id, "user.dtu.readiness")
-    if not raw:
+    has_readiness = bool(raw)
+
+    readiness_result: dict | None = None
+    if has_readiness:
+        config = _json.loads(raw)
+        checks: list[ReadinessCheck] = []
+        for item in config:
+            http_check = None
+            tcp_check = None
+            command_check = None
+
+            if "http" in item:
+                http_check = ReadinessCheckHttp(
+                    url=item["http"]["url"],
+                    expect_json=item["http"].get("expect_json"),
+                )
+            if "tcp" in item:
+                tcp_check = ReadinessCheckTcp(port=int(item["tcp"]["port"]))
+            if "command" in item:
+                command_check = item["command"]
+
+            checks.append(
+                ReadinessCheck(
+                    name=item["name"],
+                    http=http_check,
+                    tcp=tcp_check,
+                    command=command_check,
+                )
+            )
+        readiness_result = _do_checks(container_id, checks)
+
+    # -- Host-side access verification --
+    access_result: dict | None = None
+    if not skip_access_check:
+        raw_access = incus.get_config(container_id, "user.dtu.access-ports")
+        if raw_access:
+            access_config = _json.loads(raw_access)
+            port_mappings = [
+                PortMapping(
+                    host=int(p["host"]),
+                    container=int(p["container"]),
+                    label=p.get("label", ""),
+                    path=p.get("path", "/"),
+                    verify=bool(p.get("verify", True)),
+                    verify_timeout=int(p.get("verify_timeout", 30)),
+                    verify_interval=int(p.get("verify_interval", 2)),
+                )
+                for p in access_config
+            ]
+            access_result = verify_access_ports(port_mappings)
+
+    # -- Aggregate --
+    if not has_readiness and access_result is None:
         return {"ready": None, "message": "profile has no readiness checks"}
 
-    config = _json.loads(raw)
-    checks: list[ReadinessCheck] = []
-    for item in config:
-        http_check = None
-        tcp_check = None
-        command_check = None
+    # Determine overall readiness.
+    readiness_ok = readiness_result is None or readiness_result.get("ready", False)
+    access_ok = access_result is None or access_result.get("verified", False)
+    overall_ready = readiness_ok and access_ok
 
-        if "http" in item:
-            http_check = ReadinessCheckHttp(
-                url=item["http"]["url"],
-                expect_json=item["http"].get("expect_json"),
-            )
-        if "tcp" in item:
-            tcp_check = ReadinessCheckTcp(port=int(item["tcp"]["port"]))
-        if "command" in item:
-            command_check = item["command"]
+    result: dict = {"ready": overall_ready}
 
-        checks.append(
-            ReadinessCheck(
-                name=item["name"],
-                http=http_check,
-                tcp=tcp_check,
-                command=command_check,
-            )
+    if readiness_result is not None:
+        result["message"] = readiness_result.get("message", "")
+        if "checks" in readiness_result:
+            result["checks"] = readiness_result["checks"]
+    else:
+        result["message"] = (
+            "all checks passed" if overall_ready else "access verification failed"
         )
 
-    return _do_checks(container_id, checks)
+    if access_result is not None:
+        result["access"] = access_result
+
+    return result
 
 
 def destroy(container_id: str) -> dict:
