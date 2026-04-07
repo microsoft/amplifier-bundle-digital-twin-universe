@@ -112,6 +112,21 @@ inside an Incus-based environment. Use it to verify that nested container
 networking works on a given host before attempting more complex profiles that
 depend on Docker.
 
+## Profile Placement Convention
+
+When generating or saving DTU profiles, use this default path:
+
+```
+.amplifier/digital-twin-universe/profiles/<profile-name>.yaml
+```
+
+This path is relative to the workspace or current working directory. Create the
+directory structure if it doesn't exist.
+
+Do not commit generated profiles by default. Profiles are often workspace-specific and ephemeral. 
+If the user explicitly wants a profile shipped with a repo, default to placing it
+at `<repo>/.amplifier/digital-twin-universe/profiles/<profile-name>.yaml`.
+
 ## Agents
 
 For specialized DTU tasks within Amplifier sessions, you **MUST** use these agents instead of driving the CLI manually:

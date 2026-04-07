@@ -201,9 +201,25 @@ the localhost URL via `--var`.
 
 ### 5. Generate the Profile YAML
 
-Write the profile to a sensible location. Good defaults:
-- `<repo_path>/dtu-profile.yaml` -- next to the project
-- Or a temp file if the user doesn't want it in their repo
+**Where to save the profile:**
+
+By default, write the profile to `.amplifier/digital-twin-universe/profiles/<profile-name>.yaml`
+relative to the current workspace or working directory. Create the directory if it doesn't exist.
+
+```bash
+mkdir -p .amplifier/digital-twin-universe/profiles
+```
+
+Do NOT `git add` or commit the profile unless the user explicitly asks you to.
+Profiles are often ephemeral and workspace-specific, so they should not be
+committed by default.
+
+If the user explicitly wants the profile committed and shipped with a specific
+repo, place it at `<repo>/.amplifier/digital-twin-universe/profiles/<profile-name>.yaml`
+inside that repo and let them decide when to commit it.
+
+**Naming:** Use dashes, not underscores. Match the profile `name` field
+(e.g., a profile with `name: my-fastapi-app` goes in `my-fastapi-app.yaml`).
 
 The profile structure (include only sections that are needed):
 
@@ -388,7 +404,7 @@ To check logs:
 To tear it down:
   amplifier-digital-twin destroy <id>
 
-Profile saved to: <path-to-profile.yaml>
+Profile saved to: .amplifier/digital-twin-universe/profiles/<profile-name>.yaml
 ```
 
 **For CLI tools:**
@@ -404,7 +420,7 @@ To get an interactive shell:
 To tear it down:
   amplifier-digital-twin destroy <id>
 
-Profile saved to: <path-to-profile.yaml>
+Profile saved to: .amplifier/digital-twin-universe/profiles/<profile-name>.yaml
 ```
 
 **Always include:**

@@ -26,6 +26,7 @@ in a way that an everyday person can understand and interact without deep techni
 
 A DTU is defined by a profile which is a YAML file that declares the 
 services, networking, and provisioning needed to launch a complete environment.
+To share profiles alongside a repo, `.amplifier/digital-twin-universe/profiles/` is the convention.
 
 See [docs/profiles.md](docs/profiles.md) for the full profile reference and [profiles/](profiles/) for examples.
 
