@@ -1,0 +1,74 @@
+# Verifies the DTU bundle works in a fresh Amplifier installation.
+# Installs Amplifier CLI, adds the DTU bundle (and its Gitea dependency)
+# from a local Gitea instance so local changes are tested without pushing to origin.
+#
+# Prerequisites:
+#   - A running Gitea instance with this repo and amplifier-bundle-gitea pushed
+#   - ANTHROPIC_API_KEY set on the host
+#
+# Usage:
+#   amplifier-gitea create --port 10110
+#   # push both repos to Gitea, then:
+#   amplifier-digital-twin launch profiles/dtu-bundle-test.yaml \
+#     --var GITEA_URL=http://localhost:10110 \
+#     --var GITEA_TOKEN=<token from create>
+#
+# Variables (provided at launch via --var):
+#   GITEA_URL   -- Gitea base URL (e.g. http://localhost:10110)
+#   GITEA_TOKEN -- API token for Gitea
+name: dtu-bundle-test
+description: >
+  Amplifier session with the DTU bundle installed from local Gitea,
+  including the Gitea dependency.
+base:
+  image: ubuntu:24.04
+
+url_rewrites:
+  auth:
+    username: admin
+    token_var: GITEA_TOKEN
+  rules:
+    - match: github.com/microsoft/amplifier-bundle-digital-twin-universe
+      target: ${GITEA_URL}/admin/amplifier-bundle-digital-twin-universe
+    - match: github.com/microsoft/amplifier-bundle-gitea
+      target: ${GITEA_URL}/admin/amplifier-bundle-gitea
+
+passthrough:
+  allow_external: true
+  services:
+    - name: anthropic
+      key_env: ANTHROPIC_API_KEY
+
+provision:
+  setup_cmds:
+    - apt-get update && apt-get install -y git curl
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    # Install Amplifier CLI
+    - |
+      export PATH="/root/.local/bin:$PATH"
+      uv tool install git+https://github.com/microsoft/amplifier
+
+    # Configure Amplifier provider
+    - |
+      mkdir -p /root/.amplifier
+      cat > /root/.amplifier/settings.yaml << EOF
+      config:
+        providers:
+          - module: provider-anthropic
+            source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@main
+            config:
+              api_key: $ANTHROPIC_API_KEY
+      EOF
+
+    # Install the DTU bundle from Gitea (picks up local changes).
+    # The URL rewrite redirects github.com/microsoft/... to Gitea.
+    - |
+      export PATH="/root/.local/bin:$PATH"
+      amplifier bundle add git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe@main --app
+
+    # Verify
+    - amplifier --version
+    - amplifier bundle list
+
+    - mkdir -p /home/user/project

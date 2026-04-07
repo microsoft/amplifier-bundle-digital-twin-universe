@@ -90,10 +90,8 @@ If the project needs Gitea (you'll determine this in the exploration phase), als
 which amplifier-gitea && docker info > /dev/null 2>&1
 ```
 
-If `amplifier-gitea` is missing:
-```bash
-uv tool install git+https://github.com/microsoft/amplifier-bundle-gitea@main
-```
+If `amplifier-gitea` or Docker is missing, stop and tell the user to install them.
+The Gitea skill (automatically available via the bundle) has full installation guidance.
 
 
 ## Core Workflow

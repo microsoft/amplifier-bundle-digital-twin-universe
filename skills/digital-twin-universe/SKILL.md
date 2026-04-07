@@ -50,6 +50,22 @@ After installing, make sure to test to see if its working as expected.
 
 **If prerequisites are missing, report clearly and stop. Do not attempt workarounds.**
 
+## When to Use Gitea with a Digital Twin
+
+The Gitea bundle is included as a dependency of this bundle. Use Gitea whenever
+the project has **local repos that need to be tested as if they were already
+published on GitHub**. Gitea serves it locally so the Digital Twin can consume it without pushing to origin.
+
+Common scenarios:
+- Verifying that unpublished code installs and runs correctly in isolation as if they were published to GitHub or PyPI
+- Amplifier specific: Testing local changes to a bundle, module, or app before pushing
+
+**NEVER push changes to upstream just to make them available inside a Digital Twin.**
+Clone the local repos into Gitea first, then reference those in the profile via
+`url_rewrites` or `pypi_overrides`. Load the `gitea` skill for full CLI usage.
+
+If the use case warrants it, you should FIRST load the `gitea` skill and setup the environment for the user.
+
 ## Documentation
 
 For overview, quick start, installation, and feature list:
