@@ -899,6 +899,7 @@ def launch(
     profile_arg: str,
     variables: dict[str, str],
     name: str | None = None,
+    hostname: str | None = None,
 ) -> dict:
     """Launch a Digital Twin Universe.  Returns the JSON status dict."""
     incus.check_incus()
@@ -968,6 +969,22 @@ def launch(
             print("Running provisioning...", file=sys.stderr)
             _run_provisioning(container_name, profile.provision.setup_cmds)
 
+        # Hostname registration (must happen before URL construction).
+        resolved_hostname: str | None = None
+        raw_hostname = hostname  # CLI --hostname takes priority
+        if not raw_hostname and profile.access and profile.access.hostname:
+            raw_hostname = profile.access.hostname
+        if not raw_hostname:
+            raw_hostname = container_name
+
+        from amplifier_bundle_digital_twin_universe.hostname import HostnameManager
+
+        hostname_mgr = HostnameManager(raw_hostname, container_name)
+        hostname_result = hostname_mgr.register()
+        if hostname_result:
+            resolved_hostname = hostname_result["hostname"]
+            incus.set_config(container_name, "user.dtu.hostname", resolved_hostname)
+
         # Port forwarding via Incus proxy devices
         access_urls: list[dict[str, str]] = []
         if profile.access and profile.access.ports:
@@ -982,7 +999,10 @@ def launch(
                 )
                 url = f"http://localhost:{pm.host}{pm.path}"
                 label = pm.label or f"port {pm.host}"
-                access_urls.append({"label": label, "url": url})
+                entry: dict[str, str] = {"label": label, "url": url}
+                if resolved_hostname:
+                    entry["mdns_url"] = f"http://{resolved_hostname}:{pm.host}{pm.path}"
+                access_urls.append(entry)
                 print(
                     f"  forwarding :{pm.host} -> :{pm.container} ({label})",
                     file=sys.stderr,
@@ -1058,6 +1078,8 @@ def launch(
             "created_at": now,
             "info": info,
         }
+        if resolved_hostname:
+            result["hostname"] = resolved_hostname
         if container_ip:
             result["container_ip"] = container_ip
         if access_urls:
@@ -1075,6 +1097,16 @@ def launch(
         return result
     except Exception:
         # Best-effort cleanup on failure.
+        try:
+            from amplifier_bundle_digital_twin_universe.hostname import (
+                HostnameManager as _HM,
+            )
+
+            _hm_hostname = incus.get_config(container_name, "user.dtu.hostname")
+            if _hm_hostname:
+                _HM(_hm_hostname.removesuffix(".local"), container_name).unregister()
+        except Exception:
+            pass
         try:
             _stop_mock_containers(container_name)
         except Exception:
@@ -1207,12 +1239,34 @@ def _instance_info(name: str) -> dict:
     Shared by ``status()`` and ``list_environments()`` so both return the
     same shape.
     """
-    return {
+    info: dict = {
         "id": name,
         "profile": incus.get_config(name, "user.dtu.profile"),
         "status": incus.get_instance_state(name),
         "created_at": incus.get_config(name, "user.dtu.created-at"),
     }
+    _hostname = incus.get_config(name, "user.dtu.hostname")
+    if _hostname:
+        info["hostname"] = _hostname
+    raw_access = incus.get_config(name, "user.dtu.access-ports")
+    if raw_access:
+        import json as _json_info
+
+        access_config = _json_info.loads(raw_access)
+        access_urls: list[dict[str, str]] = []
+        for p in access_config:
+            host_port = p["host"]
+            path = p.get("path", "/")
+            label = p.get("label", "") or f"port {host_port}"
+            entry: dict[str, str] = {
+                "label": label,
+                "url": f"http://localhost:{host_port}{path}",
+            }
+            if _hostname:
+                entry["mdns_url"] = f"http://{_hostname}:{host_port}{path}"
+            access_urls.append(entry)
+        info["access"] = access_urls
+    return info
 
 
 def status(container_id: str) -> dict:
@@ -1337,6 +1391,18 @@ def destroy(container_id: str) -> dict:
     """Destroy the environment.  Returns ``{id, destroyed}``."""
     if not incus.container_exists(container_id):
         raise RuntimeError(f"Environment not found: {container_id}")
+
+    # Unregister hostname before destroying the container.
+    try:
+        _hostname = incus.get_config(container_id, "user.dtu.hostname")
+        if _hostname:
+            from amplifier_bundle_digital_twin_universe.hostname import (
+                HostnameManager,
+            )
+
+            HostnameManager(_hostname.removesuffix(".local"), container_id).unregister()
+    except Exception:
+        pass  # best-effort
 
     # Stop mock service Docker containers before destroying the Incus container.
     _stop_mock_containers(container_id)

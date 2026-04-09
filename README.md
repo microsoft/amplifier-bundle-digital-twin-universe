@@ -63,6 +63,7 @@ amplifier-digital-twin launch amplifier-chat
 - [uv](https://docs.astral.sh/uv/) (package manager and runner)
 - [Incus](https://linuxcontainers.org/incus/) (container runtime) -- see [docs/installing-incus.md](docs/installing-incus.md)
 - [Docker Engine](https://docs.docker.com/engine/install/) (for Gitea repos and mock service sidecars) -- see [docs/installing-docker.md](docs/installing-docker.md)
+- (Optional) `avahi-daemon` + `avahi-utils` for `.local` hostname support -- `sudo apt install avahi-daemon avahi-utils`
 
 ### CLI
 

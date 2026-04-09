@@ -35,7 +35,14 @@ def main() -> None:
     default=None,
     help="Human-readable name. Defaults to dtu-<uuid8>.",
 )
-def launch(profile: str, var: tuple[str, ...], name: str | None) -> None:
+@click.option(
+    "--hostname",
+    default=None,
+    help="Hostname for .local mDNS registration. Requires avahi-utils.",
+)
+def launch(
+    profile: str, var: tuple[str, ...], name: str | None, hostname: str | None
+) -> None:
     """Launch a new Digital Twin Universe from a profile."""
     variables: dict[str, str] = {}
     for v in var:
@@ -46,7 +53,7 @@ def launch(profile: str, var: tuple[str, ...], name: str | None) -> None:
         variables[key] = value
 
     try:
-        result = engine.launch(profile, variables, name=name)
+        result = engine.launch(profile, variables, name=name, hostname=hostname)
         click.echo(json.dumps(result))
     except Exception as exc:
         click.echo(f"Error: {exc}", err=True)

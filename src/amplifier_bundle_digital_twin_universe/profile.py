@@ -105,6 +105,7 @@ class PortMapping:
 @dataclass
 class Access:
     ports: list[PortMapping] = field(default_factory=list)
+    hostname: str | None = None
 
 
 @dataclass
@@ -352,7 +353,7 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
             )
             for p in ac.get("ports", [])
         ]
-        access = Access(ports=ports)
+        access = Access(ports=ports, hostname=ac.get("hostname"))
 
     # readiness (optional)
     readiness = None

@@ -82,6 +82,15 @@ Follow the prerequisites check from the skill. Verify `amplifier-digital-twin`, 
 (if the project needs Gitea) `amplifier-gitea` + Docker are all available. Do not proceed
 until prerequisites pass.
 
+Also check for Avahi (optional, for `.local` hostname support):
+```bash
+which avahi-publish-address && echo "Avahi OK" || echo "Avahi NOT available (hostnames will fall back to localhost)"
+```
+
+If Avahi is not installed, note this for later -- you can still launch environments, but
+access URLs will use `localhost` instead of a human-friendly `.local` hostname.
+You should not use the hostname argument in this case.
+
 
 ## Core Workflow
 
@@ -229,6 +238,7 @@ passthrough:
 
 # Only if the project exposes a web UI or API
 access:
+  hostname: <descriptive-name>  # .local mDNS hostname (requires avahi-utils)
   ports:
     - host: <port>
       container: <port>
@@ -291,14 +301,21 @@ readiness:
 
 ```bash
 amplifier-digital-twin launch <profile-path> \
+  [--hostname <descriptive-name>] \
   [--var GITEA_URL=http://localhost:<port>] \
   [--var GITEA_TOKEN=<token>] \
   [--name <descriptive-name>]
 ```
 
+Always pass `--hostname` with a short, descriptive name (e.g. `--hostname my-fastapi-app`).
+This registers a `.local` mDNS hostname via Avahi so the user can access
+`http://my-fastapi-app.local:<port>/` instead of a bare `localhost:<port>`.
+If Avahi is not available, the flag is silently ignored and URLs use `localhost`.
+
 Capture the JSON output. You need:
 - `id` for status/exec/destroy commands
-- `access` for web app URLs
+- `hostname` for the `.local` mDNS name (if registered)
+- `access` for web app URLs (will use hostname when available)
 - `info` for readiness check hints
 
 If launch fails, read the error carefully. Common issues:
@@ -358,10 +375,15 @@ Fix the profile and re-launch if needed. Do not hand back a broken environment.
 Report the results clearly. Your return message MUST include:
 
 **For web apps:**
+
+The `access` array always has a `url` field using `localhost`. When a hostname
+was registered, each entry also has an `mdns_url` field with the `.local` version.
+Report the localhost URL first, then the mDNS URL in parentheses if present:
+
 ```
 DTU environment is running.
 
-Access your app: http://localhost:<port>/<path>
+Access your app: http://localhost:<port>/<path>  (mDNS: http://<hostname>.local:<port>/<path>)
 
 To get a shell inside the environment:
   amplifier-digital-twin exec <id>
@@ -374,6 +396,8 @@ To tear it down:
 
 Profile saved to: .amplifier/digital-twin-universe/profiles/<profile-name>.yaml
 ```
+
+If `mdns_url` is absent (Avahi unavailable), just show the `url` -- no parenthetical.
 
 **For CLI tools:**
 ```
@@ -393,7 +417,7 @@ Profile saved to: .amplifier/digital-twin-universe/profiles/<profile-name>.yaml
 
 **Always include:**
 1. The DTU environment ID
-2. How to access the app (URL or exec command)
+2. How to access the app (URL or exec command). For web apps with hostname support, show the `.local` URL first and `localhost` in parentheses
 3. How to check logs
 4. How to destroy the environment (the specific `id`, not "all environments")
 5. Where the profile YAML was saved (so the user can iterate on it)

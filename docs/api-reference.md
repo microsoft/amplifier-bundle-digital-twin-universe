@@ -17,7 +17,8 @@ provisioning, and returns connection details.
 ```bash
 amplifier-digital-twin launch <profile> \
   [--var KEY=VALUE ...] \
-  [--name my-env]
+  [--name my-env] \
+  [--hostname my-project]
 ```
 
 `<profile>` (required)
@@ -33,6 +34,14 @@ amplifier-digital-twin launch <profile> \
 `--name` (optional)
   Human-readable name. Defaults to `dtu-<uuid8>`.
 
+`--hostname` (optional)
+  Register a `.local` mDNS hostname via Avahi. The `.local` suffix is appended
+  automatically (e.g. `--hostname my-app` registers `my-app.local`).
+  Access URLs will use the hostname instead of `localhost`.
+  Overrides any `hostname` set in the profile's `access` section.
+  Requires `avahi-utils`. If unavailable, silently skipped.
+  See [profiles.md](profiles.md#hostname-support) for platform details.
+
 Returns (example):
 
 ```json
@@ -42,9 +51,10 @@ Returns (example):
   "profile": "amplifier-chat",
   "status": "running",
   "created_at": "2026-03-23T16:00:00Z",
+  "hostname": "amplifier-chat.local",
   "container_ip": "10.231.68.42",
   "access": [
-    {"label": "Chat UI", "url": "http://localhost:8410/chat/"}
+    {"label": "Chat UI", "url": "http://localhost:8410/chat/", "mdns_url": "http://amplifier-chat.local:8410/chat/"}
   ],
   "mock_services": [
     {
@@ -62,6 +72,10 @@ Returns (example):
 
 Optional fields:
 
+- `hostname` -- present when a `.local` hostname was successfully registered via Avahi.
+  The value is the fully qualified name (e.g. `amplifier-chat.local`).
+- `access[].mdns_url` -- present on each access entry when a hostname is registered.
+  The `url` field always uses `localhost`; `mdns_url` uses the `.local` hostname.
 - `container_ip` and `access` -- present when the profile defines `access.ports`
 - `mock_services` -- present when the profile defines `mock_services`. Each entry includes
   the mock service name, Docker container ID, ephemeral host port, and intercepted domains.
@@ -243,11 +257,21 @@ Returns:
   "id": "dtu-a1b2c3d4",
   "profile": "amplifier-user-sim",
   "status": "running",
-  "created_at": "2026-03-23T16:00:00Z"
+  "created_at": "2026-03-23T16:00:00Z",
+  "hostname": "amplifier-user-sim.local",
+  "access": [
+    {"label": "Chat UI", "url": "http://localhost:8410/chat/", "mdns_url": "http://amplifier-user-sim.local:8410/chat/"}
+  ]
 }
 ```
 
 `status` is the Incus container state (e.g. `"running"`, `"stopped"`).
+
+Optional fields:
+
+- `hostname` -- present when a `.local` hostname was registered at launch time.
+- `access` -- present when the profile defines `access.ports`. Same shape as `launch`
+  output: `url` always uses `localhost`, `mdns_url` present when hostname is registered.
 
 
 ### `list`
@@ -275,7 +299,11 @@ Returns:
     "id": "dtu-a1b2c3d4",
     "profile": "amplifier-user-sim",
     "status": "running",
-    "created_at": "2026-03-23T16:00:00Z"
+    "created_at": "2026-03-23T16:00:00Z",
+    "hostname": "amplifier-user-sim.local",
+    "access": [
+      {"label": "Chat UI", "url": "http://localhost:8410/chat/", "mdns_url": "http://amplifier-user-sim.local:8410/chat/"}
+    ]
   }
 ]
 ```
@@ -283,6 +311,8 @@ Returns:
 Returns an empty array `[]` when no environments exist.
 
 `status` is the Incus container state (e.g. `"running"`, `"stopped"`).
+`hostname` is present when a `.local` hostname was registered at launch time.
+`access` is present when the profile defines `access.ports`.
 
 
 ### `destroy`

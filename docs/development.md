@@ -10,6 +10,9 @@
 ```bash
 # Install amplifier-gitea if you don't have it
 uv tool install git+https://github.com/microsoft/amplifier-bundle-gitea@main
+
+# Optional: for .local hostname support
+sudo apt install avahi-daemon avahi-utils
 ```
 
 ## Setup
@@ -123,6 +126,19 @@ and confirm it remains healthy afterward.
 uv run pytest tests/test_e2e_amplifier_chat.py --run-e2e -v -s
 ```
 
+#### Hostname mDNS registration test
+
+Launches `docker-in-incus` with a custom hostname, verifies `.local`
+resolution via Avahi, and confirms cleanup on destroy.
+
+**Prerequisites:**
+- Incus running
+- `avahi-daemon` running + `avahi-utils` installed
+
+```bash
+uv run pytest tests/test_e2e_hostname.py --run-e2e -v -s
+```
+
 To run all end-to-end suites:
 
 ```bash
@@ -130,5 +146,6 @@ uv run pytest tests/test_e2e_pypi.py \
   tests/test_e2e_amplifier_user_sim_single_module.py \
   tests/test_e2e_amplifier_user_sim.py \
   tests/test_e2e_amplifier_chat.py \
+  tests/test_e2e_hostname.py \
   --run-e2e -v -s
 ```

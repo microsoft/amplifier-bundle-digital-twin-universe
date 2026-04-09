@@ -187,6 +187,7 @@ Proxy devices are automatically removed when the container is destroyed.
 
 ```yaml
 access:
+  hostname: amplifier-chat
   ports:
     - host: 8410
       container: 8410
@@ -196,6 +197,12 @@ access:
 
 Fields:
 
+- `hostname` (optional) -- register a `.local` mDNS hostname for this environment
+  via Avahi. The `.local` suffix is appended automatically (`amplifier-chat` becomes
+  `amplifier-chat.local`). Access URLs will use the hostname instead of `localhost`.
+  Can also be set via the `--hostname` CLI flag (which takes priority over the
+  profile field). Requires `avahi-daemon` and `avahi-utils` to be installed.
+  See [hostname support](#hostname-support) for platform details.
 - `host` (required) -- port to listen on the host
 - `container` (required) -- port to forward to inside the container
 - `label` (optional) -- human-readable name shown in launch output
@@ -205,14 +212,53 @@ When `access.ports` is defined, the launch JSON includes additional fields:
 
 ```json
 {
+  "hostname": "amplifier-chat.local",
   "container_ip": "10.x.x.x",
   "access": [
-    {"label": "Chat UI", "url": "http://localhost:8410/chat/"}
+    {"label": "Chat UI", "url": "http://amplifier-chat.local:8410/chat/"}
   ]
 }
 ```
 
-`amplifier-chat` uses this to expose the web UI on `localhost:8410`.
+`amplifier-chat` uses this to expose the web UI on `localhost:8410` (or
+`amplifier-chat.local:8410` when hostname registration succeeds).
+
+
+### Hostname support
+
+When `access.hostname` is set (or `--hostname` is passed), DTU registers a
+`.local` hostname via `avahi-publish-address`. This makes access URLs easier to
+identify when running multiple DTU instances -- `http://my-project.local:8410`
+instead of `http://localhost:8410`.
+
+**Prerequisites:**
+
+```bash
+# On Linux or WSL2 (if not already installed - check first)
+sudo apt install avahi-daemon avahi-utils
+```
+
+**Platform support:**
+
+| Platform | Status |
+|----------|--------|
+| Native Linux | Fully supported. LAN-wide mDNS resolution. |
+| WSL2 | Supported within WSL2. Windows browsers will NOT resolve `.local` names from WSL2. |
+| macOS / Windows | Not supported. Warning printed, URLs fall back to `localhost`. |
+
+**Hostname priority order:**
+
+1. `--hostname` CLI flag (highest priority)
+2. `access.hostname` in profile YAML
+3. Container name (`--name` or auto-generated `dtu-<uuid8>`)
+
+**Lifecycle:** The Avahi process runs as a background subprocess tied to the
+container lifecycle. It is automatically killed when the container is destroyed.
+If the process is orphaned (e.g. crash), it will die when its parent dies, and
+the PID file at `/tmp/dtu-avahi-<container-id>.pid` can be cleaned up manually.
+
+If `avahi-publish-address` is not installed, a warning is printed and access URLs
+fall back to `localhost` -- no error is raised.
 
 
 ## `mock_services`

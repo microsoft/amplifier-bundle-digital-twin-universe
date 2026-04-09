@@ -98,6 +98,31 @@ For running Docker inside a Digital Twin Universe environment (nested containers
 read_file("@digital-twin-universe:docs/docker-in-incus.md")
 ```
 
+## Hostname Support (mDNS)
+
+Environments can register a `.local` hostname via Avahi mDNS, making it easy to
+tell multiple DTU instances apart (e.g. `http://my-app.local:8410/` instead of
+`http://localhost:8410/`).
+
+**Prerequisites:** `avahi-daemon` and `avahi-utils` must be installed:
+```bash
+which avahi-publish-address && echo "Avahi OK" || echo "Install: sudo apt install avahi-daemon avahi-utils"
+```
+
+**Usage:** Set `access.hostname` in the profile or pass `--hostname` on the CLI:
+```bash
+amplifier-digital-twin launch my-profile --hostname my-app
+# => access URLs will be http://my-app.local:<port>/...
+```
+
+If Avahi is not installed, hostname registration is silently skipped and access
+URLs fall back to `localhost`. No error, no failure -- it's a graceful degradation.
+
+**Platform support:**
+- Native Linux: fully supported (LAN-wide resolution via mDNS)
+- WSL2: works within WSL2; Windows browsers cannot resolve `.local` names from WSL2
+- macOS/Windows: not supported (warning printed, falls back to localhost)
+
 ## Updating Running Environments
 
 Profiles can define an `update` section with commands to pull fresh code and
