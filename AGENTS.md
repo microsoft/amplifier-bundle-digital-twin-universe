@@ -5,7 +5,6 @@
 
 ### Agents
 
-@agents/dtu-browser-tester.md
 @agents/dtu-profile-builder.md
 
 ### Example profiles

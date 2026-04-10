@@ -8,7 +8,6 @@ includes:
 
 agents:
   include:
-    - digital-twin-universe:dtu-browser-tester
     - digital-twin-universe:dtu-profile-builder
 
 tools:

@@ -173,7 +173,7 @@ at `<repo>/.amplifier/digital-twin-universe/profiles/<profile-name>.yaml`.
 For specialized DTU tasks within Amplifier sessions, you **MUST** use these agents instead of driving the CLI manually:
 
 - **`dtu-profile-builder`** — Explores a user's project repo, generates a DTU profile, launches the environment, and hands back access details. Use when the user has a project and wants to create a digital twin for it.
-- **`dtu-browser-tester`** — Drives a real browser against web UIs running inside a DTU to verify they work end-to-end. Use when you need to verify a DTU environment's web UI after launch.
+
 
 ## Cleanup Safety
 

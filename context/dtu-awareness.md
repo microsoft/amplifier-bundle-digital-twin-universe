@@ -18,11 +18,6 @@ Build a DTU profile for a project, launch and verify an environment (also handle
 delegate(agent="digital-twin-universe:dtu-profile-builder", instruction="<what the user needs>", context_depth="all", context_scope="full")
 ```
 
-Verify a web UI running inside a DTU with a real browser:
-```
-delegate(agent="digital-twin-universe:dtu-browser-tester", instruction="<what the user needs>", context_depth="all", context_scope="full")
-```
-
 If the user's request doesn't match either agent (e.g. general DTU questions, installation help, troubleshooting), load the skill instead:
 ```
 load_skill(skill_name="digital-twin-universe")

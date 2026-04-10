@@ -142,7 +142,6 @@ Mock services can advertise affordances (coordinates, API hooks) so agents inter
 
 - **Amplifier agents.** The bundle includes agents for working with DTU environments within Amplifier sessions.
   - [`dtu-profile-builder`](agents/dtu-profile-builder.md) explores a user's project repository, generates a complete DTU profile, launches the environment, and hands back access details.
-  - [`dtu-browser-tester`](agents/dtu-browser-tester.md) drives a real browser against web UIs running inside a DTU to verify they work end-to-end.
 
 - **Amplifier skill.** The bundle ships a `digital-twin-universe` [skill](skills/) for help installing the CLI, understanding profiles, and using environments within Amplifier sessions.
 
