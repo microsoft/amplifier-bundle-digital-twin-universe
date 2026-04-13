@@ -1,7 +1,5 @@
 # Amplifier Bundle Digital Twin Universe (DTU)
 
-> This project still in very early stages. Assume that every interface, CLI commands, profile schema, JSON output shapes, etc. is subject to change.
-
 By default AI generated software is verified in the environment and context that it was built. 
 This frequently leads to agents claiming it worked due to context poisoning, 
 leaving issues unsolved since they are not forced to consider deployment details, or specific setup present on the dev machine. 
