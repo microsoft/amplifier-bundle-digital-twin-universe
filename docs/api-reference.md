@@ -159,43 +159,36 @@ When a command is provided (JSON or stream mode), it is internally wrapped in
 
 ```bash
 # GOOD -- flags passed to the command
-amplifier-digital-twin exec dtu-a1b2c3d4 -- codex --version
+amplifier-digital-twin exec dtu-a1b2c3d4 -- myapp --version
 
 # BAD -- --version consumed by the CLI, fails with "No such option"
-amplifier-digital-twin exec dtu-a1b2c3d4 codex --version
+amplifier-digital-twin exec dtu-a1b2c3d4 myapp --version
 
 # BAD -- nested bash, hangs
 amplifier-digital-twin exec dtu-a1b2c3d4 -- bash
 
 # UNNECESSARY -- double-nesting, but works
-amplifier-digital-twin exec dtu-a1b2c3d4 -- bash -c 'codex --version'
+amplifier-digital-twin exec dtu-a1b2c3d4 -- bash -c 'myapp --version'
 ```
 
 #### TUI and interactive applications
 
-JSON and stream modes do **not** allocate a PTY inside the container. TUI apps
-that require a terminal (curses, Ink, Ratatui, etc.) will fail or render
-incorrectly in these modes.
+JSON and stream modes do **not** allocate a PTY inside the container.
+Applications that require a terminal (curses, Ink, Ratatui, etc.) will fail
+or render incorrectly in these modes.
 
-For TUI apps, use **interactive mode** (no command) and launch the app from
-within the shell:
+For interactive or TUI apps, use **interactive mode** (no command) and launch
+the app from within the shell:
 
 ```bash
 # 1. Get an interactive shell with PTY
 amplifier-digital-twin exec dtu-a1b2c3d4
-# 2. Now inside the container, run your TUI app
-root@dtu-a1b2c3d4:~# codex
+# 2. Now inside the container, run your app
+root@dtu-a1b2c3d4:~# myapp
 ```
 
-When driving TUI apps programmatically (e.g. via `terminal_inspector`), spawn
-exec in interactive mode, wait for the shell prompt, then send keystrokes to
-launch the app:
-
-```
-terminal_inspector spawn "amplifier-digital-twin exec <id>"  # interactive, PTY
-terminal_inspector wait_for_text "root@"                      # shell ready
-terminal_inspector send_keys "codex{ENTER}"                   # launch TUI app
-```
+When driving apps programmatically via a PTY harness, spawn exec in interactive
+mode, wait for the shell prompt, then send keystrokes to launch the app.
 
 Use `--stream` when:
 - Running long-lived commands where you want to see progress as it happens
