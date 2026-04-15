@@ -58,7 +58,19 @@ class Base:
 
 
 @dataclass
+class FileEntry:
+    src: str
+    dest: str
+    recursive: bool = False
+    create_dirs: bool = True
+    mode: str | None = None
+    uid: int | None = None
+    gid: int | None = None
+
+
+@dataclass
 class Provision:
+    files: list[FileEntry] = field(default_factory=list)
     setup_cmds: list[str] = field(default_factory=list)
 
 
@@ -285,7 +297,27 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
     provision = None
     prov = data.get("provision")
     if prov:
-        provision = Provision(setup_cmds=prov.get("setup_cmds", []))
+        files: list[FileEntry] = []
+        for f in prov.get("files", []):
+            if "src" not in f or "dest" not in f:
+                raise ValueError(
+                    "Each provision.files entry must have 'src' and 'dest' fields"
+                )
+            files.append(
+                FileEntry(
+                    src=f["src"],
+                    dest=f["dest"],
+                    recursive=bool(f.get("recursive", False)),
+                    create_dirs=bool(f.get("create_dirs", True)),
+                    mode=f.get("mode"),
+                    uid=int(f["uid"]) if f.get("uid") is not None else None,
+                    gid=int(f["gid"]) if f.get("gid") is not None else None,
+                )
+            )
+        provision = Provision(
+            files=files,
+            setup_cmds=prov.get("setup_cmds", []),
+        )
 
     # update (optional)
     update = None

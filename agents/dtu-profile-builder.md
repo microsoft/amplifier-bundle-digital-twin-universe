@@ -246,6 +246,14 @@ access:
       path: /
 
 provision:
+  # Push host files into the container before setup_cmds run
+  files:
+    - src: ./path/to/seed-data/
+      dest: /root/app/data/
+      recursive: true
+    - src: ./config/settings.yaml
+      dest: /root/.config/app/settings.yaml
+
   setup_cmds:
     # System deps
     - apt-get update && apt-get install -y <packages>
@@ -288,14 +296,30 @@ readiness:
     command: "<verification command>"
 ```
 
-**Key rules for provision commands:**
-- Commands run with `bash -lc` in order
+**Key rules for provisioning:**
+- `provision.files` entries are pushed first. Use them for config files, seed data,
+  or any host files the container needs. Paths in `src` are relative to the profile file.
+- `setup_cmds` run after files are pushed, with `bash -lc` in order
 - Proxy env vars and passthrough secrets are already available
 - Launch fails on the first non-zero exit code
 - For tools installed to `~/.local/bin` or `~/.cargo/bin`, export PATH explicitly:
   `export PATH="/root/.local/bin:$PATH"`
 - For servers, use `nohup ... &` and a small sleep to let the process start
 - Always add a verification step (e.g., `<tool> --version`) after installation
+- Prefer `provision.files` over heredocs in `setup_cmds` for seeding files
+
+**Portable vs local profiles:**
+`provision.files` uses host paths, which ties the profile to the machine it
+was written on. This is fine for one-off or personal use. If the profile is
+meant to be **shared or committed to a repo**, avoid `provision.files` for
+anything that isn't shipped alongside the profile. Instead, use `setup_cmds`
+to fetch files from a remote source at launch time:
+- `curl`/`wget` from a URL
+- `git clone` from a GitHub repo
+- `amplifier-gitea mirror-from-github` + clone from Gitea
+- heredocs for small inline config files
+
+This keeps the profile self-contained and launchable on any machine.
 
 ### 6. Launch the DTU
 

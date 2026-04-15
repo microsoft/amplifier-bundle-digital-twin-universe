@@ -236,18 +236,57 @@ def get_host_gateway_ip(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def push_file(name: str, local_path: str, container_path: str) -> None:
-    """``incus file push <local> <name>/<container_path>``"""
-    # Strip leading slash -- Incus path syntax is <instance>/<path-from-root>.
+def file_push(
+    name: str,
+    local_paths: list[str],
+    container_path: str,
+    *,
+    recursive: bool = False,
+    create_dirs: bool = False,
+    mode: str | None = None,
+    uid: int | None = None,
+    gid: int | None = None,
+    timeout: int = 120,
+) -> None:
+    """``incus file push <path>... <name>/<container_path>``"""
     dest = f"{name}/{container_path.lstrip('/')}"
-    result = subprocess.run(
-        ["incus", "file", "push", local_path, dest],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    cmd = ["incus", "file", "push"]
+    if recursive:
+        cmd.append("--recursive")
+    if create_dirs:
+        cmd.append("--create-dirs")
+    if mode is not None:
+        cmd.extend(["--mode", mode])
+    if uid is not None:
+        cmd.extend(["--uid", str(uid)])
+    if gid is not None:
+        cmd.extend(["--gid", str(gid)])
+    cmd.extend([*local_paths, dest])
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise IncusError(f"Failed to push file: {result.stderr.strip()}")
+
+
+def file_pull(
+    name: str,
+    container_paths: list[str],
+    local_path: str,
+    *,
+    recursive: bool = False,
+    create_dirs: bool = False,
+    timeout: int = 120,
+) -> None:
+    """``incus file pull <name>/<path>... <local_path>``"""
+    srcs = [f"{name}/{p.lstrip('/')}" for p in container_paths]
+    cmd = ["incus", "file", "pull"]
+    if recursive:
+        cmd.append("--recursive")
+    if create_dirs:
+        cmd.append("--create-dirs")
+    cmd.extend([*srcs, local_path])
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        raise IncusError(f"Failed to pull file: {result.stderr.strip()}")
 
 
 # ---------------------------------------------------------------------------

@@ -315,6 +315,121 @@ Returns an empty array `[]` when no environments exist.
 `access` is present when the profile defines `access.ports`.
 
 
+## File Operations
+
+### `file-push`
+
+Push files from the host into an instance.
+
+```bash
+amplifier-digital-twin file-push <id> <source>... <container_path> [flags]
+```
+
+`<id>` (required)
+  Environment ID.
+
+`<source>...` (required)
+  One or more local file or directory paths.
+
+`<container_path>` (required)
+  Destination path inside the container. When pushing multiple sources, this
+  must be an existing directory.
+
+`-r/--recursive` (default: on)
+  Recursively transfer directories. Use `-R` or `--no-recursive` to disable.
+
+`-p/--create-dirs` (default: on)
+  Create any intermediate directories necessary in the container.
+  Use `-P` or `--no-create-dirs` to disable.
+
+`--mode`
+  Set file permissions on push (e.g. `0644`).
+
+`--uid`
+  Set file UID on push.
+
+`--gid`
+  Set file GID on push.
+
+`--timeout`
+  Timeout in seconds (default: 120).
+
+```bash
+# Single file
+amplifier-digital-twin file-push dtu-a1b2c3d4 ./config.yaml /root/config.yaml
+
+# Multiple files into a directory
+amplifier-digital-twin file-push dtu-a1b2c3d4 a.yaml b.yaml /root/data/
+
+# Directory tree
+amplifier-digital-twin file-push dtu-a1b2c3d4 ./data/ /root/app/data/
+
+# Disable recursive (single files only)
+amplifier-digital-twin file-push dtu-a1b2c3d4 -R ./file.txt /root/file.txt
+```
+
+Returns:
+
+```json
+{
+  "instance_id": "dtu-a1b2c3d4",
+  "sources": ["./config.yaml"],
+  "dest": "/root/config.yaml",
+  "recursive": true
+}
+```
+
+
+### `file-pull`
+
+Pull files from an instance to the host.
+
+```bash
+amplifier-digital-twin file-pull <id> <container_path>... <local_path> [flags]
+```
+
+`<id>` (required)
+  Environment ID.
+
+`<container_path>...` (required)
+  One or more paths inside the container.
+
+`<local_path>` (required)
+  Destination path on the host. When pulling multiple sources, this must be
+  an existing directory.
+
+`-r/--recursive` (default: on)
+  Recursively transfer directories. Use `-R` or `--no-recursive` to disable.
+
+`-p/--create-dirs` (default: on)
+  Create any intermediate directories necessary on the host.
+  Use `-P` or `--no-create-dirs` to disable.
+
+`--timeout`
+  Timeout in seconds (default: 120).
+
+```bash
+# Single file
+amplifier-digital-twin file-pull dtu-a1b2c3d4 /var/log/app.log ./app.log
+
+# Directory
+amplifier-digital-twin file-pull dtu-a1b2c3d4 /root/output/ ./results/
+```
+
+Returns:
+
+```json
+{
+  "instance_id": "dtu-a1b2c3d4",
+  "sources": ["/var/log/app.log"],
+  "dest": "./app.log",
+  "recursive": true
+}
+```
+
+
+## Teardown
+
 ### `destroy`
 
 Destroy an environment. Stops and removes any mock service Docker containers

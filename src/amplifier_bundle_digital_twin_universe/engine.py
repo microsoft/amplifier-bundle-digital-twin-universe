@@ -351,7 +351,7 @@ def _setup_proxy(
         f.write(addon_script)
         local_addon = f.name
     try:
-        incus.push_file(container_name, local_addon, "/opt/dtu/rewrite_addon.py")
+        incus.file_push(container_name, [local_addon], "/opt/dtu/rewrite_addon.py")
     finally:
         os.unlink(local_addon)
 
@@ -551,8 +551,8 @@ def _setup_pypi_overrides(
                 f"  pushing wheel: {host_path.name} -> /opt/dtu/wheels/",
                 file=sys.stderr,
             )
-            incus.push_file(
-                container_name, str(host_path), f"/opt/dtu/wheels/{host_path.name}"
+            incus.file_push(
+                container_name, [str(host_path)], f"/opt/dtu/wheels/{host_path.name}"
             )
         finally:
             if temporary:
@@ -864,7 +864,7 @@ def _write_env(
         f.write(env_script)
         local_env = f.name
     try:
-        incus.push_file(container_name, local_env, "/etc/profile.d/dtu-env.sh")
+        incus.file_push(container_name, [local_env], "/etc/profile.d/dtu-env.sh")
     finally:
         os.unlink(local_env)
 
@@ -874,6 +874,26 @@ def _write_env(
 # ---------------------------------------------------------------------------
 # Provisioning
 # ---------------------------------------------------------------------------
+
+
+def _push_provision_files(container_name: str, profile: Profile) -> None:
+    """Push ``provision.files`` entries into the container."""
+    assert profile.provision is not None
+    for entry in profile.provision.files:
+        src = (profile.path.parent / entry.src).resolve()
+        if not src.exists():
+            raise RuntimeError(f"Provision file not found: {src}")
+        print(f"  provision file: {entry.src} -> {entry.dest}", file=sys.stderr)
+        incus.file_push(
+            container_name,
+            [str(src)],
+            entry.dest,
+            recursive=entry.recursive,
+            create_dirs=entry.create_dirs,
+            mode=entry.mode,
+            uid=entry.uid,
+            gid=entry.gid,
+        )
 
 
 def _run_provisioning(container_name: str, commands: list[str]) -> None:
@@ -963,6 +983,11 @@ def launch(
 
         # Environment variables
         _write_env(container_name, profile, rewritten_vars, proxy_enabled)
+
+        # Provision files (pushed before setup_cmds so commands can use them)
+        if profile.provision and profile.provision.files:
+            print("Pushing provision files...", file=sys.stderr)
+            _push_provision_files(container_name, profile)
 
         # Provisioning
         if profile.provision and profile.provision.setup_cmds:
@@ -1223,6 +1248,56 @@ def exec_interactive(container_id: str) -> int:
         print(f"Error: Environment not found: {container_id}", file=sys.stderr)
         return 1
     return incus.exec_interactive(container_id)
+
+
+def file_push(
+    container_id: str,
+    local_paths: list[str],
+    container_path: str,
+    *,
+    recursive: bool = False,
+    create_dirs: bool = False,
+    mode: str | None = None,
+    uid: int | None = None,
+    gid: int | None = None,
+    timeout: int = 120,
+) -> None:
+    """Push files from the host into the environment."""
+    if not incus.container_exists(container_id):
+        raise RuntimeError(f"Environment not found: {container_id}")
+    incus.file_push(
+        container_id,
+        local_paths,
+        container_path,
+        recursive=recursive,
+        create_dirs=create_dirs,
+        mode=mode,
+        uid=uid,
+        gid=gid,
+        timeout=timeout,
+    )
+
+
+def file_pull(
+    container_id: str,
+    container_paths: list[str],
+    local_path: str,
+    *,
+    recursive: bool = False,
+    create_dirs: bool = False,
+    timeout: int = 120,
+) -> None:
+    """Pull files from the environment to the host."""
+    if not incus.container_exists(container_id):
+        raise RuntimeError(f"Environment not found: {container_id}")
+    incus.file_pull(
+        container_id,
+        container_paths,
+        local_path,
+        recursive=recursive,
+        create_dirs=create_dirs,
+        timeout=timeout,
+    )
 
 
 # ---------------------------------------------------------------------------

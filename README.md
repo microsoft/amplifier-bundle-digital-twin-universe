@@ -98,6 +98,12 @@ amplifier-digital-twin launch amplifier-user-sim
 # Execute a command inside it
 amplifier-digital-twin exec dtu-a1b2c3d4 -- amplifier --version
 
+# Push files into the environment
+amplifier-digital-twin file-push dtu-a1b2c3d4 ./data/ /root/app/data/
+
+# Pull files out of the environment
+amplifier-digital-twin file-pull dtu-a1b2c3d4 /root/output/ ./results/
+
 # Update provisioned software without restarting the environment
 amplifier-digital-twin update dtu-a1b2c3d4
 

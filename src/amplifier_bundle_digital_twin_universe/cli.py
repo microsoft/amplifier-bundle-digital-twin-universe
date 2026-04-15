@@ -175,6 +175,150 @@ def update(id: str, var: tuple[str, ...], skip_readiness: bool) -> None:
         sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# File operations
+# ---------------------------------------------------------------------------
+
+
+@main.command(name="file-push")
+@click.argument("instance_id")
+@click.argument("paths", nargs=-1, required=True)
+@click.option(
+    "-r/-R",
+    "--recursive/--no-recursive",
+    default=True,
+    help="Recursively transfer files (default: on).",
+)
+@click.option(
+    "-p/-P",
+    "--create-dirs/--no-create-dirs",
+    default=True,
+    help="Create any directories necessary (default: on).",
+)
+@click.option("--mode", default=None, help="Set file permissions on push.")
+@click.option("--uid", type=int, default=None, help="Set file UID on push.")
+@click.option("--gid", type=int, default=None, help="Set file GID on push.")
+@click.option("--timeout", type=int, default=120, help="Timeout in seconds.")
+def file_push(
+    instance_id: str,
+    paths: tuple[str, ...],
+    recursive: bool,
+    create_dirs: bool,
+    mode: str | None,
+    uid: int | None,
+    gid: int | None,
+    timeout: int,
+) -> None:
+    """Push files into an instance.
+
+    The last path is the destination inside the container; all preceding
+    paths are local sources.
+
+    \b
+    Examples:
+        amplifier-digital-twin file-push dtu-a1b2 ./config.yaml /root/config.yaml
+        amplifier-digital-twin file-push dtu-a1b2 a.txt b.txt /root/data/
+        amplifier-digital-twin file-push dtu-a1b2 ./data/ /root/app/data/
+    """
+    if len(paths) < 2:
+        click.echo("Error: need at least one source and a destination.", err=True)
+        sys.exit(1)
+    local_paths = list(paths[:-1])
+    container_path = paths[-1]
+    try:
+        engine.file_push(
+            instance_id,
+            local_paths,
+            container_path,
+            recursive=recursive,
+            create_dirs=create_dirs,
+            mode=mode,
+            uid=uid,
+            gid=gid,
+            timeout=timeout,
+        )
+        click.echo(
+            json.dumps(
+                {
+                    "instance_id": instance_id,
+                    "sources": local_paths,
+                    "dest": container_path,
+                    "recursive": recursive,
+                }
+            )
+        )
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
+@main.command(name="file-pull")
+@click.argument("instance_id")
+@click.argument("paths", nargs=-1, required=True)
+@click.option(
+    "-r/-R",
+    "--recursive/--no-recursive",
+    default=True,
+    help="Recursively transfer files (default: on).",
+)
+@click.option(
+    "-p/-P",
+    "--create-dirs/--no-create-dirs",
+    default=True,
+    help="Create any directories necessary (default: on).",
+)
+@click.option("--timeout", type=int, default=120, help="Timeout in seconds.")
+def file_pull(
+    instance_id: str,
+    paths: tuple[str, ...],
+    recursive: bool,
+    create_dirs: bool,
+    timeout: int,
+) -> None:
+    """Pull files from an instance.
+
+    The last path is the local destination; all preceding paths are
+    container sources.
+
+    \b
+    Examples:
+        amplifier-digital-twin file-pull dtu-a1b2 /root/output.log ./output.log
+        amplifier-digital-twin file-pull dtu-a1b2 -r /root/results/ ./results/
+    """
+    if len(paths) < 2:
+        click.echo("Error: need at least one source and a destination.", err=True)
+        sys.exit(1)
+    container_paths = list(paths[:-1])
+    local_path = paths[-1]
+    try:
+        engine.file_pull(
+            instance_id,
+            container_paths,
+            local_path,
+            recursive=recursive,
+            create_dirs=create_dirs,
+            timeout=timeout,
+        )
+        click.echo(
+            json.dumps(
+                {
+                    "instance_id": instance_id,
+                    "sources": container_paths,
+                    "dest": local_path,
+                    "recursive": recursive,
+                }
+            )
+        )
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Teardown
+# ---------------------------------------------------------------------------
+
+
 @main.command()
 @click.argument("id")
 def destroy(id: str) -> None:

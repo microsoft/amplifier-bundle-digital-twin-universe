@@ -59,6 +59,18 @@ uv run pytest tests/test_lifecycle.py --run-integration -v
 
 The end-to-end coverage is split so you can run the fastest useful suite first.
 
+#### File operations test
+
+Exercises `file-push`, `file-pull`, and `provision.files` with a minimal
+container. Pushes files in, pulls them back, verifies content integrity.
+
+**Prerequisites:**
+- Incus running
+
+```bash
+uv run pytest tests/test_e2e_file_ops.py --run-e2e -v -s
+```
+
 #### Fast PyPI override test
 
 Exercises `wheel_from_git` with a tiny temporary package repo.
@@ -142,7 +154,8 @@ uv run pytest tests/test_e2e_hostname.py --run-e2e -v -s
 To run all end-to-end suites:
 
 ```bash
-uv run pytest tests/test_e2e_pypi.py \
+uv run pytest tests/test_e2e_file_ops.py \
+  tests/test_e2e_pypi.py \
   tests/test_e2e_amplifier_user_sim_single_module.py \
   tests/test_e2e_amplifier_user_sim.py \
   tests/test_e2e_amplifier_chat.py \

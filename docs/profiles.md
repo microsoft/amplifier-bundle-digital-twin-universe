@@ -330,20 +330,51 @@ Mock service containers are:
 
 ## `provision`
 
-Optional. Right now only `provision.setup_cmds` is implemented.
+Optional. Supports file seeding and shell commands during launch.
 
 ```yaml
 provision:
+  files:
+    - src: ./seed-data/
+      dest: /root/app/data/
+      recursive: true
+    - src: ./config/settings.yaml
+      dest: /root/.config/app/settings.yaml
+      mode: "0644"
   setup_cmds:
     - apt-get update && apt-get install -y git curl
     - curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
+### `provision.files`
+
+Push host files into the container before `setup_cmds` run.
+
+Fields per entry:
+
+- `src` (required) -- host path. Relative paths are resolved relative to the
+  profile file's directory.
+- `dest` (required) -- absolute path inside the container.
+- `recursive` (optional, default `false`) -- recursively transfer a directory.
+- `create_dirs` (optional, default `true`) -- create intermediate directories
+  in the container if they don't exist.
+- `mode` (optional) -- file permission string (e.g. `"0644"`).
+- `uid` (optional) -- set file UID on push.
+- `gid` (optional) -- set file GID on push.
+
+Files are pushed after environment variables and proxy are configured, so any
+`${VAR}` references in `src`/`dest` will already be substituted.
+
+### `provision.setup_cmds`
+
+Shell commands run in order after files are pushed.
 
 Current behavior:
 
 - commands run in order with `bash -lc`
 - proxy-related environment variables are already in place before these commands run
 - passthrough secrets are already exported before these commands run
+- `provision.files` entries are already in place before these commands run
 - launch fails on the first non-zero exit code
 
 This is where the current built-in profiles install tools, write config files,
