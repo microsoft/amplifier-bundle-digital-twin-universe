@@ -63,24 +63,40 @@ def launch(
 @main.command(name="exec")
 @click.argument("id")
 @click.argument("command", nargs=-1)
-def exec_(id: str, command: tuple[str, ...]) -> None:
+@click.option(
+    "--stream",
+    is_flag=True,
+    default=False,
+    help="Stream output in real-time instead of returning JSON.",
+)
+def exec_(id: str, command: tuple[str, ...], stream: bool) -> None:
     """Execute a command or start an interactive shell inside a running environment.
 
     Without a command, attaches a terminal to the container.
-    With a command after --, runs it and returns JSON.
+    With a command after --, runs it and returns JSON (default) or streams
+    output in real-time (--stream).
 
     \b
     Examples:
         amplifier-digital-twin exec dtu-a1b2c3d4
         amplifier-digital-twin exec dtu-a1b2c3d4 -- amplifier --version
+        amplifier-digital-twin exec --stream dtu-a1b2c3d4 -- amplifier run "prompt"
     """
     if command:
-        try:
-            result = engine.exec_command(id, list(command))
-            click.echo(json.dumps(result))
-        except Exception as exc:
-            click.echo(f"Error: {exc}", err=True)
-            sys.exit(1)
+        if stream:
+            try:
+                exit_code = engine.exec_stream(id, list(command))
+                sys.exit(exit_code)
+            except Exception as exc:
+                click.echo(f"Error: {exc}", err=True)
+                sys.exit(1)
+        else:
+            try:
+                result = engine.exec_command(id, list(command))
+                click.echo(json.dumps(result))
+            except Exception as exc:
+                click.echo(f"Error: {exc}", err=True)
+                sys.exit(1)
     else:
         exit_code = engine.exec_interactive(id)
         sys.exit(exit_code)

@@ -71,6 +71,19 @@ container. Pushes files in, pulls them back, verifies content integrity.
 uv run pytest tests/test_e2e_file_ops.py --run-e2e -v -s
 ```
 
+#### Exec streaming test
+
+Exercises `exec --stream` with a minimal container. Verifies real-time
+stdout/stderr passthrough, exit code propagation, and backward compatibility
+with the default JSON mode.
+
+**Prerequisites:**
+- Incus running
+
+```bash
+uv run pytest tests/test_e2e_exec_stream.py --run-e2e -v -s
+```
+
 #### Fast PyPI override test
 
 Exercises `wheel_from_git` with a tiny temporary package repo.
@@ -155,6 +168,7 @@ To run all end-to-end suites:
 
 ```bash
 uv run pytest tests/test_e2e_file_ops.py \
+  tests/test_e2e_exec_stream.py \
   tests/test_e2e_pypi.py \
   tests/test_e2e_amplifier_user_sim_single_module.py \
   tests/test_e2e_amplifier_user_sim.py \

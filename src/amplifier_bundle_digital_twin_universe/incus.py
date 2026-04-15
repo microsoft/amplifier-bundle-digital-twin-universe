@@ -193,6 +193,26 @@ def exec_command(
     return result.returncode, result.stdout, result.stderr
 
 
+def exec_stream(
+    name: str,
+    command: list[str],
+    env: dict[str, str] | None = None,
+    timeout: int = 600,
+) -> int:
+    """Run *command* inside *name* with real-time output.  Returns exit code.
+
+    stdout and stderr are inherited from the calling process so output
+    streams to the terminal as it is produced.  No output is captured.
+    """
+    cmd: list[str] = ["incus", "exec", name]
+    if env:
+        for k, v in env.items():
+            cmd.extend(["--env", f"{k}={v}"])
+    cmd.extend(["--", *command])
+    result = subprocess.run(cmd, timeout=timeout)
+    return result.returncode
+
+
 def exec_interactive(name: str) -> int:
     """Attach an interactive shell to *name*.
 

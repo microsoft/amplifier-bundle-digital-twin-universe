@@ -1242,6 +1242,19 @@ def exec_command(container_id: str, command: list[str]) -> dict:
     }
 
 
+def exec_stream(container_id: str, command: list[str]) -> int:
+    """Run *command* inside the environment with real-time output.
+
+    stdout and stderr stream to the terminal as produced.  Returns
+    the command's exit code (no JSON envelope).
+    """
+    if not incus.container_exists(container_id):
+        raise RuntimeError(f"Environment not found: {container_id}")
+
+    cmd_str = shlex.join(command)
+    return incus.exec_stream(container_id, ["bash", "-lc", cmd_str])
+
+
 def exec_interactive(container_id: str) -> int:
     """Attach an interactive shell to the environment."""
     if not incus.container_exists(container_id):

@@ -90,7 +90,7 @@ See [profiles.md](profiles.md) for the `access`, `base.config`, `mock_services`,
 Execute a command or start an interactive shell inside a running environment.
 
 ```bash
-amplifier-digital-twin exec <id> [-- <command> [args...]]
+amplifier-digital-twin exec [--stream] <id> [-- <command> [args...]]
 ```
 
 `<id>` (required)
@@ -99,20 +99,36 @@ amplifier-digital-twin exec <id> [-- <command> [args...]]
 `<command>` (optional, after `--`)
   Command to run. If omitted, starts an interactive shell (`/bin/bash`).
 
+`--stream` (optional)
+  Stream stdout and stderr in real-time instead of buffering and returning
+  JSON. The process exit code becomes the CLI exit code. Useful for
+  long-running commands where you want to see output as it is produced.
+
+Exec operates in three modes depending on the arguments:
+
+| Mode | Invocation | PTY | Output |
+|------|-----------|-----|--------|
+| **Interactive** | `exec <id>` (no command) | Yes (`--force-interactive`) | Live terminal |
+| **JSON** | `exec <id> -- <command>` | No | JSON with stdout/stderr |
+| **Stream** | `exec --stream <id> -- <command>` | No (unless caller has one) | Raw passthrough |
+
 ```bash
-# Interactive shell (live terminal, not JSON)
+# Interactive shell (live terminal, PTY allocated)
 amplifier-digital-twin exec dtu-a1b2c3d4
 
-# Run a single command
+# Run a single command (returns JSON, no PTY)
 amplifier-digital-twin exec dtu-a1b2c3d4 -- amplifier --version
+
+# Stream output in real-time (no PTY unless caller provides one)
+amplifier-digital-twin exec --stream dtu-a1b2c3d4 -- amplifier run "test prompt"
 ```
 
-Without a command, attaches a terminal to the container. 
+Without a command, attaches a terminal to the container with a PTY.
 Exit code comes from the shell when you exit.
 
-With a command after `--`, runs it and returns JSON:
+With a command after `--`, runs it and returns JSON by default:
 
-Returns:
+Returns (default, no `--stream`):
 
 ```json
 {
@@ -123,6 +139,76 @@ Returns:
   "stderr": ""
 }
 ```
+
+With `--stream`, stdout and stderr are passed through as raw text (no JSON
+envelope). The CLI exit code is the command's exit code.
+
+#### Internal shell wrapping
+
+When a command is provided (JSON or stream mode), it is internally wrapped in
+`bash -lc "<command>"`. This means:
+
+- **Do not add `bash` yourself.** `exec <id> -- bash` creates a nested
+  `bash -lc "bash"` that hangs waiting for input.
+- **Do not use `bash -c`.** `exec <id> -- bash -c '...'` double-nests shells
+  unnecessarily (though it does work).
+- **Shell features work in single commands.** Pipes, redirects, and variable
+  expansion work: `exec <id> -- ls /tmp | head -5`.
+- **The `--` separator is required** when command arguments contain flags.
+  Without `--`, flags like `--version` are consumed by the CLI itself.
+
+```bash
+# GOOD -- flags passed to the command
+amplifier-digital-twin exec dtu-a1b2c3d4 -- codex --version
+
+# BAD -- --version consumed by the CLI, fails with "No such option"
+amplifier-digital-twin exec dtu-a1b2c3d4 codex --version
+
+# BAD -- nested bash, hangs
+amplifier-digital-twin exec dtu-a1b2c3d4 -- bash
+
+# UNNECESSARY -- double-nesting, but works
+amplifier-digital-twin exec dtu-a1b2c3d4 -- bash -c 'codex --version'
+```
+
+#### TUI and interactive applications
+
+JSON and stream modes do **not** allocate a PTY inside the container. TUI apps
+that require a terminal (curses, Ink, Ratatui, etc.) will fail or render
+incorrectly in these modes.
+
+For TUI apps, use **interactive mode** (no command) and launch the app from
+within the shell:
+
+```bash
+# 1. Get an interactive shell with PTY
+amplifier-digital-twin exec dtu-a1b2c3d4
+# 2. Now inside the container, run your TUI app
+root@dtu-a1b2c3d4:~# codex
+```
+
+When driving TUI apps programmatically (e.g. via `terminal_inspector`), spawn
+exec in interactive mode, wait for the shell prompt, then send keystrokes to
+launch the app:
+
+```
+terminal_inspector spawn "amplifier-digital-twin exec <id>"  # interactive, PTY
+terminal_inspector wait_for_text "root@"                      # shell ready
+terminal_inspector send_keys "codex{ENTER}"                   # launch TUI app
+```
+
+Use `--stream` when:
+- Running long-lived commands where you want to see progress as it happens
+  (e.g. `amplifier run`, install scripts, build steps)
+- Piping output to another command (`exec --stream ... | grep ...`)
+- Watching logs or interactive-style output from inside the container
+
+Use the default (no `--stream`) when:
+- Parsing the result programmatically (the JSON envelope gives you structured
+  `exit_code`, `stdout`, and `stderr` fields)
+- Running from scripts or recipes that inspect the output
+- Running short commands where buffering doesn't matter
+  (e.g. `amplifier --version`, `cat /etc/os-release`)
 
 
 ### `check-readiness`
