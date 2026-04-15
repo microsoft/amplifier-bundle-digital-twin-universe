@@ -1,0 +1,64 @@
+# Installing an Amplifier bundle from a private GitHub repo.
+#
+# Uses a GitHub token (passed through from the host) to authenticate
+# git clones inside the container. No Gitea or url_rewrites needed.
+#
+# Prerequisites:
+#   - ANTHROPIC_API_KEY set on the host
+#   - GH_TOKEN set on the host (needs `repo` scope for private access)
+#
+# Usage:
+#   GH_TOKEN=$(gh auth token) amplifier-digital-twin launch \
+#     profiles/private-github-repo.yaml
+#
+# To test a different repo, change the `amplifier bundle add` URL below.
+name: private-github-repo
+description: >
+  Amplifier session with a bundle installed from a private GitHub repo.
+base:
+  image: ubuntu:24.04
+
+passthrough:
+  allow_external: true
+  services:
+    - name: anthropic
+      key_env: ANTHROPIC_API_KEY
+    - name: github
+      key_env: GH_TOKEN
+
+provision:
+  setup_cmds:
+    - apt-get update && apt-get install -y git curl
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    # Authenticate all GitHub clones with the passed-through token
+    - git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+    # Install Amplifier CLI
+    - |
+      export PATH="/root/.local/bin:$PATH"
+      uv tool install git+https://github.com/microsoft/amplifier
+
+    # Configure Amplifier provider
+    - |
+      mkdir -p /root/.amplifier
+      cat > /root/.amplifier/settings.yaml << EOF
+      config:
+        providers:
+          - module: provider-anthropic
+            source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@main
+            config:
+              api_key: $ANTHROPIC_API_KEY
+      EOF
+
+    # Install your private bundle -- change this URL to your repo
+    - |
+      export PATH="/root/.local/bin:$PATH"
+      amplifier bundle add git+https://github.com/your-org/your-private-bundle@main --app
+
+    - amplifier --version
+    - amplifier bundle list
+
+readiness:
+  - name: amplifier-installed
+    command: "PATH=/root/.local/bin:$PATH amplifier --version"

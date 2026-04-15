@@ -142,11 +142,20 @@ for the `update` profile schema.
 
 ## Example Profiles
 
+When constructing profiles, read the most relevant examples first to understand established patterns:
+
 ```
 read_file("@digital-twin-universe:profiles/amplifier-user-sim.yaml")
 read_file("@digital-twin-universe:profiles/amplifier-chat.yaml")
+read_file("@digital-twin-universe:profiles/private-github-repo.yaml")
 read_file("@digital-twin-universe:profiles/docker-in-incus.yaml")
 ```
+
+The `private-github-repo` profile shows how to install from a private GitHub
+repo without Gitea. It passes `GH_TOKEN` via `passthrough.services` and
+configures `git config --global url...insteadOf` to authenticate all clones.
+Use this pattern when you need to test the pushed state of a private repo.
+For testing local uncommitted changes, use Gitea + `url_rewrites` instead.
 
 The `docker-in-incus` profile is a minimal test for running Docker containers
 inside an Incus-based environment. Use it to verify that nested container
