@@ -1,0 +1,235 @@
+# Profile for validating the Digital Twin Universe, within a Digital Twin Universe
+#
+# Installs the full DTU host stack:
+#   1. Incus                                -- inner container runtime
+#   2. Docker Engine                        -- inner Gitea + mock sidecars
+#   3. uv + Amplifier CLI                   -- interactive Amplifier sessions
+#   4. amplifier-digital-twin CLI           -- drive inner Incus
+#   5. amplifier-gitea CLI                  -- drive inner Docker Gitea
+#   6. digital-twin-universe + gitea bundles composed into Amplifier
+#
+# After launch, the DTU can itself launch DTUs (DTU-in-DTU), mirror repos
+# into a nested Gitea, and run Amplifier sessions that drive both.
+#
+# Usage:
+#   # Launch without Gitea (pulls bundles from GitHub):
+#   amplifier-digital-twin launch dtu-host-in-incus
+#
+#   # Launch with a local Gitea override (pulls bundles from Gitea):
+#   amplifier-digital-twin launch dtu-host-in-incus \
+#     --var GITEA_URL=http://localhost:10110 \
+#     --var GITEA_TOKEN=<token>
+#
+# Variables (optional):
+#   GITEA_URL   -- Gitea base URL. If set with GITEA_TOKEN, the bundle
+#                  clones are redirected through the proxy; otherwise
+#                  url_rewrites are silently skipped (rules carry
+#                  unresolved vars) and GitHub is used directly.
+#   GITEA_TOKEN -- Gitea API token paired with GITEA_URL.
+#
+# Notes:
+#   - Docker and Incus coexist via different bridges (docker0, incusbr0)
+#     and different cgroups. No iptables tweaks required on WSL2.
+#   - Both daemons run under the container's systemd. Manual
+#     `dockerd &` / `incusd &` start would race the auto-started
+#     socket units and cause init commands to hang.
+#   - uv tool install places binaries in /root/.local/bin; uv's
+#     installer appends that to ~/.profile so subsequent bash -lc
+#     (login-shell) setup_cmds and exec invocations pick it up.
+name: dtu-host-in-incus
+description: >
+  DTU environment with Incus + Docker + Amplifier CLI + digital-twin-universe
+  and gitea bundles all installed. Suitable for running the full DTU stack
+  from within a DTU (DTU-in-DTU testing).
+
+base:
+  image: ubuntu:24.04
+  config:
+    security.nesting: "true"
+
+# Forward the inner amplifier-chat DTU's 8410 up to the host.
+# The inner DTU binds 8410 to the outer DTU's localhost via Incus proxy,
+# and this access.ports block forwards it from the outer DTU to the host.
+#
+# verify: false -- this is a pass-through forwarding. The outer DTU itself
+# does not host a service on 8410; nothing listens there until the user
+# launches the inner amplifier-chat DTU. Host-side verification would
+# otherwise always fail and block readiness.
+access:
+  ports:
+    - host: 8410
+      container: 8410
+      label: Inner Chat UI
+      path: /chat/
+      verify: false
+
+# Redirect bundle clones through a local Gitea when GITEA_URL /
+# GITEA_TOKEN are provided. Without them, rules carry unresolved
+# variables and the engine silently skips proxy setup, so clones fall
+# through to GitHub.
+url_rewrites:
+  auth:
+    username: admin
+    token_var: GITEA_TOKEN
+  rules:
+    - match: github.com/microsoft/amplifier-bundle-digital-twin-universe
+      target: ${GITEA_URL}/admin/amplifier-bundle-digital-twin-universe
+    - match: github.com/microsoft/amplifier-bundle-gitea
+      target: ${GITEA_URL}/admin/amplifier-bundle-gitea
+
+passthrough:
+  allow_external: true
+  services:
+    - name: anthropic
+      key_env: ANTHROPIC_API_KEY
+
+provision:
+  setup_cmds:
+    # Common prereqs for the apt repo setups.
+    - |
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      timeout 180 apt-get update
+      timeout 300 apt-get install -y ca-certificates curl gnupg git
+
+    # --- Incus via Zabbly stable repo (noble = Ubuntu 24.04) ----------
+    - |
+      set -euo pipefail
+      install -m 0755 -d /etc/apt/keyrings
+      timeout 30 curl -fsSL --max-time 20 \
+        https://pkgs.zabbly.com/key.asc \
+        -o /etc/apt/keyrings/zabbly.asc
+      chmod a+r /etc/apt/keyrings/zabbly.asc
+      ARCH=$(dpkg --print-architecture)
+      cat > /etc/apt/sources.list.d/zabbly-incus-stable.sources <<EOF
+      Enabled: yes
+      Types: deb
+      URIs: https://pkgs.zabbly.com/incus/stable
+      Suites: noble
+      Components: main
+      Architectures: ${ARCH}
+      Signed-By: /etc/apt/keyrings/zabbly.asc
+      EOF
+
+    # --- Docker CE apt repo -------------------------------------------
+    - |
+      set -euo pipefail
+      timeout 30 curl -fsSL --max-time 20 \
+        https://download.docker.com/linux/ubuntu/gpg \
+        -o /etc/apt/keyrings/docker.asc
+      chmod a+r /etc/apt/keyrings/docker.asc
+      ARCH=$(dpkg --print-architecture)
+      CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME}")
+      echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${CODENAME} stable" \
+        > /etc/apt/sources.list.d/docker.list
+
+    # --- Install both stacks in a single apt transaction --------------
+    - |
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      timeout 180 apt-get update
+      timeout 600 apt-get install -y \
+        incus incus-base incus-client \
+        docker-ce docker-ce-cli containerd.io
+
+    # --- Ensure both daemons are up via systemd -----------------------
+    - |
+      set -euo pipefail
+      if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+        timeout 30 systemctl enable --now incus.socket incus.service
+        timeout 30 systemctl enable --now docker.service
+      else
+        nohup incusd  >/var/log/incusd.log  2>&1 &
+        nohup dockerd >/var/log/dockerd.log 2>&1 &
+      fi
+      for i in $(seq 1 60); do
+        [ -S /var/lib/incus/unix.socket ] && [ -S /var/run/docker.sock ] && break
+        sleep 1
+      done
+      if [ ! -S /var/lib/incus/unix.socket ]; then
+        echo "ERROR: Incus socket missing at /var/lib/incus/unix.socket"
+        (journalctl -u incus --no-pager -n 100 2>/dev/null) || true
+        exit 1
+      fi
+      if [ ! -S /var/run/docker.sock ]; then
+        echo "ERROR: Docker socket missing at /var/run/docker.sock"
+        (journalctl -u docker --no-pager -n 100 2>/dev/null) || true
+        exit 1
+      fi
+      echo "Both sockets up after ${i}s"
+
+    # --- Inner Incus: minimal init + privileged default profile -------
+    - timeout 60 incus admin init --minimal
+    - timeout 15 incus profile set default security.privileged=true
+
+    # --- Install uv (adds ~/.local/bin to ~/.profile) -----------------
+    - |
+      set -euo pipefail
+      timeout 60 curl -LsSf --max-time 45 https://astral.sh/uv/install.sh | sh
+
+    # --- Install Amplifier + DTU + Gitea CLIs -------------------------
+    # Each uv tool install creates an isolated venv; binaries end up in
+    # /root/.local/bin. Login-shell PATH picks them up for subsequent
+    # setup_cmds and exec invocations.
+    - |
+      set -euo pipefail
+      export PATH="/root/.local/bin:$PATH"
+      timeout 120 uv tool install git+https://github.com/microsoft/amplifier
+      timeout 60 uv tool install git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe
+      timeout 60 uv tool install git+https://github.com/microsoft/amplifier-bundle-gitea
+
+    # --- Amplifier provider config (anthropic passthrough) ------------
+    - |
+      set -euo pipefail
+      mkdir -p /root/.amplifier
+      cat > /root/.amplifier/settings.yaml <<EOF
+      config:
+        providers:
+          - module: provider-anthropic
+            source: git+https://github.com/microsoft/amplifier-module-provider-anthropic@main
+            config:
+              api_key: ${ANTHROPIC_API_KEY:-}
+      EOF
+
+    # --- Compose bundles into Amplifier (url_rewrites apply here) -----
+    - |
+      set -euo pipefail
+      export PATH="/root/.local/bin:$PATH"
+      timeout 60 amplifier bundle add git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe@main --app
+      timeout 60 amplifier bundle add git+https://github.com/microsoft/amplifier-bundle-gitea@main --app
+
+    # --- Verify all CLIs and bundles are present ----------------------
+    - |
+      set -euo pipefail
+      export PATH="/root/.local/bin:$PATH"
+      echo "=== amplifier ==="
+      amplifier --version
+      echo "=== amplifier-digital-twin ==="
+      amplifier-digital-twin --help >/dev/null && echo "OK"
+      echo "=== amplifier-gitea ==="
+      amplifier-gitea --help >/dev/null && echo "OK"
+      echo "=== bundles ==="
+      amplifier bundle list
+
+    # --- Fetch amplifier-chat profile for DTU-in-DTU testing ----------
+    - |
+      set -euo pipefail
+      mkdir -p /root/profiles
+      timeout 30 curl -fsSL --max-time 20 \
+        https://raw.githubusercontent.com/microsoft/amplifier-bundle-digital-twin-universe/main/profiles/amplifier-chat.yaml \
+        -o /root/profiles/amplifier-chat.yaml
+      echo "Fetched amplifier-chat.yaml to /root/profiles/amplifier-chat.yaml"
+
+readiness:
+  - name: incus-daemon
+    command: "incus info >/dev/null 2>&1"
+  - name: default-profile-privileged
+    command: "incus profile show default | grep -q 'security.privileged: \"true\"'"
+  - name: docker-daemon
+    command: "docker info >/dev/null 2>&1"
+  - name: amplifier-cli
+    command: "test -x /root/.local/bin/amplifier"
+  - name: amplifier-digital-twin-cli
+    command: "test -x /root/.local/bin/amplifier-digital-twin"
+  - name: amplifier-gitea-cli
+    command: "test -x /root/.local/bin/amplifier-gitea"

@@ -245,3 +245,102 @@ amplifier-gitea destroy "$GITEA_ID"
 rm -rf /tmp/amplifier-core-manual
 rm -rf /tmp/amplifier-module-provider-anthropic-manual
 ```
+
+## Validating The Inner DTU (DTU-in-DTU)
+
+The `dtu-host-in-incus` profile installs Incus, Docker, and the full
+Amplifier + DTU + Gitea CLI stack inside a DTU so you can launch nested
+environments. This verifies the host stack works end-to-end by running a
+second DTU (`amplifier-chat`) inside the outer one, with its port 8410
+forwarded up to the real host.
+
+### Prerequisites
+
+- Incus running on the host
+- `ANTHROPIC_API_KEY` exported
+
+### 1. Launch The Outer DTU
+
+```bash
+OUTER_JSON=$(uv run amplifier-digital-twin launch \
+  .amplifier/digital-twin-universe/profiles/dtu-host-in-incus.yaml)
+printf '%s\n' "$OUTER_JSON"
+
+OUTER_ID=$(python -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$OUTER_JSON")
+```
+
+The profile's provisioning fetches `amplifier-chat.yaml` to
+`/root/profiles/amplifier-chat.yaml` inside the outer DTU, and its
+`access.ports` block forwards port 8410 from the outer DTU's localhost
+to the host.
+
+### 2. Wait For Readiness
+
+```bash
+while ! uv run amplifier-digital-twin check-readiness "$OUTER_ID" \
+    | jq -e '.ready'; do
+  sleep 3
+done
+```
+
+### 3. Launch The Inner amplifier-chat DTU
+
+```bash
+uv run amplifier-digital-twin exec "$OUTER_ID" -- bash -lc '
+  amplifier-digital-twin launch /root/profiles/amplifier-chat.yaml
+'
+```
+
+Note the `id` returned for the inner DTU (`dtu-xxxxxxxx`). Export it for
+convenience:
+
+```bash
+INNER_ID=<id from launch output>
+```
+
+### 4. Wait For The Inner DTU To Be Ready
+
+```bash
+while ! uv run amplifier-digital-twin exec "$OUTER_ID" -- bash -lc "
+  amplifier-digital-twin check-readiness $INNER_ID
+" | jq -e '.ready'; do
+  sleep 3
+done
+```
+
+### 5. Verify From Three Vantage Points
+
+Inside the inner DTU:
+
+```bash
+uv run amplifier-digital-twin exec "$OUTER_ID" -- bash -lc "
+  amplifier-digital-twin exec $INNER_ID -- curl -fsS http://localhost:8410/ready
+"
+```
+
+From the outer DTU (tests the inner → outer Incus proxy):
+
+```bash
+uv run amplifier-digital-twin exec "$OUTER_ID" -- \
+  curl -fsS http://localhost:8410/ready
+```
+
+From the host (tests the full inner → outer → host forwarding chain):
+
+```bash
+curl -fsS http://localhost:8410/ready
+```
+
+All three should return `{"ready": true}`. Open
+`http://localhost:8410/chat/` in a browser to interact with the inner
+chat UI.
+
+### 6. Clean Up
+
+```bash
+# Destroy the inner DTU first, then the outer.
+uv run amplifier-digital-twin exec "$OUTER_ID" -- bash -lc "
+  amplifier-digital-twin destroy $INNER_ID
+"
+uv run amplifier-digital-twin destroy "$OUTER_ID"
+```

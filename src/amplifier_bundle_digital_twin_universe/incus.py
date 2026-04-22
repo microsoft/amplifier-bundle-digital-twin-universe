@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 
 
 class IncusError(Exception):
@@ -183,14 +184,30 @@ def exec_command(
     """Run *command* inside *name*.  Returns ``(exit_code, stdout, stderr)``.
 
     Does **not** allocate a PTY -- output is captured.
+
+    Uses temporary files instead of ``capture_output=True`` pipes so that
+    ``subprocess.run`` returns as soon as the direct child (``incus exec``)
+    exits, without waiting for grandchildren (e.g. ``lxc monitor`` spawned
+    by a nested ``incus launch``) to close inherited file descriptors.
+    ``stdin=DEVNULL`` prevents the child from blocking on inherited input.
     """
     cmd: list[str] = ["incus", "exec", name]
     if env:
         for k, v in env.items():
             cmd.extend(["--env", f"{k}={v}"])
     cmd.extend(["--", *command])
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    return result.returncode, result.stdout, result.stderr
+    with tempfile.TemporaryFile("w+") as out_f, tempfile.TemporaryFile("w+") as err_f:
+        result = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=out_f,
+            stderr=err_f,
+            text=True,
+            timeout=timeout,
+        )
+        out_f.seek(0)
+        err_f.seek(0)
+        return result.returncode, out_f.read(), err_f.read()
 
 
 def exec_stream(

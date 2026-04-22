@@ -25,7 +25,8 @@ in a way that an everyday person can understand and interact without deep techni
 A DTU is defined by a profile which is a YAML file that declares the 
 services, networking, and provisioning needed to launch a complete environment.
 To share profiles alongside a repo, `.amplifier/digital-twin-universe/profiles/` is the convention.
-For example, we have a sample profile for validating this repo locally at [.amplifier/digital-twin-universe/profiles/digital-twin-bundle-self-validation-profile.yaml](.amplifier/digital-twin-universe/profiles/digital-twin-bundle-self-validation-profile.yaml)
+For example, we have a sample profile for validating this repo locally at [.amplifier/digital-twin-universe/profiles/dtu-host-in-incus.yaml](.amplifier/digital-twin-universe/profiles/dtu-host-in-incus.yaml) 
+which launches a DTU containing the full DTU host stack (Incus, Docker, Amplifier CLI, and the DTU + Gitea bundles) so the bundle itself can be exercised in isolation.
 
 See [docs/profiles.md](docs/profiles.md) for the full profile reference and [profiles/](profiles/) for examples.
 
