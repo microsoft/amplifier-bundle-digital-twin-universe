@@ -90,7 +90,7 @@ See [profiles.md](profiles.md) for the `access`, `base.config`, `mock_services`,
 Execute a command or start an interactive shell inside a running environment.
 
 ```bash
-amplifier-digital-twin exec [--stream] <id> [-- <command> [args...]]
+amplifier-digital-twin exec [--stream] [--timeout <seconds>] <id> [-- <command> [args...]]
 ```
 
 `<id>` (required)
@@ -103,6 +103,11 @@ amplifier-digital-twin exec [--stream] <id> [-- <command> [args...]]
   Stream stdout and stderr in real-time instead of buffering and returning
   JSON. The process exit code becomes the CLI exit code. Useful for
   long-running commands where you want to see output as it is produced.
+
+`--timeout <seconds>` (optional, default: `600`)
+  Maximum number of seconds to wait for a streamed command to complete.
+  Pass `--timeout none` to disable the timeout entirely. Only applies in
+  `--stream` mode; interactive and JSON modes are unaffected.
 
 Exec operates in three modes depending on the arguments:
 

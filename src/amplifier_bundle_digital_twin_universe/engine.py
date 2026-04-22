@@ -1242,17 +1242,26 @@ def exec_command(container_id: str, command: list[str]) -> dict:
     }
 
 
-def exec_stream(container_id: str, command: list[str]) -> int:
+def exec_stream(
+    container_id: str,
+    command: list[str],
+    *,
+    timeout: int | None = 600,
+) -> int:
     """Run *command* inside the environment with real-time output.
 
     stdout and stderr stream to the terminal as produced.  Returns
     the command's exit code (no JSON envelope).
+
+    ``timeout`` is the maximum number of seconds to wait for the command
+    to complete.  Pass ``None`` to disable the timeout entirely.  Default
+    is 600 seconds.
     """
     if not incus.container_exists(container_id):
         raise RuntimeError(f"Environment not found: {container_id}")
 
     cmd_str = shlex.join(command)
-    return incus.exec_stream(container_id, ["bash", "-lc", cmd_str])
+    return incus.exec_stream(container_id, ["bash", "-lc", cmd_str], timeout=timeout)
 
 
 def exec_interactive(container_id: str) -> int:

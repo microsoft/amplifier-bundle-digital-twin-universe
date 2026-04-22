@@ -60,6 +60,27 @@ def launch(
         sys.exit(1)
 
 
+def _parse_stream_timeout(
+    ctx: click.Context, param: click.Parameter, value: str
+) -> int | None:
+    """Parse --timeout for exec --stream.
+
+    Accepts an integer number of seconds, or ``none`` / ``null`` (case-insensitive)
+    to disable the timeout entirely.
+    """
+    if value is None:
+        return 600
+    normalized = value.strip().lower()
+    if normalized in ("none", "null"):
+        return None
+    try:
+        return int(normalized)
+    except ValueError as exc:
+        raise click.BadParameter(
+            f"Invalid timeout: {value!r}. Must be an integer or 'none'."
+        ) from exc
+
+
 @main.command(name="exec")
 @click.argument("id")
 @click.argument("command", nargs=-1)
@@ -69,7 +90,18 @@ def launch(
     default=False,
     help="Stream output in real-time instead of returning JSON.",
 )
-def exec_(id: str, command: tuple[str, ...], stream: bool) -> None:
+@click.option(
+    "--timeout",
+    "timeout",
+    default="600",
+    callback=_parse_stream_timeout,
+    help=(
+        "Timeout in seconds for --stream mode (default: 600). "
+        "Pass 'none' to disable the timeout entirely. "
+        "Ignored in interactive and JSON modes."
+    ),
+)
+def exec_(id: str, command: tuple[str, ...], stream: bool, timeout: int | None) -> None:
     """Execute a command or start an interactive shell inside a running environment.
 
     Without a command, attaches a terminal to the container.
@@ -81,11 +113,13 @@ def exec_(id: str, command: tuple[str, ...], stream: bool) -> None:
         amplifier-digital-twin exec dtu-a1b2c3d4
         amplifier-digital-twin exec dtu-a1b2c3d4 -- amplifier --version
         amplifier-digital-twin exec --stream dtu-a1b2c3d4 -- amplifier run "prompt"
+        amplifier-digital-twin exec --stream --timeout 1800 dtu-a1b2c3d4 -- long-task
+        amplifier-digital-twin exec --stream --timeout none dtu-a1b2c3d4 -- long-task
     """
     if command:
         if stream:
             try:
-                exit_code = engine.exec_stream(id, list(command))
+                exit_code = engine.exec_stream(id, list(command), timeout=timeout)
                 sys.exit(exit_code)
             except Exception as exc:
                 click.echo(f"Error: {exc}", err=True)

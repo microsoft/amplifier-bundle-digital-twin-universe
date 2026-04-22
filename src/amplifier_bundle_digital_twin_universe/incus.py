@@ -214,12 +214,16 @@ def exec_stream(
     name: str,
     command: list[str],
     env: dict[str, str] | None = None,
-    timeout: int = 600,
+    timeout: int | None = 600,
 ) -> int:
     """Run *command* inside *name* with real-time output.  Returns exit code.
 
     stdout and stderr are inherited from the calling process so output
     streams to the terminal as it is produced.  No output is captured.
+
+    ``timeout`` is the maximum number of seconds to wait for the command
+    to complete.  Pass ``None`` to disable the timeout entirely.  Default
+    is 600 seconds.
     """
     cmd: list[str] = ["incus", "exec", name]
     if env:
