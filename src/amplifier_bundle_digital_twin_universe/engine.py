@@ -836,6 +836,21 @@ def _write_env(
             ]
         )
 
+        # Disable uv's GitHub fast path unless a profile explicitly opts back
+        # in. The fast path calls api.github.com directly to resolve
+        # @<branch> -> SHA and fetches pyproject.toml from
+        # raw.githubusercontent.com; both bypass our url_rewrites and
+        # silently install the upstream commit even when a Gitea mirror has
+        # a different HEAD. With this set, uv falls back to git fetch, which
+        # routes through the proxy and is correctly rewritten. Requires
+        # uv >= 0.7.13. See `url_rewrites.allow_uv_github_fast_path` in
+        # docs/profiles.md to opt back into uv's native behavior.
+        if (
+            profile.url_rewrites is None
+            or not profile.url_rewrites.allow_uv_github_fast_path
+        ):
+            lines.append("export UV_NO_GITHUB_FAST_PATH=true")
+
     # When pypi_overrides are configured, tell uv/pip to check the local
     # pypiserver first.  The proxy intercepts pypi.org Simple API requests
     # for overridden packages, but uv's resolver can bypass the Simple API

@@ -81,6 +81,7 @@ url_rewrites:
   auth:
     username: admin
     token_var: GITEA_TOKEN
+  allow_uv_github_fast_path: false  # default; see note below
   rules:
     - match: github.com/microsoft/amplifier-module-provider-anthropic
       target: ${GITEA_URL}/admin/amplifier-module-provider-anthropic
@@ -95,6 +96,29 @@ Current behavior:
   `github.com/microsoft/amplifier-module-provider-anthropic` to Gitea
 
 Use `url_rewrites` when the dependency is resolved by URL.
+
+### `allow_uv_github_fast_path`
+
+Optional bool, default `false`. When `false`, the DTU exports
+`UV_NO_GITHUB_FAST_PATH=true` in the environment so `uv tool install` does a
+real `git fetch` through the proxy and the rewrite rules apply correctly.
+
+Why this is the default: uv has a "GitHub fast path" that resolves
+`git+https://github.com/<owner>/<repo>@<ref>` by calling `api.github.com`
+directly for the commit SHA and fetching `pyproject.toml` from
+`raw.githubusercontent.com`. Neither host is covered by URL rewrites, so
+with the fast path enabled uv would silently install the **upstream GitHub**
+commit even when a Gitea mirror has a different HEAD -- the install
+succeeds but at the wrong commit. Disabling the fast path forces uv down
+the git fetch path, which the proxy rewrites correctly.
+
+Set `allow_uv_github_fast_path: true` only when you specifically want to
+observe or reproduce uv's native behavior (for example, to test what a real
+user environment without rewrites would do). In that mode, uv's installs
+will bypass `url_rewrites` for any `git+https://github.com/...` URL.
+
+Has no effect when `url_rewrites` is not present (the proxy and its env
+vars are only set up when rewrites are configured).
 
 ## `pypi_overrides`
 

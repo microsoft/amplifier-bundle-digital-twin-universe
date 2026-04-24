@@ -71,6 +71,7 @@ url_rewrites:
   auth:
     username: admin
     token_var: GITEA_TOKEN
+  allow_uv_github_fast_path: false
   rules:
     - match: github.com/microsoft/amplifier-bundle-digital-twin-universe
       target: ${GITEA_URL}/admin/amplifier-bundle-digital-twin-universe

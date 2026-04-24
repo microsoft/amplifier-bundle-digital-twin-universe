@@ -37,6 +37,7 @@ class UrlRewriteRule:
 class UrlRewrites:
     auth: UrlRewriteAuth | None
     rules: list[UrlRewriteRule]
+    allow_uv_github_fast_path: bool = False
 
 
 @dataclass
@@ -278,7 +279,11 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
             UrlRewriteRule(match=r["match"], target=r["target"])
             for r in uw.get("rules", [])
         ]
-        url_rewrites = UrlRewrites(auth=auth, rules=rules)
+        url_rewrites = UrlRewrites(
+            auth=auth,
+            rules=rules,
+            allow_uv_github_fast_path=bool(uw.get("allow_uv_github_fast_path", False)),
+        )
 
     # passthrough (optional)
     passthrough = None

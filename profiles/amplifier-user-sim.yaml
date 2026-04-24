@@ -21,6 +21,11 @@ url_rewrites:
   auth:
     username: admin
     token_var: GITEA_TOKEN
+  # Keep uv's GitHub fast path disabled so `uv tool install` routes through
+  # git fetch and these rules actually apply. See docs/profiles.md for the
+  # reasoning. Set to true only when you specifically want to observe uv's
+  # native behavior (the fast path bypasses url_rewrites).
+  allow_uv_github_fast_path: false
   rules:
     - match: github.com/microsoft/amplifier-module-provider-anthropic
       target: ${GITEA_URL}/admin/amplifier-module-provider-anthropic

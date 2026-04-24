@@ -20,6 +20,7 @@ url_rewrites:
   auth:
     username: admin
     token_var: GITEA_TOKEN
+  allow_uv_github_fast_path: false
   rules:
     - match: github.com/microsoft/amplifier-module-provider-anthropic
       target: ${GITEA_URL}/admin/amplifier-module-provider-anthropic
