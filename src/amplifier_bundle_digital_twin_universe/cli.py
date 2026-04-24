@@ -101,7 +101,27 @@ def _parse_stream_timeout(
         "Ignored in interactive and JSON modes."
     ),
 )
-def exec_(id: str, command: tuple[str, ...], stream: bool, timeout: int | None) -> None:
+@click.option(
+    "--visual-id",
+    "visual_id",
+    type=str,
+    default=None,
+    metavar="LABEL",
+    help=(
+        "Prepend a blue (dtu:<label>) prefix to the interactive shell prompt "
+        "so you can tell DTU sessions apart. Pass an empty string "
+        '(--visual-id "") to use the DTU\'s profile name, or a custom string '
+        "(--visual-id testing-pr-42) to override it. Interactive mode only "
+        "-- ignored in JSON and --stream modes."
+    ),
+)
+def exec_(
+    id: str,
+    command: tuple[str, ...],
+    stream: bool,
+    timeout: int | None,
+    visual_id: str | None,
+) -> None:
     """Execute a command or start an interactive shell inside a running environment.
 
     Without a command, attaches a terminal to the container.
@@ -111,12 +131,16 @@ def exec_(id: str, command: tuple[str, ...], stream: bool, timeout: int | None) 
     \b
     Examples:
         amplifier-digital-twin exec dtu-a1b2c3d4
+        amplifier-digital-twin exec --visual-id "" dtu-a1b2c3d4
+        amplifier-digital-twin exec --visual-id testing-pr-42 dtu-a1b2c3d4
         amplifier-digital-twin exec dtu-a1b2c3d4 -- amplifier --version
         amplifier-digital-twin exec --stream dtu-a1b2c3d4 -- amplifier run "prompt"
         amplifier-digital-twin exec --stream --timeout 1800 dtu-a1b2c3d4 -- long-task
         amplifier-digital-twin exec --stream --timeout none dtu-a1b2c3d4 -- long-task
     """
     if command:
+        # --visual-id is a prompt-only feature; JSON and stream modes don't use
+        # prompts. Accept but ignore.
         if stream:
             try:
                 exit_code = engine.exec_stream(id, list(command), timeout=timeout)
@@ -132,7 +156,37 @@ def exec_(id: str, command: tuple[str, ...], stream: bool, timeout: int | None) 
                 click.echo(f"Error: {exc}", err=True)
                 sys.exit(1)
     else:
-        exit_code = engine.exec_interactive(id)
+        # visual_id semantics:
+        #   None -> flag not passed, no prefix (current default behavior)
+        #   ""   -> flag passed with empty value, resolve to profile name
+        #   other -> use as-is as the label
+        resolved_visual_id: str | None = None
+        if visual_id == "":
+            try:
+                info = engine.status(id)
+            except Exception as exc:
+                click.echo(f"Error resolving profile for --visual-id: {exc}", err=True)
+                sys.exit(1)
+            profile_name = info.get("profile") if isinstance(info, dict) else None
+            if not profile_name:
+                click.echo(
+                    "Warning: could not resolve profile name; disabling --visual-id.",
+                    err=True,
+                )
+                resolved_visual_id = None
+            else:
+                resolved_visual_id = profile_name
+        elif visual_id is not None:
+            resolved_visual_id = visual_id
+
+        if resolved_visual_id is not None:
+            try:
+                resolved_visual_id = engine.sanitize_visual_id(resolved_visual_id)
+            except ValueError as exc:
+                click.echo(f"Error: {exc}", err=True)
+                sys.exit(1)
+
+        exit_code = engine.exec_interactive(id, visual_id=resolved_visual_id)
         sys.exit(exit_code)
 
 

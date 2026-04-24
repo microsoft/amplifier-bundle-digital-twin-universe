@@ -98,6 +98,27 @@ For running Docker inside a Digital Twin Universe environment (nested containers
 read_file("@digital-twin-universe:docs/docker-in-incus.md")
 ```
 
+## Shell Access
+
+When giving the user a command for an interactive shell in a DTU for a user (without explicit flag preferences), default to giving them a command with the default visual-id so they know that they are in a DTU:
+
+```bash
+amplifier-digital-twin exec --visual-id "" <id>
+```
+
+`--visual-id ""` (the empty string sentinel) prepends `(dtu:<profile>)` in
+blue to the prompt so the user can tell which DTU they are in. If the user
+has several DTUs on the same profile, pass an explicit label so the prompts
+remain distinct:
+
+```bash
+amplifier-digital-twin exec --visual-id testing-pr-42 <id>
+```
+
+**Important:** `--visual-id` always takes a value. The empty string `""`
+means "use the profile name"; any non-empty value is used as the literal
+label. Always quote the empty string -- `--visual-id ""`.
+
 ## Hostname Support (mDNS)
 
 Environments can register a `.local` hostname via Avahi mDNS, making it easy to

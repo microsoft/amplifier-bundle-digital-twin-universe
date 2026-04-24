@@ -234,15 +234,20 @@ def exec_stream(
     return result.returncode
 
 
-def exec_interactive(name: str) -> int:
+def exec_interactive(name: str, command: list[str] | None = None) -> int:
     """Attach an interactive shell to *name*.
 
     Uses ``--force-interactive`` to allocate a PTY inside the container even
     when our own stdin is a pipe (required for the E2E test harness).
     stdin/stdout/stderr are inherited -- not captured.
+
+    *command* defaults to ``["bash", "-l"]``.  Pass a custom command to launch
+    bash with additional flags (e.g. ``--rcfile /path/to/rc.sh``).
     """
+    if command is None:
+        command = ["bash", "-l"]
     result = subprocess.run(
-        ["incus", "exec", "--force-interactive", name, "--", "bash", "-l"],
+        ["incus", "exec", "--force-interactive", name, "--", *command],
     )
     return result.returncode
 

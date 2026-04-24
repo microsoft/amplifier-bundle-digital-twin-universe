@@ -1340,11 +1340,76 @@ def exec_stream(
     return incus.exec_stream(container_id, ["bash", "-lc", cmd_str], timeout=timeout)
 
 
-def exec_interactive(container_id: str) -> int:
-    """Attach an interactive shell to the environment."""
+_VISUAL_ID_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,40}$")
+_VISUAL_ID_RCFILE_PATH = "/tmp/dtu-visual-id-rc.sh"
+
+
+def sanitize_visual_id(value: str) -> str:
+    """Validate *value* is safe to embed in a PS1 rcfile.
+
+    Only allows alphanumerics, dot, underscore, colon, slash, and hyphen.
+    Caps at 40 characters to keep prompts readable.
+    Raises ValueError on invalid input.
+    """
+    if not _VISUAL_ID_RE.match(value):
+        raise ValueError(
+            f"Invalid --visual-id {value!r}: must match {_VISUAL_ID_RE.pattern}"
+        )
+    return value
+
+
+def build_visual_id_rcfile(visual_id: str) -> str:
+    """Return the bash rcfile content that injects a blue (dtu:<id>) prompt prefix."""
+    visual_id = sanitize_visual_id(visual_id)
+    return (
+        "# amplifier-digital-twin visual id prompt injection\n"
+        "[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc\n"
+        "[ -f ~/.bashrc ] && . ~/.bashrc\n"
+        # Re-apply after sourcing so the container's default bashrc doesn't
+        # clobber our PS1.
+        f'PS1="\\[\\e[1;34m\\](dtu:{visual_id})\\[\\e[0m\\] $PS1"\n'
+    )
+
+
+def install_visual_id_rcfile(container_id: str, visual_id: str) -> str:
+    """Write the visual-id rcfile into *container_id*. Returns the container path."""
+    content = build_visual_id_rcfile(visual_id)
+    with tempfile.NamedTemporaryFile(
+        "w", delete=False, suffix=".sh", prefix="dtu-visual-id-"
+    ) as f:
+        f.write(content)
+        tmp_path = f.name
+    try:
+        incus.file_push(
+            container_id,
+            [tmp_path],
+            _VISUAL_ID_RCFILE_PATH,
+            create_dirs=True,
+            mode="0644",
+            uid=0,
+            gid=0,
+        )
+    finally:
+        os.unlink(tmp_path)
+    return _VISUAL_ID_RCFILE_PATH
+
+
+def exec_interactive(container_id: str, *, visual_id: str | None = None) -> int:
+    """Attach an interactive shell to the environment.
+
+    When *visual_id* is set, inject a blue ``(dtu:<visual_id>)`` prefix into
+    PS1 by launching bash with a custom rcfile.  The raw value is validated
+    via :func:`sanitize_visual_id` before being embedded in the rcfile.
+    """
     if not incus.container_exists(container_id):
         print(f"Error: Environment not found: {container_id}", file=sys.stderr)
         return 1
+    if visual_id is not None:
+        install_visual_id_rcfile(container_id, visual_id)
+        return incus.exec_interactive(
+            container_id,
+            command=["bash", "--rcfile", _VISUAL_ID_RCFILE_PATH, "-i"],
+        )
     return incus.exec_interactive(container_id)
 
 

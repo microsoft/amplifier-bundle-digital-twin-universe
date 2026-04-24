@@ -109,6 +109,19 @@ amplifier-digital-twin exec [--stream] [--timeout <seconds>] <id> [-- <command> 
   Pass `--timeout none` to disable the timeout entirely. Only applies in
   `--stream` mode; interactive and JSON modes are unaffected.
 
+`--visual-id [LABEL]` (optional)
+  Prepend a `(dtu:<label>)` prefix to the interactive shell prompt so
+  you can tell DTU sessions apart when you have several open. This flag
+  always takes a value; the value controls the label:
+
+  - `--visual-id ""` (empty string) uses the DTU's profile name, e.g.
+    `(dtu:amplifier-user-sim)`. This is the common case.
+  - `--visual-id testing-pr-42` uses the given string, e.g.
+    `(dtu:testing-pr-42)`. Useful when multiple DTUs share a profile.
+
+  Value is restricted to `[A-Za-z0-9._:/-]` and capped at 40 characters.
+  Interactive mode only -- accepted but ignored in JSON and `--stream` modes.
+
 Exec operates in three modes depending on the arguments:
 
 | Mode | Invocation | PTY | Output |
@@ -126,7 +139,32 @@ amplifier-digital-twin exec dtu-a1b2c3d4 -- amplifier --version
 
 # Stream output in real-time (no PTY unless caller provides one)
 amplifier-digital-twin exec --stream dtu-a1b2c3d4 -- amplifier run "test prompt"
+
+# Interactive shell with a blue (dtu:<profile>) prompt prefix
+amplifier-digital-twin exec --visual-id dtu-a1b2c3d4
+
+# Same, but with a custom label instead of the profile name
+amplifier-digital-twin exec --visual-id testing-pr-42 dtu-a1b2c3d4
 ```
+
+#### Visual session identifier
+
+`--visual-id` injects a blue `(dtu:<id>)` prefix into the interactive shell's
+prompt so you can tell multiple DTU sessions apart. It is **off by default**
+and only affects interactive mode.
+
+- Bare flag (`--visual-id`) uses the DTU's profile name, e.g.
+  `(dtu:amplifier-user-sim)`.
+- With an explicit value (`--visual-id testing-pr-42`) uses the string you
+  pass, e.g. `(dtu:testing-pr-42)`. Useful when several DTUs share a profile.
+- Values are restricted to `[A-Za-z0-9._:/-]` and capped at 40 characters.
+- In JSON and `--stream` modes the flag is accepted but ignored -- there is
+  no prompt to prefix.
+
+Under the hood, the flag writes a small bash rcfile into the container at
+`/tmp/dtu-visual-id-rc.sh` and launches bash with `--rcfile` pointed at it.
+The rcfile sources the container's default bashrc first, then re-applies
+`PS1` so the prefix survives.
 
 Without a command, attaches a terminal to the container with a PTY.
 Exit code comes from the shell when you exit.
@@ -159,6 +197,13 @@ When a command is provided (JSON or stream mode), it is internally wrapped in
   unnecessarily (though it does work).
 - **Shell features work in single commands.** Pipes, redirects, and variable
   expansion work: `exec <id> -- ls /tmp | head -5`.
+- **Chained commands (`&&`, `||`, `;`) need an explicit `bash -c` wrapper.**
+  Passing them as a single quoted string like `exec <id> -- "cmd1 && cmd2"`
+  sends the whole string as one token. `shlex.join` then single-quotes it
+  (because `&&` is a shell metacharacter), so the inner `bash -lc` sees
+  `'cmd1 && cmd2'` as one word and tries to execute it as an executable
+  filename. Wrap with `bash -c` to chain:
+  `exec <id> -- bash -c 'cmd1 && cmd2'`.
 - **The `--` separator is required** when command arguments contain flags.
   Without `--`, flags like `--version` are consumed by the CLI itself.
 
