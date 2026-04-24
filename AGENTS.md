@@ -9,8 +9,8 @@
 
 ### Example profiles
 Please update these profiles anytime we make relevant changes.
-@profiles/amplifier-user-sim.yaml
-@profiles/amplifier-chat.yaml
+@profiles/tests/amplifier-user-sim.yaml
+@profiles/amplifier/amplifier-chat.yaml
 
 
 ### Documentation

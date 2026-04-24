@@ -1,0 +1,49 @@
+# OpenAI Codex CLI - AI coding agent TUI
+# Installs the published @openai/codex npm package in an isolated container.
+name: openai-codex-cli
+description: >
+  OpenAI Codex CLI coding agent in an isolated Ubuntu 24.04 container
+base:
+  image: ubuntu:24.04
+
+passthrough:
+  allow_external: true
+  services:
+    - name: openai
+      key_env: OPENAI_API_KEY
+
+provision:
+  setup_cmds:
+    # System dependencies (matching upstream Dockerfile recommendations)
+    - apt-get update && apt-get install -y --no-install-recommends
+        ca-certificates
+        curl
+        git
+        jq
+        ripgrep
+        procps
+        less
+        unzip
+        gnupg2
+      && rm -rf /var/lib/apt/lists/*
+
+    # Install Node.js 22 LTS via NodeSource
+    - |
+      curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+      apt-get install -y nodejs
+      rm -rf /var/lib/apt/lists/*
+
+    - npm install -g @openai/codex
+
+    # Set environment for container usage (no sandbox needed inside DTU)
+    - echo 'export CODEX_UNSAFE_ALLOW_NO_SANDBOX=1' >> /root/.bashrc
+
+    # Verify installation
+    - CODEX_UNSAFE_ALLOW_NO_SANDBOX=1 codex --help | head -5
+
+    # Create a workspace for the user
+    - mkdir -p /home/user/project
+
+readiness:
+  - name: codex-installed
+    command: "CODEX_UNSAFE_ALLOW_NO_SANDBOX=1 codex --help"

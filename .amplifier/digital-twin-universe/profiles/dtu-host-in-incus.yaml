@@ -213,13 +213,21 @@ provision:
       amplifier bundle list
 
     # --- Fetch amplifier-chat profile for DTU-in-DTU testing ----------
+    # When a Gitea overlay is configured, pull from the Gitea mirror so
+    # working-tree changes (not yet on GitHub main) are honored. Otherwise
+    # fall through to raw.githubusercontent.com.
     - |
       set -euo pipefail
       mkdir -p /root/profiles
-      timeout 30 curl -fsSL --max-time 20 \
-        https://raw.githubusercontent.com/microsoft/amplifier-bundle-digital-twin-universe/main/profiles/amplifier-chat.yaml \
+      GITEA_URL_VAL="${GITEA_URL}"
+      if [ -n "$GITEA_URL_VAL" ]; then
+        URL="${GITEA_URL_VAL}/admin/amplifier-bundle-digital-twin-universe/raw/branch/main/profiles/amplifier/amplifier-chat.yaml"
+      else
+        URL="https://raw.githubusercontent.com/microsoft/amplifier-bundle-digital-twin-universe/main/profiles/amplifier/amplifier-chat.yaml"
+      fi
+      timeout 30 curl -fsSL --max-time 20 "$URL" \
         -o /root/profiles/amplifier-chat.yaml
-      echo "Fetched amplifier-chat.yaml to /root/profiles/amplifier-chat.yaml"
+      echo "Fetched amplifier-chat.yaml from $URL"
 
 readiness:
   - name: incus-daemon

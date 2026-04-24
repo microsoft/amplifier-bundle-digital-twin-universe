@@ -2,11 +2,17 @@
 
 A profile can be launched by:
 
-- built-in name, for example `amplifier-user-sim`
-- relative path to a YAML file
-- absolute path to a YAML file
+- **built-in name** — e.g. `amplifier-user-sim`. The built-in lookup searches
+  `profiles/**/*.yaml` recursively across the bucket subdirectories. If two
+  profiles in different buckets share a name the CLI raises an error; pass an
+  explicit path to disambiguate.
+- **relative path** to a YAML file
+- **absolute path** to a YAML file
 
-Examples can be found in the [profiles/](../profiles/) directory.
+Sample profiles live in the [profiles/](../profiles/) directory, organized
+into four buckets by intent. See [Sample profiles](#sample-profiles) below
+and [Contributing a profile](#contributing-a-profile) for how to submit your
+own.
 
 
 ## Variables
@@ -496,3 +502,91 @@ while ! amplifier-digital-twin check-readiness dtu-a1b2c3d4 \
   sleep 3
 done
 ```
+
+
+## Sample profiles
+
+Profiles in this repo are organized into four buckets by intent:
+
+### `profiles/amplifier/`
+
+Profiles that run an Amplifier experience — the Amplifier CLI, a chat
+UI, a dev-machine configuration, or any other first-class Amplifier
+feature. Example: [`amplifier-chat`](../profiles/amplifier/amplifier-chat.yaml).
+
+### `profiles/patterns/`
+
+Small, focused profiles that demonstrate a single capability of
+`amplifier-digital-twin` — private-repo access, local wheel overrides, URL
+rewriting, and so on. Each profile here is meant to be read as a reference.
+Example: [`private-github-repo`](../profiles/patterns/private-github-repo.yaml).
+
+### `profiles/tests/`
+
+Profiles whose primary role is validating `amplifier-digital-twin` itself.
+The test suite launches these to exercise networking, provisioning,
+packaging, and Amplifier user-simulation paths. Treat this bucket as
+internal infrastructure. Example: [`docker-in-incus`](../profiles/tests/docker-in-incus.yaml).
+
+### `profiles/community/`
+
+Catch-all bucket for profiles that don't fit the three above - third-party
+tool tryouts, experimental setups, and contributor-authored samples.
+The profile must launch successfully, but maintainer review is lighter. 
+Example: [`openai-codex-cli`](../profiles/community/openai-codex-cli.yaml).
+
+
+## Self-contained profiles
+
+A profile must launch cleanly on any machine with the documented
+prerequisites. Anyone cloning the repo should be able to run
+`amplifier-digital-twin launch <profile>` and get the same result as the author.
+
+**Rule:** every file the profile depends on must be fetched by a command
+in the profile itself — `curl`, `wget`, or `git clone` inside a
+`provision.setup_cmds` step. Do not rely on files that only happen to
+exist on the author's host.
+
+Some profiles cannot be fully self-contained — e.g. they reference a
+local wheel, require a host-side Gitea mirror, or need a secret managed
+outside the repo. When that is unavoidable, the profile must document
+the gap in a leading comment block at the top of the YAML:
+
+- what out-of-band state it requires (files, launch `--var`s, env vars,
+  host-side services)
+- the exact launch invocation the caller must use, including every
+  `--var` flag
+
+
+## Contributing a profile
+
+1. **Fork the repo and clone your fork**.
+
+2. **Pick a bucket and place the file.** Unless you have a strong reason to choose another, use `community/`. The file lives at `profiles/<bucket>/<name>.yaml` — e.g. `profiles/community/my-profile.yaml`.
+
+3. **Confirm the filename stem is unique.** Built-in names resolve recursively across all buckets, so no two profiles may share a stem. Check with:
+
+   ```bash
+   find profiles -name '<name>.yaml'
+   ```
+
+   Pick a different name if more than one file is returned.
+
+4. **Fill in required metadata.** Every profile must include:
+   - `name` (or a filename whose stem matches the intended invocation name)
+   - `description` — one sentence the CLI can show
+   - A leading comment block describing what the profile does, required
+     environment variables, and the `amplifier-digital-twin launch` command
+     that exercises it.
+
+5. **Make it self-contained.** See [Self-contained profiles](#self-contained-profiles) above — fetch every dependency inside the profile, or document the exception in the leading comment block.
+
+6. **Verify locally.** Launch the profile end-to-end before submitting:
+
+   ```bash
+   amplifier-digital-twin launch <your-profile>
+   amplifier-digital-twin check-readiness <id>   # must return ready: true
+   amplifier-digital-twin destroy <id>
+   ```
+
+7. **Open a PR.** Keep the description brief and factual — what the profile does, why it is useful, what is unique about it.

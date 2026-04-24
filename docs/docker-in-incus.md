@@ -22,7 +22,7 @@ If not, read on.
 
 ## Reference Profile
 
-The [docker-in-incus](../profiles/docker-in-incus.yaml) profile is a minimal
+The [docker-in-incus](../profiles/tests/docker-in-incus.yaml) profile is a minimal
 test that exercises the full nested networking path:
 
 ```

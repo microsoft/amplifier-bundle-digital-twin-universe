@@ -9,7 +9,7 @@
 #
 # Usage:
 #   GH_TOKEN=$(gh auth token) amplifier-digital-twin launch \
-#     profiles/private-github-repo.yaml
+#     profiles/patterns/private-github-repo.yaml
 #
 # To test a different repo, change the `amplifier bundle add` URL below.
 name: private-github-repo

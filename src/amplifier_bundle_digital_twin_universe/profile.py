@@ -206,7 +206,9 @@ def find_profile_path(profile_arg: str) -> Path:
     """Resolve *profile_arg* to an on-disk YAML file.
 
     Accepts an absolute path, a relative path, or a bare built-in name
-    (e.g. ``amplifier-user-sim``).
+    (e.g. ``amplifier-user-sim``). Built-in names are resolved recursively
+    under the packaged ``profiles/`` directory; duplicate stems in different
+    buckets raise ``ValueError``.
     """
     p = Path(profile_arg)
 
@@ -214,18 +216,21 @@ def find_profile_path(profile_arg: str) -> Path:
     if p.exists():
         return p.resolve()
 
-    # Built-in profile name
-    builtin = _BUILTIN_PROFILES_DIR / f"{profile_arg}.yaml"
-    if builtin.exists():
-        return builtin
-
-    # CWD/profiles/<name>.yaml
-    cwd_profiles = Path.cwd() / "profiles" / f"{profile_arg}.yaml"
-    if cwd_profiles.exists():
-        return cwd_profiles
+    # Built-in profile name — search recursively across bucket subdirectories.
+    if _BUILTIN_PROFILES_DIR.exists():
+        matches = sorted(_BUILTIN_PROFILES_DIR.rglob(f"{profile_arg}.yaml"))
+        if len(matches) == 1:
+            return matches[0].resolve()
+        if len(matches) > 1:
+            rendered = ", ".join(str(m) for m in matches)
+            raise ValueError(
+                f"Ambiguous profile name {profile_arg!r}: matches {len(matches)} "
+                f"built-in profiles ({rendered}). Pass an explicit path instead."
+            )
 
     raise FileNotFoundError(
-        f"Profile not found: {profile_arg!r}.  Searched: {p}, {builtin}, {cwd_profiles}"
+        f"Profile not found: {profile_arg!r}. "
+        f"Searched as path ({p}) and as built-in name under {_BUILTIN_PROFILES_DIR}."
     )
 
 

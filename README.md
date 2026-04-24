@@ -35,14 +35,14 @@ See [docs/mock-authoring.md](docs/mock-authoring.md) for how to build a mock and
 
 ### Example: amplifier-user-sim
 
-The [amplifier-user-sim](profiles/amplifier-user-sim.yaml) profile simulates an Amplifier user
+The [amplifier-user-sim](profiles/tests/amplifier-user-sim.yaml) profile simulates an Amplifier user
 environment: LLM API passthrough, repos served from Gitea, the Amplifier CLI installed,
 and the Anthropic provider pre-configured so Amplifier is ready to use immediately.
 See the [launch flow diagram](docs/amplifier-user-sim-launch-flow.svg) for details.
 
 ### Example: amplifier-chat
 
-The [amplifier-chat profile](profiles/amplifier-chat.yaml) launches a browser-accessible
+The [amplifier-chat profile](profiles/amplifier/amplifier-chat.yaml) launches a browser-accessible
 [amplifier-chat UI](https://github.com/microsoft/amplifier-chat) backed by amplifierd. 
 It installs the app from upstream, configures the Anthropic provider, 
 and uses `access.ports` to forward port 8410 to `localhost` so you can open 

@@ -80,7 +80,7 @@ For complete CLI reference with all flags and output schemas:
 read_file("@digital-twin-universe:docs/api-reference.md")
 ```
 
-For the full profile schema and field reference:
+For the full profile schema and field reference, sample profiles organized by bucket (`amplifier/`, `patterns/`, `tests/`, `community/`), and contribution guidelines:
 
 ```
 read_file("@digital-twin-universe:docs/profiles.md")
@@ -166,10 +166,10 @@ for the `update` profile schema.
 When constructing profiles, read the most relevant examples first to understand established patterns:
 
 ```
-read_file("@digital-twin-universe:profiles/amplifier-user-sim.yaml")
-read_file("@digital-twin-universe:profiles/amplifier-chat.yaml")
-read_file("@digital-twin-universe:profiles/private-github-repo.yaml")
-read_file("@digital-twin-universe:profiles/docker-in-incus.yaml")
+read_file("@digital-twin-universe:profiles/tests/amplifier-user-sim.yaml")
+read_file("@digital-twin-universe:profiles/amplifier/amplifier-chat.yaml")
+read_file("@digital-twin-universe:profiles/patterns/private-github-repo.yaml")
+read_file("@digital-twin-universe:profiles/tests/docker-in-incus.yaml")
 ```
 
 The `private-github-repo` profile shows how to install from a private GitHub
