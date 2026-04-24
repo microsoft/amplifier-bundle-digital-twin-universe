@@ -146,6 +146,50 @@ Based on what you found, decide:
   2. Create a repo in Gitea and push the local code
   3. Use `url_rewrites` or install from the Gitea URL in provision commands
 
+**Rewrite companion endpoints:**
+
+Adding a `url_rewrites` rule for a git host is often not sufficient on its own.
+Many installers resolve refs or fetch metadata from *different hosts* before
+ever issuing a `git fetch`. Miss those and the installer silently pins to
+upstream, then git-fetches that upstream SHA through the proxy (it exists in
+the mirror because the mirror was seeded from upstream). The install succeeds
+at the wrong commit.
+
+For each rewrite rule you add, reason through using what you know about the
+toolchain that will consume it:
+
+1. Which installer consumes this URL in your `setup_cmds`? (uv, pip, cargo,
+   npm, go, plain git)
+2. Does it resolve `@<ref>` → SHA out-of-band before the git fetch? Which
+   host(s)?
+3. Does it fetch manifests (`pyproject.toml`, `package.json`, `Cargo.toml`,
+   `go.mod`) from a CDN instead of cloning? Which host(s)?
+4. Does it fetch tarballs or archives from a different host than the git URL?
+   Which host(s)?
+
+Concrete patterns for anchoring -- not a closed list:
+
+- `uv tool install git+https://github.com/...` — resolves SHAs via
+  `api.github.com/repos/<owner>/<repo>/commits/<ref>`, fetches `pyproject.toml`
+  from `raw.githubusercontent.com`, may hit `codeload.github.com` for archives.
+  Suppress entirely with `UV_NO_GITHUB_FAST_PATH=true` in the container env.
+- `npm install <git-url>` — may resolve through `codeload.github.com` for
+  tarball shortcuts.
+- `go get` / `go mod` — uses `proxy.golang.org` and `sum.golang.org` unless
+  `GOPRIVATE` is set to exclude the host.
+- `pip install git+https://...` — plain `git clone`, no fast-path.
+- `cargo install` — uses `index.crates.io` and `static.crates.io`.
+
+For each companion host you identify, either add a rewrite rule for it or
+write a one-line note in your summary explaining why it is safe to leave
+unrewritten.
+
+**Fallback if you can't reason confidently** about a toolchain's fast-paths:
+either set the toolchain's "disable fast-path" env var in the container
+(e.g. `UV_NO_GITHUB_FAST_PATH=true`), or pre-resolve the Gitea HEAD SHA via
+the Gitea API and pass the literal SHA to the install command (not `@main`
+or a branch name). A literal SHA skips out-of-band resolution entirely.
+
 **External API passthrough:**
 - If the project needs API keys (Anthropic, OpenAI, Stripe, etc.) -- use `passthrough.services`
 - Each service entry copies the env var from host into the container
@@ -193,6 +237,22 @@ repo, you cannot use `localhost` from inside the container. Use the host gateway
 The DTU engine handles `localhost` → host gateway rewriting for `--var` values
 automatically, so use the literal `${GITEA_URL}` variable in your profile and pass
 the localhost URL via `--var`.
+
+**Capture truth SHAs (required if `url_rewrites` covers git hosts):**
+
+After mirroring, before launch, capture Gitea HEAD SHAs from the host:
+
+```bash
+curl -s -H "Authorization: token $GITEA_TOKEN" \
+  "http://localhost:$GITEA_PORT/api/v1/repos/admin/<repo>/commits/main" \
+  | jq -r '.sha'
+```
+
+Record in agent scratch (e.g. `/tmp/dtu-agent-scratch/<instance-id>/truth-shas.json`)
+as `{ "<repo>": "<sha>", ... }`. These are the canonical values for
+verification. Do not re-query Gitea at verify time — the mirror may drift
+during iteration, and the query routes through the mitmproxy you're trying
+to verify.
 
 ### 5. Generate the Profile YAML
 
@@ -386,6 +446,45 @@ Run a basic sanity check that the project actually works inside the DTU:
 - **Libraries:** `amplifier-digital-twin exec <id> -- python -c "import <module>; print('ok')"`
 - **API servers:** `curl -sf http://localhost:<port>/<api-endpoint>` and check the response
 
+**If the profile uses `url_rewrites` for git-based installs:** verify the
+installed source came from the Gitea mirror, not upstream. A missed companion
+endpoint (Step 3) causes silent bypass — the install succeeds at the wrong
+commit. A missed verification check produces a false PASS.
+
+Enumerate expected git-installed packages: the root package in `setup_cmds`,
+plus transitive git deps named in the project's `pyproject.toml`,
+`package.json`, `Cargo.toml`, or `go.mod`. The bug report explicitly cited
+transitive git deps silently installing pre-fix versions — do not skip them.
+
+For each package, read `direct_url.json` with fail-loud parsing. PEP 503
+normalization: hyphens in distribution names become underscores in the
+filesystem (`amplifier-app-cli` → `amplifier_app_cli-*.dist-info`).
+
+```bash
+amplifier-digital-twin exec <id> -- bash -lc '
+  set -euo pipefail
+  DIST_INFO=$(ls -d $(/root/.local/bin/uv tool dir)/<dist>/lib/python*/site-packages/<normalized>-*.dist-info 2>/dev/null | head -1)
+  [ -n "$DIST_INFO" ] && [ -f "$DIST_INFO/direct_url.json" ] || { echo "FAIL: no direct_url.json (cached wheel?)" >&2; exit 2; }
+  SHA=$(jq -r ".vcs_info.commit_id // empty" "$DIST_INFO/direct_url.json")
+  [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "FAIL: bad commit_id: $SHA" >&2; exit 3; }
+  echo "$SHA"
+'
+```
+
+For `uv pip install` / `pip install`, use the active venv's `site-packages`.
+For npm: `npm ls <pkg> --json | jq '.dependencies.<pkg>.resolved'`. For cargo:
+`cargo metadata --format-version 1 | jq '.packages[] | select(.name=="<pkg>") | .source'`.
+
+Compare each extracted SHA against the Step 4 truth snapshot, not live Gitea.
+On mismatch, grep the verbose install output for fast-path indicators
+(`fast path`, `Querying GitHub`, `raw.githubusercontent`, `codeload`,
+`api.github`). The host named is the missed companion endpoint. Add a rewrite
+rule, destroy, re-launch, re-verify. Do NOT retry blindly.
+
+**Do not declare success unless, for every expected git-installed package:**
+`direct_url.json` exists, `vcs_info.commit_id` is a 40-char hex SHA, and the
+SHA matches the Step 4 truth snapshot bytewise.
+
 If verification fails, check logs:
 ```bash
 amplifier-digital-twin exec <id> -- cat /var/log/<app>.log
@@ -394,7 +493,25 @@ amplifier-digital-twin exec <id> -- journalctl -xe
 
 Fix the profile and re-launch if needed. Do not hand back a broken environment.
 
-### 9. Hand Back to User
+### 9. Clean Up Before Hand-Back
+
+The profile you hand back must be the minimum needed to reproduce the working
+environment. Before writing it out:
+
+- **Verification commands never live in the profile.** They are agent-driven
+  `exec` calls. Anything verification-adjacent that crept into `setup_cmds`
+  or `provision.files` during iteration gets removed.
+- **Prune unused rules and dead mitigations.** For each `url_rewrites` rule
+  or disable-fast-path env var, confirm a command in `setup_cmds` exercises
+  it. If two mitigations overlap (companion rewrites AND a fast-path env
+  var), keep whichever carries the load, drop the other.
+- **Re-verify after structural changes.** If cleanup touched `setup_cmds`,
+  `url_rewrites`, `passthrough`, or `provision`, destroy the DTU, re-launch,
+  and re-run Step 8. Cleanup that silently breaks verification is worse than
+  no cleanup.
+- **Delete agent scratch** in `/tmp/dtu-agent-scratch/` when done.
+
+### 10. Hand Back to User
 
 Report the results clearly. Your return message MUST include:
 
