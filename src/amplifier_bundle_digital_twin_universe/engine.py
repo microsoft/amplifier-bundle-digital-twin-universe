@@ -33,7 +33,13 @@ from amplifier_bundle_digital_twin_universe.profile import (
     Profile,
     has_unresolved_vars,
     load_profile,
+    load_profile_from_content,
 )
+
+# Path inside each DTU container where the resolved profile snapshot is stored
+# at launch time.  ``update`` reads from this path so it does not depend on
+# the original on-host profile file still being present.
+_PROFILE_SNAPSHOT_PATH = "/opt/dtu/profile.yaml"
 
 # Port used by the local pypiserver inside the container.
 _PYPI_SERVER_PORT = 8081
@@ -960,6 +966,18 @@ def launch(
         incus.set_config(container_name, "user.dtu.profile", host_profile.name)
         incus.set_config(container_name, "user.dtu.created-at", now)
 
+        # Push a snapshot of the resolved profile source into the container so
+        # `update` can re-read it without depending on the host filesystem
+        # still having the original file at the same location.  We push the
+        # raw pre-substitution YAML so `--var` values supplied at update time
+        # are re-applied freshly (matching launch-time semantics).
+        incus.file_push(
+            container_name,
+            [str(host_profile.path)],
+            _PROFILE_SNAPSHOT_PATH,
+            create_dirs=True,
+        )
+
         # Detect host gateway IP (retries until networking is up).
         host_ip = _wait_for_gateway(container_name)
         print(f"  host gateway: {host_ip}", file=sys.stderr)
@@ -1158,6 +1176,27 @@ def launch(
         raise
 
 
+def _read_profile_snapshot(container_id: str) -> str | None:
+    """Return the raw YAML text stored at launch time, or None if absent.
+
+    Containers launched before the snapshot feature landed will not have the
+    file at ``/opt/dtu/profile.yaml``; callers should fall back to
+    re-resolving the profile from host search paths in that case.
+    """
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w+", suffix=".yaml", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            incus.file_pull(container_id, [_PROFILE_SNAPSHOT_PATH], tmp_path)
+        except IncusError:
+            return None
+        return Path(tmp_path).read_text()
+    finally:
+        if tmp_path is not None:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
 def update(
     container_id: str,
     variables: dict[str, str],
@@ -1169,6 +1208,11 @@ def update(
     overrides (rebuild wheels, re-push), then executes the update commands.
     If the profile defines readiness checks they are re-run unless
     *skip_readiness* is True.
+
+    The profile is read from a snapshot stored inside the container at
+    ``/opt/dtu/profile.yaml`` (written at launch time).  For containers
+    launched before this snapshot feature existed, falls back to resolving
+    the profile by name from host-side search paths.
     """
     incus.check_incus()
 
@@ -1181,15 +1225,32 @@ def update(
             f"Environment {container_id} is not running (state: {state})"
         )
 
-    # Retrieve profile name stored at launch time.
-    profile_name = incus.get_config(container_id, "user.dtu.profile")
-    if not profile_name:
-        raise RuntimeError(f"Environment {container_id} has no stored profile name")
-
-    # Detect host gateway and reload profile with rewritten variables.
+    # Detect host gateway and rewrite localhost references in user-supplied vars.
     host_ip = _wait_for_gateway(container_id)
     rewritten_vars = _rewrite_localhost(variables, host_ip)
-    profile = load_profile(profile_name, rewritten_vars)
+
+    # Prefer the in-container snapshot written at launch time.  Fall back to
+    # re-resolving by name from host search paths for pre-upgrade containers.
+    snapshot_yaml = _read_profile_snapshot(container_id)
+    if snapshot_yaml is not None:
+        profile_name = (
+            incus.get_config(container_id, "user.dtu.profile") or "<snapshot>"
+        )
+        profile = load_profile_from_content(snapshot_yaml, rewritten_vars)
+    else:
+        profile_name = incus.get_config(container_id, "user.dtu.profile")
+        if not profile_name:
+            raise RuntimeError(
+                f"Environment {container_id} has no stored profile name or snapshot"
+            )
+        print(
+            "Warning: container has no embedded profile snapshot at "
+            f"{_PROFILE_SNAPSHOT_PATH}; falling back to host-side resolution "
+            f"of profile {profile_name!r}. This container was likely launched "
+            "before the snapshot feature was added.",
+            file=sys.stderr,
+        )
+        profile = load_profile(profile_name, rewritten_vars)
 
     if not profile.update:
         raise RuntimeError(

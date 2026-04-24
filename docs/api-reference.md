@@ -322,6 +322,28 @@ Optional fields:
 Requires the profile to define an `update` section. See
 [profiles.md](profiles.md#update) for the schema.
 
+#### Profile snapshot
+
+`update` reads the profile from a snapshot written inside the container at
+launch time (`/opt/dtu/profile.yaml`), not from the host filesystem. This
+means:
+
+- `update` succeeds even if the original host profile file has been moved,
+  renamed, or deleted since launch.
+- Edits made to the host profile after launch are **not** picked up on
+  update. The container owns its own profile.
+- The snapshot is the raw pre-substitution YAML; `--var` values supplied to
+  `update` are applied freshly at update time.
+
+To inspect the snapshot:
+
+```bash
+amplifier-digital-twin exec <id> -- cat /opt/dtu/profile.yaml
+```
+
+Containers launched before this snapshot feature existed fall back to
+host-side profile resolution by name and print a warning to stderr.
+
 
 ### `status`
 

@@ -242,7 +242,32 @@ def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
     proxy setup when ``url_rewrites`` vars are missing).
     """
     path = find_profile_path(profile_arg)
-    raw = yaml.safe_load(path.read_text())
+    return _load_profile_from_text(path.read_text(), path, variables)
+
+
+def load_profile_from_content(
+    yaml_text: str,
+    variables: dict[str, str],
+    *,
+    path: Path | None = None,
+) -> Profile:
+    """Load a profile from raw YAML *yaml_text* with variable substitution.
+
+    Used when the profile content is sourced from somewhere other than the
+    host filesystem (for example, a snapshot stored inside a DTU container
+    at ``/opt/dtu/profile.yaml``).  When *path* is omitted a synthetic
+    placeholder is recorded on the returned :class:`Profile` -- callers
+    should not rely on it pointing to a file that exists.
+    """
+    effective_path = path if path is not None else Path("<in-memory>")
+    return _load_profile_from_text(yaml_text, effective_path, variables)
+
+
+def _load_profile_from_text(
+    yaml_text: str, path: Path, variables: dict[str, str]
+) -> Profile:
+    """Shared parse/validation pipeline used by both load_profile variants."""
+    raw = yaml.safe_load(yaml_text)
 
     if not isinstance(raw, dict):
         raise ValueError(f"Profile must be a YAML mapping, got {type(raw).__name__}")

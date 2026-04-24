@@ -439,6 +439,8 @@ amplifier-digital-twin update dtu-a1b2c3d4 --var ...          # pull + reinstall
 amplifier-digital-twin destroy dtu-a1b2c3d4                   # done
 ```
 
+`update` reads the profile from a snapshot stored in the container, so pass the same `--var` values used at launch for any `${VAR}` references in the `update` or `pypi_overrides` sections.
+
 
 ## `readiness`
 
