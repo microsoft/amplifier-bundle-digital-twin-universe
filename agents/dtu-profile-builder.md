@@ -396,6 +396,19 @@ This registers a `.local` mDNS hostname via Avahi so the user can access
 `http://my-fastapi-app.local:<port>/` instead of a bare `localhost:<port>`.
 If Avahi is not available, the flag is silently ignored and URLs use `localhost`.
 
+**Inspect stderr for `UnknownProfileFieldWarning`.** Each line reports an
+unknown field in your generated profile, usually with a "did you mean"
+suggestion. Treat every one as a bug in your profile -- they're typos or
+stale field names that the parser silently dropped. Fix the profile and
+re-launch (or `update <id>` if iterating in-place) until stderr emits zero
+warnings. The warn-only contract may tighten to errors in a future release,
+so do not skip past them just because launch succeeded.
+
+Two map sections are intentional pass-through and stay silent at parse
+time: `base.config` (Incus flags) and `mock_services[].config` (env-var
+maps). Invalid keys there will fail at launch time when Incus or the mock
+service rejects them, so use real, valid values.
+
 Capture the JSON output. You need:
 - `id` for status/exec/destroy commands
 - `hostname` for the `.local` mDNS name (if registered)
@@ -568,14 +581,16 @@ Profile saved to: .amplifier/digital-twin-universe/profiles/<profile-name>.yaml
 
 ## Iteration
 
-If the launch fails or the app doesn't work correctly, you MUST debug and fix it.
-Do not hand back a broken environment. The cycle is:
+If the launch fails, the app doesn't work correctly, OR launch stderr emits any
+`UnknownProfileFieldWarning` lines, you MUST debug and fix the profile. Do not
+hand back a broken or noisy environment. The cycle is:
 
-1. Read error output or logs
-2. Fix the profile YAML
+1. Read error output, warnings, or logs
+2. Fix the profile YAML (apply "did you mean" suggestions verbatim when present;
+   delete unused fields you added speculatively)
 3. Destroy the failed environment (by its specific `id` -- do NOT destroy other instances)
 4. Re-launch
-5. Re-verify
+5. Re-verify (including a clean stderr -- zero `UnknownProfileFieldWarning` lines)
 
 If the profile has an `update` section and the environment is already running,
 prefer `amplifier-digital-twin update <id>` over destroy + re-launch when

@@ -68,6 +68,8 @@ If the use case warrants it, you should FIRST load the `gitea` skill and setup t
 
 ## Documentation
 
+You **must** load these files and refer to them as they contain necessary information on how to use the digital twin universe correctly.
+
 For overview, quick start, installation, and feature list:
 
 ```

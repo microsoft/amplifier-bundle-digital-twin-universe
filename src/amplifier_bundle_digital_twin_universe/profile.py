@@ -9,11 +9,24 @@ provisioning commands.
 
 from __future__ import annotations
 
+import difflib
 import re
+import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
+
+
+class UnknownProfileFieldWarning(UserWarning):
+    """Emitted when a profile YAML contains a field the parser does not recognize.
+
+    Currently warn-only -- the unknown field is silently dropped and parsing
+    continues. A future release will turn these into hard errors. Users should
+    address every warning before upgrading.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +176,197 @@ class Profile:
 
 
 # ---------------------------------------------------------------------------
+# Strict-field validation (warn-only)
+# ---------------------------------------------------------------------------
+#
+# A single nested schema declares every field the parser recognizes at every
+# level of a profile. The parser then runs ``_validate_unknown_fields`` once
+# at the top of ``_load_profile_from_text``; any key in the YAML that the
+# schema does not name produces an ``UnknownProfileFieldWarning``. A future
+# release will turn these into hard errors.
+#
+# Schema node grammar:
+#   * ``dict``                    -> nested mapping; keys are the allowed set,
+#                                    values describe each child's schema
+#   * ``[item_schema]``           -> list of mappings; each item validated
+#                                    against ``item_schema``
+#   * ``None``                    -> leaf value; no further validation
+#   * ``_PASS_THROUGH``           -> mapping whose inner keys are intentionally
+#                                    arbitrary (e.g. Incus config flags,
+#                                    env-var maps); skip inner-key checks
+
+
+# Sentinel for mappings whose inner keys must NOT be validated.
+_PASS_THROUGH = object()
+
+_PROFILE_SCHEMA: dict[str, Any] = {
+    "name": None,
+    "description": None,
+    "base": {
+        "image": None,
+        "config": _PASS_THROUGH,
+    },
+    "url_rewrites": {
+        "auth": {
+            "username": None,
+            "token_var": None,
+        },
+        "rules": [
+            {
+                "match": None,
+                "target": None,
+            }
+        ],
+        "allow_uv_github_fast_path": None,
+    },
+    "passthrough": {
+        "allow_external": None,
+        "services": [
+            {
+                "name": None,
+                "key_env": None,
+            }
+        ],
+    },
+    "provision": {
+        "files": [
+            {
+                "src": None,
+                "dest": None,
+                "recursive": None,
+                "create_dirs": None,
+                "mode": None,
+                "uid": None,
+                "gid": None,
+            }
+        ],
+        "setup_cmds": None,
+    },
+    "update": {
+        "cmds": None,
+        "refresh_pypi": None,
+    },
+    "pypi_overrides": {
+        "packages": [
+            {
+                "name": None,
+                "wheel_var": None,
+                "wheel_path": None,
+                "wheel_from_git": {
+                    "repo": None,
+                    "ref": None,
+                    "username": None,
+                    "token_var": None,
+                    "build_cmd": None,
+                    "wheel_glob": None,
+                },
+            }
+        ],
+    },
+    "access": {
+        "ports": [
+            {
+                "host": None,
+                "container": None,
+                "label": None,
+                "path": None,
+                "verify": None,
+                "verify_timeout": None,
+                "verify_interval": None,
+            }
+        ],
+        "hostname": None,
+    },
+    "readiness": [
+        {
+            "name": None,
+            "http": {
+                "url": None,
+                "expect_json": None,
+            },
+            "tcp": {
+                "port": None,
+            },
+            "command": None,
+        }
+    ],
+    "mock_services": [
+        {
+            "source": None,
+            "config": _PASS_THROUGH,
+        }
+    ],
+}
+
+
+def _check_unknown(
+    data: Mapping[str, Any] | None,
+    allowed: set[str],
+    where: str,
+) -> None:
+    """Warn for any key in *data* not present in *allowed*.
+
+    Atomic warning emitter for a single mapping. Use directly when validating
+    a flat key set; otherwise call :func:`_validate_unknown_fields` to walk a
+    nested schema.
+
+    *where* is the human-readable YAML path (e.g. ``provision.files[2]``)
+    that prefixes the warning so users can locate the offending field.
+    Suggestions come from :func:`difflib.get_close_matches` when a typo is
+    close enough to a known key.
+    """
+    if not isinstance(data, Mapping):
+        return
+    for key in data:
+        if key in allowed:
+            continue
+        match = difflib.get_close_matches(str(key), sorted(allowed), n=1, cutoff=0.6)
+        suggestion = f" (did you mean {match[0]!r}?)" if match else ""
+        warnings.warn(
+            f"{where}: unknown field {key!r}{suggestion}",
+            UnknownProfileFieldWarning,
+            stacklevel=2,
+        )
+
+
+def _validate_unknown_fields(
+    data: Any,
+    schema: Mapping[str, Any],
+    where: str,
+) -> None:
+    """Recursively validate *data* against *schema* and warn for unknown keys.
+
+    No-op if *data* is not a mapping. Walks every mapping node in lockstep
+    with the schema and emits one ``UnknownProfileFieldWarning`` per unknown
+    key. Pass-through nodes (``_PASS_THROUGH`` sentinel) skip inner-key
+    validation. Lists of mappings are validated per-item against the single
+    per-item schema declared in the parent schema.
+    """
+    if not isinstance(data, Mapping):
+        return
+
+    _check_unknown(data, set(schema.keys()), where)
+
+    for key, value in data.items():
+        sub_schema = schema.get(key)
+        if sub_schema is None or sub_schema is _PASS_THROUGH:
+            continue
+
+        # Top-level keys ("base", "url_rewrites", etc.) appear unprefixed in
+        # warning messages; nested keys are dotted onto their parent path.
+        sub_path = str(key) if where == "profile" else f"{where}.{key}"
+
+        if isinstance(sub_schema, list):
+            if not isinstance(value, list):
+                continue
+            item_schema = sub_schema[0]
+            for i, item in enumerate(value):
+                _validate_unknown_fields(item, item_schema, f"{sub_path}[{i}]")
+        elif isinstance(sub_schema, Mapping):
+            _validate_unknown_fields(value, sub_schema, sub_path)
+
+
+# ---------------------------------------------------------------------------
 # Variable substitution
 # ---------------------------------------------------------------------------
 
@@ -239,15 +443,28 @@ def find_profile_path(profile_arg: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def load_profile(profile_arg: str, variables: dict[str, str]) -> Profile:
+def load_profile(
+    profile_arg: str,
+    variables: dict[str, str],
+    *,
+    validate: bool = True,
+) -> Profile:
     """Load a profile from *profile_arg* with variable substitution.
 
     Variables are substituted best-effort: unresolved ``${VAR}`` references
     are left in place so callers can decide what to do (e.g. skip optional
     proxy setup when ``url_rewrites`` vars are missing).
+
+    When *validate* is True (default) the parser walks the profile schema
+    and emits one ``UnknownProfileFieldWarning`` per unknown field. Pass
+    *validate=False* on subsequent re-parses of the same profile within a
+    single workflow (e.g. the launch flow's post-gateway-IP re-parse, or
+    snapshot replay during ``update``/``destroy``) to avoid duplicate
+    warnings -- validation is a launch-time concern, not an instance-
+    lifetime concern.
     """
     path = find_profile_path(profile_arg)
-    return _load_profile_from_text(path.read_text(), path, variables)
+    return _load_profile_from_text(path.read_text(), path, variables, validate=validate)
 
 
 def load_profile_from_content(
@@ -255,6 +472,7 @@ def load_profile_from_content(
     variables: dict[str, str],
     *,
     path: Path | None = None,
+    validate: bool = True,
 ) -> Profile:
     """Load a profile from raw YAML *yaml_text* with variable substitution.
 
@@ -263,13 +481,23 @@ def load_profile_from_content(
     at ``/opt/dtu/profile.yaml``).  When *path* is omitted a synthetic
     placeholder is recorded on the returned :class:`Profile` -- callers
     should not rely on it pointing to a file that exists.
+
+    See :func:`load_profile` for the meaning of *validate*. Snapshot replay
+    callers should pass ``validate=False`` since validation already ran at
+    original launch time.
     """
     effective_path = path if path is not None else Path("<in-memory>")
-    return _load_profile_from_text(yaml_text, effective_path, variables)
+    return _load_profile_from_text(
+        yaml_text, effective_path, variables, validate=validate
+    )
 
 
 def _load_profile_from_text(
-    yaml_text: str, path: Path, variables: dict[str, str]
+    yaml_text: str,
+    path: Path,
+    variables: dict[str, str],
+    *,
+    validate: bool = True,
 ) -> Profile:
     """Shared parse/validation pipeline used by both load_profile variants."""
     raw = yaml.safe_load(yaml_text)
@@ -278,6 +506,12 @@ def _load_profile_from_text(
         raise ValueError(f"Profile must be a YAML mapping, got {type(raw).__name__}")
 
     data: dict = _walk_substitute(raw, variables)  # type: ignore[assignment]
+
+    # Single-pass validation against the declared schema. Warns once per
+    # unknown field; never raises. See _PROFILE_SCHEMA above. Skipped on
+    # re-parses (validate=False) to avoid duplicate warnings.
+    if validate:
+        _validate_unknown_fields(data, _PROFILE_SCHEMA, "profile")
 
     name: str = data.get("name", path.stem)
     description: str = data.get("description", "")

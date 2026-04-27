@@ -14,6 +14,9 @@ into four buckets by intent. See [Sample profiles](#sample-profiles) below
 and [Contributing a profile](#contributing-a-profile) for how to submit your
 own.
 
+> **Unknown fields warn.** Fields not listed in this reference are dropped
+> and emit an `UnknownProfileFieldWarning`. A future release may turn these
+> into hard errors instead of warnings.
 
 ## Variables
 

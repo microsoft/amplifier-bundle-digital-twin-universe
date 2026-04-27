@@ -983,8 +983,10 @@ def launch(
         print(f"  host gateway: {host_ip}", file=sys.stderr)
 
         # Rewrite localhost -> gateway IP and reload profile.
+        # validate=False: validation already ran on the host_profile parse
+        # above; re-emitting warnings here would produce duplicates.
         rewritten_vars = _rewrite_localhost(variables, host_ip)
-        profile = load_profile(profile_arg, rewritten_vars)
+        profile = load_profile(profile_arg, rewritten_vars, validate=False)
 
         # Mock services -- resolve, build, and start Docker sidecars.
         running_services: list[RunningService] = []
@@ -1236,7 +1238,14 @@ def update(
         profile_name = (
             incus.get_config(container_id, "user.dtu.profile") or "<snapshot>"
         )
-        profile = load_profile_from_content(snapshot_yaml, rewritten_vars)
+        # validate=False: this is a re-parse during update/destroy of an
+        # already-launched DTU. Validation ran at original launch; re-running
+        # it here would produce duplicate warnings and would also fail loudly
+        # if a future bundle release tightens the schema beyond what the
+        # snapshot was authored against.
+        profile = load_profile_from_content(
+            snapshot_yaml, rewritten_vars, validate=False
+        )
     else:
         profile_name = incus.get_config(container_id, "user.dtu.profile")
         if not profile_name:
@@ -1250,7 +1259,9 @@ def update(
             "before the snapshot feature was added.",
             file=sys.stderr,
         )
-        profile = load_profile(profile_name, rewritten_vars)
+        # validate=False: same justification as the snapshot path above --
+        # this is a re-parse for an already-launched DTU.
+        profile = load_profile(profile_name, rewritten_vars, validate=False)
 
     if not profile.update:
         raise RuntimeError(
