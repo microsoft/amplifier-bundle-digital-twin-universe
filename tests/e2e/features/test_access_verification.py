@@ -17,23 +17,16 @@ Run with::
 """
 
 import json
-import socket
 
 import pytest
 
 from conftest import register_dtu_instance
-from helpers import poll_readiness, run_cli, run_cli_json
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
+from helpers import find_free_port, poll_readiness, run_cli, run_cli_json
 
 
 @pytest.fixture(scope="module")
 def nginx_port() -> int:
-    return _free_port()
+    return find_free_port()
 
 
 @pytest.fixture(scope="module")

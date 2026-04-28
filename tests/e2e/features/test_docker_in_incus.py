@@ -20,14 +20,13 @@ Run with::
 
 import http.server
 import json
-import socket
 import threading
 import urllib.request
 
 import pytest
 
 from conftest import register_dtu_instance
-from helpers import poll_readiness, run_cli, run_cli_json
+from helpers import find_free_port, poll_readiness, run_cli, run_cli_json
 
 
 # ---------------------------------------------------------------------------
@@ -35,23 +34,16 @@ from helpers import poll_readiness, run_cli, run_cli_json
 # ---------------------------------------------------------------------------
 
 
-def _free_port() -> int:
-    """Find a free port on localhost."""
-    with socket.socket() as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-
-
 @pytest.fixture(scope="module")
 def nginx_port() -> int:
     """Port for the nginx-via-Docker proxy device."""
-    return _free_port()
+    return find_free_port()
 
 
 @pytest.fixture(scope="module")
 def host_server_port() -> int:
     """Port for the host-side HTTP server used in Docker-to-host tests."""
-    return _free_port()
+    return find_free_port()
 
 
 @pytest.fixture(scope="module")

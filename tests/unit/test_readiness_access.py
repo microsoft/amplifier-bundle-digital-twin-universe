@@ -7,7 +7,6 @@ no Incus or Docker required.
 """
 
 import http.server
-import socket
 import threading
 import time
 
@@ -18,6 +17,7 @@ from amplifier_bundle_digital_twin_universe.readiness import (
     _poll_port,
     verify_access_ports,
 )
+from helpers import find_free_port
 
 
 # ---------------------------------------------------------------------------
@@ -25,16 +25,10 @@ from amplifier_bundle_digital_twin_universe.readiness import (
 # ---------------------------------------------------------------------------
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-
-
 @pytest.fixture()
 def http_server():
     """Start a throwaway HTTP server, yield its port, shut down after."""
-    port = _free_port()
+    port = find_free_port()
     handler = http.server.SimpleHTTPRequestHandler
     server = http.server.HTTPServer(("127.0.0.1", port), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -56,7 +50,7 @@ def test_poll_port_retries_until_available(http_server):
     assert result["passed"] is True
 
     # Delayed start: launch a server after a short delay.
-    delayed_port = _free_port()
+    delayed_port = find_free_port()
     delayed_server = None
 
     def _start_delayed():
@@ -77,7 +71,7 @@ def test_poll_port_retries_until_available(http_server):
             delayed_server.shutdown()
 
     # Failure path: nothing listening, should timeout.
-    dead_port = _free_port()
+    dead_port = find_free_port()
     result = _poll_port(dead_port, "/", timeout=3, interval=1)
     assert result["passed"] is False
     assert "message" in result
@@ -94,7 +88,7 @@ def test_verify_access_ports_skips_verify_false(http_server):
             verify_timeout=5,
             verify_interval=1,
         ),
-        PortMapping(host=_free_port(), container=80, path="/", verify=False),
+        PortMapping(host=find_free_port(), container=80, path="/", verify=False),
     ]
     result = verify_access_ports(ports)
     assert result["verified"] is True

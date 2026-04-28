@@ -17,7 +17,6 @@ Run with::
     uv run pytest tests/test_e2e_hostname.py --run-e2e -v -s
 """
 
-import socket
 import subprocess
 import time
 import urllib.request
@@ -25,18 +24,12 @@ import urllib.request
 import pytest
 
 from conftest import register_dtu_instance
-from helpers import poll_readiness, run_cli, run_cli_json
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
+from helpers import find_free_port, poll_readiness, run_cli, run_cli_json
 
 
 @pytest.fixture(scope="module")
 def nginx_port() -> int:
-    return _free_port()
+    return find_free_port()
 
 
 @pytest.fixture(scope="module")
@@ -101,7 +94,7 @@ def test_hostname_reachable_over_http(dtu_env_with_hostname, nginx_port):
 @pytest.mark.e2e
 def test_destroy_cleans_up_hostname(nginx_port):
     """After destroy, the hostname should no longer resolve."""
-    port = _free_port()
+    port = find_free_port()
     hostname = f"dtu-hostname-destroy-{port}"
     data, _ = run_cli_json(
         "launch",

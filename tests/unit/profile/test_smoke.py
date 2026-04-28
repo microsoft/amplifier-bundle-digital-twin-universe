@@ -25,7 +25,8 @@ from amplifier_bundle_digital_twin_universe.profile import (
 )
 
 # Locate the repo's profiles/ directory by walking up from this file.
-_PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
+# tests/unit/profile/test_smoke.py -> repo root is parents[3]
+_PROFILES_DIR = Path(__file__).resolve().parents[3] / "profiles"
 
 # Plausible defaults for any ${VAR} placeholders shipped profiles reference at
 # launch time. We don't actually launch anything here; we just want each

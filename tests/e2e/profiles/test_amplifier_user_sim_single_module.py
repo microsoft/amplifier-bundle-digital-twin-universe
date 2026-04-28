@@ -33,7 +33,7 @@ PROVIDER_GITHUB_REPO = (
     "https://github.com/microsoft/amplifier-module-provider-anthropic"
 )
 PROVIDER_MARKER = "AMPLIFIER_PROVIDER_ANTHROPIC_SINGLE_MODULE_TEST_MARKER"
-WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+WORKSPACE_ROOT = Path(__file__).resolve().parents[4]
 PROVIDER_LOCAL_REPO = WORKSPACE_ROOT / "amplifier-module-provider-anthropic"
 
 

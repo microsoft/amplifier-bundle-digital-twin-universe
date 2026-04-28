@@ -47,12 +47,16 @@ used by the end-to-end test, see [manual_verification.md](manual_verification.md
 Tests invoke `amplifier-digital-twin` as a subprocess via `uv run`, exactly as a
 user would on their machine. No in-process test runners or mocks.
 
-```bash
-# CLI surface tests (no Incus required)
-uv run pytest
+The suite is organized by tier under `tests/`. See
+[../tests/README.md](../tests/README.md) for the full layout and per-file
+prerequisites.
 
-# Lifecycle smoke tests (requires Incus running)
-uv run pytest tests/test_lifecycle.py --run-integration -v
+```bash
+# Unit tests — no external deps, run by default
+uv run pytest tests/unit/
+
+# Lifecycle smoke tests — requires Incus running
+uv run pytest tests/integration/ --run-integration -v
 ```
 
 ### E2E Tests
@@ -68,7 +72,7 @@ container. Pushes files in, pulls them back, verifies content integrity.
 - Incus running
 
 ```bash
-uv run pytest tests/test_e2e_file_ops.py --run-e2e -v -s
+uv run pytest tests/e2e/features/test_file_ops.py --run-e2e -v -s
 ```
 
 #### Exec streaming test
@@ -81,7 +85,7 @@ with the default JSON mode.
 - Incus running
 
 ```bash
-uv run pytest tests/test_e2e_exec_stream.py --run-e2e -v -s
+uv run pytest tests/e2e/features/test_exec_stream.py --run-e2e -v -s
 ```
 
 #### Fast PyPI override test
@@ -92,7 +96,7 @@ Exercises `wheel_from_git` with a tiny temporary package repo.
 - Incus running
 
 ```bash
-uv run pytest tests/test_e2e_pypi.py --run-e2e -v -s
+uv run pytest tests/e2e/features/test_pypi.py --run-e2e -v -s
 ```
 
 #### Fast single-module rewrite test
@@ -108,7 +112,7 @@ top, and verifies the rewritten provider is loaded.
 - GitHub token (`GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth login`)
 
 ```bash
-uv run pytest tests/test_e2e_amplifier_user_sim_single_module.py --run-e2e -v -s
+uv run pytest tests/e2e/profiles/test_amplifier_user_sim_single_module.py --run-e2e -v -s
 ```
 
 #### Full amplifier-user-sim end-to-end test
@@ -133,7 +137,7 @@ launches `amplifier-user-sim`, and verifies:
 - `ANTHROPIC_API_KEY`
 
 ```bash
-uv run pytest tests/test_e2e_amplifier_user_sim.py --run-e2e -v -s
+uv run pytest tests/e2e/profiles/test_amplifier_user_sim.py --run-e2e -v -s
 ```
 
 #### amplifier-chat web UI test
@@ -148,7 +152,7 @@ and confirm it remains healthy afterward.
 - `ANTHROPIC_API_KEY`
 
 ```bash
-uv run pytest tests/test_e2e_amplifier_chat.py --run-e2e -v -s
+uv run pytest tests/e2e/profiles/test_amplifier_chat.py --run-e2e -v -s
 ```
 
 #### Hostname mDNS registration test
@@ -161,18 +165,17 @@ resolution via Avahi, and confirms cleanup on destroy.
 - `avahi-daemon` running + `avahi-utils` installed
 
 ```bash
-uv run pytest tests/test_e2e_hostname.py --run-e2e -v -s
+uv run pytest tests/e2e/features/test_hostname.py --run-e2e -v -s
 ```
 
 To run all end-to-end suites:
 
 ```bash
-uv run pytest tests/test_e2e_file_ops.py \
-  tests/test_e2e_exec_stream.py \
-  tests/test_e2e_pypi.py \
-  tests/test_e2e_amplifier_user_sim_single_module.py \
-  tests/test_e2e_amplifier_user_sim.py \
-  tests/test_e2e_amplifier_chat.py \
-  tests/test_e2e_hostname.py \
-  --run-e2e -v -s
+uv run pytest tests/e2e/ --run-e2e -v -s
+```
+
+Or run just the cross-cutting feature tests (no API keys, no Gitea):
+
+```bash
+uv run pytest tests/e2e/features/ --run-e2e -v -s
 ```

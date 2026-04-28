@@ -4,6 +4,7 @@
 
 import json
 import os
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -81,6 +82,17 @@ def run_gitea_cli_json(
 # ---------------------------------------------------------------------------
 # Utility
 # ---------------------------------------------------------------------------
+
+
+def find_free_port() -> int:
+    """Return an OS-assigned ephemeral TCP port.
+
+    Each call returns a fresh port. For a single port shared across all tests
+    in a module, use the ``free_port`` fixture from ``conftest.py`` instead.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
 
 
 def resolve_github_token() -> str | None:

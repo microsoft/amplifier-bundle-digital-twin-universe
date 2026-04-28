@@ -10,6 +10,7 @@ Run with:
     uv run pytest tests/test_e2e_amplifier_user_sim.py --run-e2e -v -s
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -38,7 +39,7 @@ UPDATED_CORE_VERSION = "99.1.0"
 PROVIDER_MARKER = "AMPLIFIER_PROVIDER_ANTHROPIC_TEST_MARKER"
 UPDATED_PROVIDER_MARKER = "AMPLIFIER_PROVIDER_ANTHROPIC_UPDATED_MARKER"
 EXPECTED_RESPONSE = "HELLO_DTU_PROVIDER"
-WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+WORKSPACE_ROOT = Path(__file__).resolve().parents[4]
 AMPLIFIER_CORE_LOCAL_REPO = WORKSPACE_ROOT / "amplifier-core"
 PROVIDER_LOCAL_REPO = WORKSPACE_ROOT / "amplifier-module-provider-anthropic"
 
@@ -49,26 +50,36 @@ def _replace_once(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1))
 
 
+def _replace_first_version(path: Path, prefix: str, new_value: str) -> None:
+    """Find the first ``<prefix> = "..."`` assignment in ``path`` and rewrite its value.
+
+    ``prefix`` is either ``version`` (for TOML manifests) or ``__version__`` (for
+    Python modules). Asserts a match was found so the test fails loudly if the file
+    shape changes upstream (field renamed, removed, etc.) -- but tolerates whatever
+    the current version string happens to be, so upstream version bumps don't break
+    the test.
+    """
+    text = path.read_text()
+    pattern = re.compile(rf'{re.escape(prefix)}\s*=\s*"([^"]+)"')
+    match = pattern.search(text)
+    assert match, f'No {prefix} = "..." assignment found in {path}'
+    path.write_text(text.replace(match.group(0), f'{prefix} = "{new_value}"', 1))
+
+
 def _mutate_amplifier_core(repo_dir: Path) -> None:
-    _replace_once(
-        repo_dir / "pyproject.toml",
-        'version = "1.3.3"',
-        f'version = "{AMPLIFIER_CORE_VERSION}"',
+    _replace_first_version(
+        repo_dir / "pyproject.toml", "version", AMPLIFIER_CORE_VERSION
     )
-    _replace_once(
-        repo_dir / "bindings/python/Cargo.toml",
-        'version = "1.3.3"',
-        f'version = "{AMPLIFIER_CORE_VERSION}"',
+    _replace_first_version(
+        repo_dir / "bindings/python/Cargo.toml", "version", AMPLIFIER_CORE_VERSION
     )
-    _replace_once(
-        repo_dir / "crates/amplifier-core/Cargo.toml",
-        'version = "1.3.3"',
-        f'version = "{AMPLIFIER_CORE_VERSION}"',
+    _replace_first_version(
+        repo_dir / "crates/amplifier-core/Cargo.toml", "version", AMPLIFIER_CORE_VERSION
     )
-    _replace_once(
+    _replace_first_version(
         repo_dir / "python/amplifier_core/__init__.py",
-        '__version__ = "1.0.7"',
-        f'__version__ = "{AMPLIFIER_CORE_VERSION}"',
+        "__version__",
+        AMPLIFIER_CORE_VERSION,
     )
 
 
@@ -203,26 +214,18 @@ def test_amplifier_user_sim_uses_overridden_dependencies(dtu_env):
 
 
 def _mutate_amplifier_core_for_update(repo_dir: Path) -> None:
-    """Replace the initial test version with the updated version."""
-    _replace_once(
-        repo_dir / "pyproject.toml",
-        f'version = "{AMPLIFIER_CORE_VERSION}"',
-        f'version = "{UPDATED_CORE_VERSION}"',
+    """Replace the initial test version (AMPLIFIER_CORE_VERSION) with UPDATED_CORE_VERSION."""
+    _replace_first_version(repo_dir / "pyproject.toml", "version", UPDATED_CORE_VERSION)
+    _replace_first_version(
+        repo_dir / "bindings/python/Cargo.toml", "version", UPDATED_CORE_VERSION
     )
-    _replace_once(
-        repo_dir / "bindings/python/Cargo.toml",
-        f'version = "{AMPLIFIER_CORE_VERSION}"',
-        f'version = "{UPDATED_CORE_VERSION}"',
+    _replace_first_version(
+        repo_dir / "crates/amplifier-core/Cargo.toml", "version", UPDATED_CORE_VERSION
     )
-    _replace_once(
-        repo_dir / "crates/amplifier-core/Cargo.toml",
-        f'version = "{AMPLIFIER_CORE_VERSION}"',
-        f'version = "{UPDATED_CORE_VERSION}"',
-    )
-    _replace_once(
+    _replace_first_version(
         repo_dir / "python/amplifier_core/__init__.py",
-        f'__version__ = "{AMPLIFIER_CORE_VERSION}"',
-        f'__version__ = "{UPDATED_CORE_VERSION}"',
+        "__version__",
+        UPDATED_CORE_VERSION,
     )
 
 
