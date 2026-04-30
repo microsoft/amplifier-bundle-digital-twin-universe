@@ -1067,6 +1067,44 @@ def launch(
                     f"  forwarding :{pm.host} -> :{pm.container} ({label})",
                     file=sys.stderr,
                 )
+
+            # Nested-Incus support: if the launch is being driven from inside
+            # another Incus instance (e.g. a reality-check runner sibling), the
+            # new DTU's host-side proxy device is bound on the host's loopback —
+            # but the calling instance has its own (empty) loopback.  Without a
+            # self-proxy, `localhost:<port>` from inside the calling instance
+            # can't reach the SUT.
+            #
+            # Add a proxy device on the calling instance that listens on its own
+            # 127.0.0.1 and connects to the new DTU's container IP.  This makes
+            # `localhost:<port>` work from inside the caller, matching the
+            # bundle's documented contract.
+            caller_name = incus.running_inside_incus_instance()
+            if caller_name and container_ip:
+                for pm in profile.access.ports:
+                    try:
+                        incus.add_proxy_device(
+                            caller_name,
+                            f"sut-proxy-{pm.host}",
+                            pm.host,
+                            pm.container,
+                            connect_host=container_ip,
+                        )
+                        print(
+                            f"  nested-Incus self-proxy: {caller_name}:"
+                            f"{pm.host} -> {container_ip}:{pm.container}",
+                            file=sys.stderr,
+                        )
+                    except Exception as exc:
+                        # Best-effort: if we can't self-proxy, the caller can
+                        # still reach the SUT via its container IP.  Don't fail
+                        # the launch.
+                        print(
+                            f"WARNING: nested-Incus self-proxy failed for "
+                            f"{caller_name}:{pm.host} -> "
+                            f"{container_ip}:{pm.container} ({exc})",
+                            file=sys.stderr,
+                        )
         else:
             container_ip = None
 

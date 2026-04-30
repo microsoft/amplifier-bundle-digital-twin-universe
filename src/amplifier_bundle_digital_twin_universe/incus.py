@@ -10,7 +10,10 @@ Docker.
 from __future__ import annotations
 
 import json
+import os
 import re
+import socket
+import stat
 import subprocess
 import tempfile
 
@@ -441,14 +444,34 @@ def add_proxy_device(
     device_name: str,
     host_port: int,
     container_port: int,
+    *,
+    connect_host: str = "127.0.0.1",
 ) -> None:
     """Add a TCP proxy device forwarding host_port -> container_port.
 
-    Uses ``incus config device add`` to create a proxy that listens on
+    Default behaviour (``connect_host="127.0.0.1"``): the proxy listens on
     ``0.0.0.0:<host_port>`` on the host and forwards to
     ``127.0.0.1:<container_port>`` inside the container.  The device is
     automatically removed when the container is deleted.
+
+    Pass a non-loopback *connect_host* (e.g. a sibling container's global
+    IPv4) to configure a **self-proxy** on the calling instance.  In this
+    mode the proxy listens on the instance's own loopback
+    (``127.0.0.1:<host_port>``) and connects to
+    ``<connect_host>:<container_port>``.  ``bind=container`` is added so
+    the listen address lives in the container's network namespace, making
+    ``localhost:<host_port>`` work from inside the caller — the same
+    contract callers rely on from the host.
     """
+    if connect_host == "127.0.0.1":
+        # Default host-side proxy: expose a service running inside the container.
+        listen_addr = f"tcp:0.0.0.0:{host_port}"
+        extra_args: list[str] = []
+    else:
+        # Self-proxy: forward caller's loopback to a sibling container's IP.
+        listen_addr = f"tcp:127.0.0.1:{host_port}"
+        extra_args = ["bind=container"]
+
     result = subprocess.run(
         [
             "incus",
@@ -458,8 +481,9 @@ def add_proxy_device(
             name,
             device_name,
             "proxy",
-            f"listen=tcp:0.0.0.0:{host_port}",
-            f"connect=tcp:127.0.0.1:{container_port}",
+            f"listen={listen_addr}",
+            f"connect=tcp:{connect_host}:{container_port}",
+            *extra_args,
         ],
         capture_output=True,
         text=True,
@@ -470,3 +494,36 @@ def add_proxy_device(
             f"Failed to add proxy device {device_name} on {name}: "
             f"{result.stderr.strip()}"
         )
+
+
+def running_inside_incus_instance() -> str | None:
+    """Return the calling instance's name if running inside an Incus container
+    with parent-daemon access; otherwise return ``None``.
+
+    **Detection signal**: ``INCUS_SOCKET`` environment variable pointing at an
+    existing unix socket.  This is the explicit configuration the parent host
+    sets to expose its daemon inside the instance.  Plain instance hosting
+    (without parent-daemon socket access) returns ``None`` — there is nothing
+    useful we can do without the parent daemon socket anyway.
+
+    **Instance name**: ``socket.gethostname()`` — Incus sets each instance's
+    hostname to its instance name by default.  Callers that override the
+    hostname are outside the scope of this detection.
+
+    Returns the instance name as a non-empty string, or ``None`` if:
+
+    * ``INCUS_SOCKET`` is unset, or
+    * ``INCUS_SOCKET`` points to a path that does not exist, or
+    * the path exists but is not a unix socket.
+    """
+    incus_socket = os.environ.get("INCUS_SOCKET")
+    if not incus_socket:
+        return None
+    try:
+        st = os.stat(incus_socket)
+    except OSError:
+        return None
+    if not stat.S_ISSOCK(st.st_mode):
+        return None
+    name = socket.gethostname()
+    return name or None
