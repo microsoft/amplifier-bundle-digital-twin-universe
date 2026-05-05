@@ -300,6 +300,12 @@ passthrough:
 access:
   hostname: <descriptive-name>  # .local mDNS hostname (requires avahi-utils)
   ports:
+    # Pick `host` ports from a high range (recommended: 30000-39999) to avoid
+    # colliding with other services that may already be bound on the parent
+    # Incus host (e.g. the resolve stack uses 50723 / 58403). Dynamic
+    # `incus device add proxy-...` does NOT collision-check today, so a
+    # collision will silently fail to expose the port. `container` is the
+    # in-DTU listener port; pick whatever the app naturally uses.
     - host: <port>
       container: <port>
       label: <human label>
@@ -530,14 +536,34 @@ Report the results clearly. Your return message MUST include:
 
 **For web apps:**
 
-The `access` array always has a `url` field using `localhost`. When a hostname
-was registered, each entry also has an `mdns_url` field with the `.local` version.
-Report the localhost URL first, then the mDNS URL in parentheses if present:
+A SUT exposed by a DTU has THREE valid URL forms, depending on **where the
+caller is running**. The launch result already contains everything you need:
+
+- `dtu_result.access[*].url` -- always `http://localhost:<host_port>/<path>`. Correct from the **user's machine**, where the outer Incus proxy device binds to the parent host's `0.0.0.0:<host_port>`.
+- `dtu_result.access[*].mdns_url` -- `http://<hostname>.local:<port>/<path>` when Avahi is available. Same trust boundary as the localhost URL, friendlier name.
+- `dtu_result.container_ip` -- the sibling DTU's IP on the Incus bridge (typically `10.x.x.x`). Combined with the in-DTU port (the `container:` value from `profile.access.ports[*]`, NOT the `host:` value), this is the **runner-internal URL** form: `http://<container_ip>:<container_port>/<path>`.
+
+Surface ALL the relevant forms with explicit context labels so the caller can
+pick the right one. Order: user-facing first, runner-internal second, in-SUT
+third (only when relevant).
 
 ```
 DTU environment is running.
 
-Access your app: http://localhost:<port>/<path>  (mDNS: http://<hostname>.local:<port>/<path>)
+Access from your machine: http://localhost:<host_port>/<path>
+  (mDNS: http://<hostname>.local:<host_port>/<path>)
+  -- works because the outer Incus proxy binds on the parent host's 0.0.0.0:<host_port>.
+
+Access from inside the runner / acceptance test executor: http://<container_ip>:<container_port>/<path>
+  -- use this URL form for any HTTP probe issued from inside a runner Docker
+  container (e.g. browser-tester / generic-tester validators). `localhost`
+  from inside the runner reaches the runner's own empty loopback, NOT the SUT.
+  <container_ip> = dtu_result.container_ip; <container_port> = the in-DTU
+  listener (the `container:` value, not `host:`).
+
+Inside the SUT itself: localhost:<container_port>/<path>
+  -- only meaningful for commands run via `amplifier-digital-twin exec <id> -- ...`,
+  which execute inside the SUT's network namespace.
 
 To get a shell inside the environment:
   amplifier-digital-twin exec <id>
@@ -551,7 +577,21 @@ To tear it down:
 Profile saved to: .amplifier/digital-twin-universe/profiles/<profile-name>.yaml
 ```
 
-If `mdns_url` is absent (Avahi unavailable), just show the `url` -- no parenthetical.
+Substitute the actual `<host_port>`, `<container_port>`, `<container_ip>`,
+`<hostname>`, and `<path>` values from `dtu_result` -- do not leave the
+angle-bracket placeholders in the output. If `mdns_url` is absent (Avahi
+unavailable), drop the parenthetical mDNS line. The "Inside the SUT itself"
+line can be omitted when the caller has no `exec` use case (it is most useful
+for shell-style assertions and in-SUT debugging).
+
+**URL form for testers running inside a runner:** when this DTU will be
+consumed by a tester that runs HTTP probes from inside the runner Docker
+container (e.g. the reality-check pipeline's `browser-tester`), the
+**runner-internal URL form is mandatory**. The `access[*].url` localhost form
+will silently fail to connect because `localhost` inside the runner is the
+runner's own empty loopback. Always emit the runner-internal form alongside
+the user-facing one so the tester can pick the right one without having to
+recompute it from `container_ip` + `container_port`.
 
 **For CLI tools:**
 ```
