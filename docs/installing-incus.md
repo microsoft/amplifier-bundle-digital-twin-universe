@@ -43,23 +43,112 @@ sudo incus admin init --minimal
 
 ## macOS
 
-The Incus server is Linux-only. On macOS, use Colima to run it inside a lightweight VM.
+The Incus server is Linux-only. On macOS, use Colima to run it inside a
+lightweight VM. The host gets the Incus client; the Incus daemon runs inside
+the Colima VM and is reached via a forwarded unix socket.
 
-Install both the Incus client and Colima:
+### 1. Install the host CLIs
+
 ```bash
 brew install incus colima
 ```
 
-Start Colima with Incus as the runtime:
+### 2. Start Colima with Incus as the runtime
+
+A 4 CPU / 4 GB / 30 GB sizing is recommended for typical DTU profiles —
+smaller sizings can OOM during package installs:
 ```bash
-colima start --runtime incus
+colima start --runtime incus --cpu 4 --memory 4 --disk 30
 ```
 
-After `colima start`, the `incus` CLI automatically connects to the Colima VM. No additional configuration needed.
+### 3. Install Incus inside the Colima VM
+
+> **Why this is needed:** As of Colima 0.10.x, the `--runtime incus` flag
+> registers the runtime in Colima's profile state but does not install the
+> incus binary inside the Lima/Ubuntu VM. Without this step, Colima's
+> auto-provisioning step `incus admin init --preseed` fails silently with
+> `sudo: incus: command not found` and the VM has no incus daemon. Future
+> Colima versions may install incus inside the VM automatically; this step
+> is a no-op in that case.
+
+Install Incus inside the VM:
+```bash
+colima ssh -- sudo apt-get update
+colima ssh -- sudo apt-get install -y incus
+```
+
+Initialize Incus with defaults:
+```bash
+colima ssh -- sudo incus admin init --minimal
+```
+
+### 4. Allocate uid/gid for root inside the VM
+
+> **Why this is needed:** `incus admin init --minimal` does not populate
+> `/etc/subuid` and `/etc/subgid` for `root`, so unprivileged container
+> creation fails with `Invalid config: No uid/gid allocation configured.
+> In this mode, only privileged containers are supported`.
+
+Open a shell inside the VM:
+```bash
+colima ssh
+```
+
+Then, at the VM prompt:
+```bash
+echo "root:1000000:1000000000" | sudo tee -a /etc/subuid
+echo "root:1000000:1000000000" | sudo tee -a /etc/subgid
+sudo systemctl restart incus
+exit
+```
+
+### 5. Apply the Docker iptables coexistence fix inside the Colima VM
+
+> **Why this is needed:** The Colima VM has Docker pre-installed and
+> running, even when `--runtime incus` is selected. Docker sets the kernel's
+> `iptables` `FORWARD` policy to `DROP`, which silently blackholes outbound
+> traffic from Incus containers (the same issue documented for Linux/WSL2
+> below). The Colima VM itself can reach the internet, but Incus containers
+> cannot.
+
+Open a shell in the VM:
+```bash
+colima ssh
+```
+
+Then, at the VM prompt:
+```bash
+echo '{"ip-forward-no-drop": true}' | sudo tee /etc/docker/daemon.json
+sudo systemctl restart docker
+exit
+```
+
+### 6. Configure the host Incus client to use the Colima socket
+
+Colima forwards the in-VM Incus unix socket to
+`~/.colima/<profile>/incus.sock` on the host (`<profile>` is `default`
+unless you used `colima start --profile`). The host's static `local`
+remote uses `unix://` (no path), which resolves to
+`/var/lib/incus/unix.socket` — a path that does not exist on macOS — so it
+must be supplemented with a non-static remote pointing at the forwarded
+socket:
+
+```bash
+incus remote add colima "unix://$HOME/.colima/default/incus.sock"
+incus remote switch colima
+```
+
+After this, `incus version` on the host should report both client and
+server versions.
 
 ### Prerequisites: Docker (optional)
 
-Docker is only needed for profiles that use Gitea repos or mock service sidecars. If the profile you're launching requires Docker, see [installing-docker.md](installing-docker.md).
+Docker Desktop on the macOS host is **not** required for Incus itself —
+Colima provisions its own Docker engine inside the VM (used internally,
+which is why step 5 is needed). Docker on the host is only needed for
+profiles that use the Gitea bundle or mock service sidecars on the host
+side. If the profile you're launching requires it, see
+[installing-docker.md](installing-docker.md).
 
 ## Docker coexistence (Ubuntu / WSL2)
 
@@ -114,8 +203,12 @@ If `incus version` shows `Server version: unreachable`, the shell doesn't have t
 
 | Symptom | Fix |
 |---------|-----|
-| `Server version: unreachable` | `newgrp incus-admin` or close and reopen your terminal |
-| Container launches but no network | Docker coexistence issue -- apply the fix above |
-| `incus: command not found` | Package not installed -- run the install steps for the platform |
+| `Server version: unreachable` (Linux) | `newgrp incus-admin` or close and reopen your terminal |
+| Container launches but no network | Docker coexistence issue — apply the fix for your platform above |
+| `incus: command not found` | Package not installed — run the install steps for the platform |
 | `Error: not found` on `incus launch` | `sudo incus admin init --minimal` was not run |
+| macOS: `sudo: incus: command not found` during `colima start` | Incus is not installed inside the Colima VM. Run macOS step 3. |
+| macOS: `Invalid config: No uid/gid allocation configured` on `incus launch` | `/etc/subuid` and `/etc/subgid` lack a `root:` entry. Run macOS step 4. |
+| macOS: containers launch but `apt-get update` fails inside | Docker FORWARD-DROP inside the Colima VM. Run macOS step 5. |
+| macOS: `This client hasn't been configured to use a remote server yet` | Host's `local` remote points at `/var/lib/incus/unix.socket` which doesn't exist on macOS. Run macOS step 6. |
 | macOS: `incus` works but no server | `colima start --runtime incus` not running |
