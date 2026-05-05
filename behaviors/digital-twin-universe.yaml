@@ -1,6 +1,6 @@
 bundle:
   name: digital-twin-universe-behavior
-  version: 0.1.0
+  version: 0.2.0
   description: Adds digital twin environment capability via the amplifier-digital-twin CLI
 
 includes:

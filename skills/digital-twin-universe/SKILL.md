@@ -292,6 +292,7 @@ The JSON output from subshell commands gets expanded as multiple arguments. Extr
 | Problem | Fix |
 |---------|-----|
 | `launch` hangs on provisioning | Usually a networking issue. Fix Docker/Incus networking first, then retry. Check container state with `incus list`. |
+| Provisioning fails on `apt-get update` with `archive.ubuntu.com` errors (`Failed to fetch`, `Mirror sync in progress?`, or exit 124 timeout with `Ign:` lines for `archive.ubuntu.com`) | `archive.ubuntu.com` is occasionally down. This is an upstream outage, not a `url_rewrite`/mitmproxy bug — don't investigate the proxy. You try trying switching the profile's `base.image` to a Debian image (e.g. `images:debian/12`) and retry. Debian's mirrors are independent of the Ubuntu archive. Note that there might be other effects of switching the base image. |
 | `Server version: unreachable` from `incus version` | Your shell doesn't have the `incus-admin` group. Run `newgrp incus-admin` or log out and back in. |
 | Provisioning fails with `command not found` | The provisioned tool isn't installed yet at that stage. Check profile provisioning order. |
 | Amplifier inside container extremely slow | May hang on `Loading foundation`. Check container networking and compute allocation. |

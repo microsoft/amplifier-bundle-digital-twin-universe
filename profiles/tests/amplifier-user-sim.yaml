@@ -26,6 +26,7 @@ url_rewrites:
   # reasoning. Set to true only when you specifically want to observe uv's
   # native behavior (the fast path bypasses url_rewrites).
   allow_uv_github_fast_path: false
+  default_match_mode: boundary
   rules:
     - match: github.com/microsoft/amplifier-module-provider-anthropic
       target: ${GITEA_URL}/admin/amplifier-module-provider-anthropic

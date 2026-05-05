@@ -78,33 +78,78 @@ Optional. When present and fully resolved, launch configures a mitmproxy-based
 HTTPS proxy inside the environment and exports `HTTP_PROXY` / `HTTPS_PROXY`
 for later provisioning commands and interactive use.
 
-Rules are matched at exact repo granularity:
-
-- `github.com/microsoft/amplifier` matches that repo only
-- it does not match `github.com/microsoft/amplifier-core`
-
-Current shape:
+Shape:
 
 ```yaml
 url_rewrites:
-  auth:
+  auth:                                      # optional
     username: admin
     token_var: GITEA_TOKEN
-  allow_uv_github_fast_path: false  # default; see note below
+  allow_uv_github_fast_path: false           # default false
+  default_match_mode: boundary | prefix      # default prefix
   rules:
-    - match: github.com/microsoft/amplifier-module-provider-anthropic
-      target: ${GITEA_URL}/admin/amplifier-module-provider-anthropic
+    - match: <host>/<path-prefix>
+      target: <url>
+      match_mode: boundary | prefix          # optional; inherits default
 ```
 
-Current behavior:
+### Match modes
 
-- `auth` is optional
-- if present, Basic auth credentials are injected into rewritten requests
-- all non-matching traffic passes through unchanged
-- this is what `amplifier-user-sim` uses to redirect
-  `github.com/microsoft/amplifier-module-provider-anthropic` to Gitea
+- `boundary` — **recommended for repository rewrites.** Prefix must
+  terminate at a URL path boundary (`/`, `.`, `?`, `#`, or end-of-path),
+  scoping the rule to a single repository. `github.com/microsoft/amplifier`
+  matches that repo and its git protocol paths but does **not** match
+  `microsoft/amplifier-foundation`, `microsoft/amplifier-module-foo`, etc.
+- `prefix` — pure path-prefix match (`str.startswith`). Matches every URL
+  whose path starts with the prefix, including sibling repositories whose
+  names share the prefix. Useful only when you genuinely want to capture a
+  whole subtree (e.g. a path prefix that is not a repo name).
 
-Use `url_rewrites` when the dependency is resolved by URL.
+The default is `prefix` for backward compatibility. For new profiles,
+set `default_match_mode: boundary` on the block — it is almost always
+what you want when rewriting repository URLs. Per-rule `match_mode`
+overrides the block default. Invalid values raise `ValueError` at load.
+
+### Match order
+
+For each request, rules are evaluated in this order:
+
+1. Host equality — rule's host must equal the request's host exactly.
+2. Longest path-prefix first — within matching hosts, rules are sorted by
+   descending prefix length. Equal-length prefixes preserve declared order.
+3. Path match per rule's `match_mode` — `prefix` accepts any
+   `startswith`; `boundary` additionally requires a boundary char after the
+   prefix.
+4. First match wins — no further rules are evaluated.
+
+The host-side validator (`profile.match_url`) and the in-container proxy
+share one matcher (`engine._generate_addon_script` injects the source of
+`profile._path_matches` via `inspect.getsource`); they cannot drift.
+
+### Diagnostic warnings
+
+The loader emits these warnings to nudge you toward `boundary` when a rule
+looks risky. Both are `UserWarning` subclasses; the loader does not raise.
+
+- `SuspiciousPrefixRuleWarning` — a single `prefix`-mode rule with the
+  `/org/repo` shape (two non-empty segments, no trailing boundary char)
+  that will silently capture sibling repos. Set `match_mode: boundary` on
+  the rule, or `default_match_mode: boundary` on the block.
+- `OverlappingRewriteRulesWarning` — two `prefix`-mode rules on the same
+  host where one prefix is a prefix of the other. Set `match_mode: boundary`
+  on either rule to disambiguate.
+
+### `auth` and credential safety
+
+When `auth` is set, the proxy attaches `Authorization: Basic <token>` to
+every matched request. A `prefix`-mode rule that over-matches a sibling
+URL sends your credential to whatever target the over-match selected. Use
+`match_mode: boundary` (or `default_match_mode: boundary`) on any block
+with `auth`. Pinned in `tests/unit/profile/test_url_rewrite_auth_safety.py`.
+
+Non-matching traffic passes through unchanged. Use `url_rewrites` when the
+dependency is resolved by URL (e.g. `amplifier-user-sim` redirects
+`github.com/microsoft/amplifier-module-provider-anthropic` to Gitea).
 
 ### `allow_uv_github_fast_path`
 

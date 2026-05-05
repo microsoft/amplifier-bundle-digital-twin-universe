@@ -72,6 +72,7 @@ url_rewrites:
     username: admin
     token_var: GITEA_TOKEN
   allow_uv_github_fast_path: false
+  default_match_mode: boundary
   rules:
     - match: github.com/microsoft/amplifier-bundle-digital-twin-universe
       target: ${GITEA_URL}/admin/amplifier-bundle-digital-twin-universe
@@ -219,7 +220,11 @@ provision:
     - |
       set -euo pipefail
       mkdir -p /root/profiles
-      GITEA_URL_VAL="${GITEA_URL}"
+      # Use ":-" default so an unset GITEA_URL doesn't trip set -u and abort
+      # provisioning. Engine-side substitution is conditional: when no --var
+      # is passed the literal "${GITEA_URL}" survives into bash, so this
+      # default is what makes the no-Gitea path actually work.
+      GITEA_URL_VAL="${GITEA_URL:-}"
       if [ -n "$GITEA_URL_VAL" ]; then
         URL="${GITEA_URL_VAL}/admin/amplifier-bundle-digital-twin-universe/raw/branch/main/profiles/amplifier/amplifier-chat.yaml"
       else

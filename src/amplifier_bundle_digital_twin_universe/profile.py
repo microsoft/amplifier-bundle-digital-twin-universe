@@ -10,12 +10,14 @@ provisioning commands.
 from __future__ import annotations
 
 import difflib
+import itertools
 import re
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -26,6 +28,31 @@ class UnknownProfileFieldWarning(UserWarning):
     Currently warn-only -- the unknown field is silently dropped and parsing
     continues. A future release will turn these into hard errors. Users should
     address every warning before upgrading.
+    """
+
+
+class OverlappingRewriteRulesWarning(UserWarning):
+    """Two ``url_rewrites`` rules whose path prefixes overlap and neither
+    uses ``match_mode: boundary``.
+
+    The shorter rule will capture requests that look like they should hit the
+    longer one (or vice versa, depending on declared order vs longest-match).
+    Set ``match_mode: boundary`` on one of the colliding rules to scope it to
+    a single repository boundary and silence this warning.
+    """
+
+
+class SuspiciousPrefixRuleWarning(UserWarning):
+    """A single ``match_mode: prefix`` rule whose path looks like an
+    ``org/repo`` segment will silently capture sibling repositories that
+    share the prefix (e.g. ``microsoft/amplifier`` over-matches
+    ``microsoft/amplifier-foundation``).
+
+    Unlike ``OverlappingRewriteRulesWarning`` (which needs two colliding
+    rules to fire), this warning fires on a single rule whose shape is
+    statistically a footgun. Set ``match_mode: boundary`` on the rule, or
+    ``default_match_mode: boundary`` on the block, to scope the rule to a
+    single repository.
     """
 
 
@@ -40,10 +67,19 @@ class UrlRewriteAuth:
     token_var: str
 
 
+_VALID_MATCH_MODES = ("prefix", "boundary")
+# Boundary characters that terminate a URL path component. ``match_mode:
+# boundary`` only matches when the next character after the prefix is one of
+# these, or the prefix sits at end of path. Covers ``/foo/bar``, ``/foo.git``,
+# ``/foo?...``, ``/foo#...`` and bare ``/foo``.
+_PATH_BOUNDARY_CHARS = "/.?#"
+
+
 @dataclass
 class UrlRewriteRule:
     match: str
     target: str
+    match_mode: str = "prefix"
 
 
 @dataclass
@@ -51,6 +87,178 @@ class UrlRewrites:
     auth: UrlRewriteAuth | None
     rules: list[UrlRewriteRule]
     allow_uv_github_fast_path: bool = False
+    # Default ``match_mode`` for rules that don't specify one. Inherited per
+    # rule at load time. Use ``boundary`` on new profiles to opt the whole
+    # block into safe-by-default matching.
+    default_match_mode: str = "prefix"
+
+
+def _split_match(match_string: str) -> tuple[str, str]:
+    """Split a rule's ``match`` string into ``(host, path_prefix)``.
+
+    The host portion is compared with ``==``. The path portion is the prefix
+    used for matching with ``str.startswith``. A match string with no slash
+    (just a host) yields a path prefix of ``"/"``, matching any path on the
+    host.
+    """
+    parts = match_string.split("/", 1)
+    host = parts[0]
+    path_prefix = "/" + parts[1] if len(parts) > 1 else "/"
+    return host, path_prefix
+
+
+def _path_matches(mode: str, path_prefix: str, path: str) -> bool:
+    """Decide whether *path* matches a rule with *mode* and *path_prefix*.
+
+    Pure-primitive contract: this is the single source of truth for the
+    per-request match decision. ``engine._generate_addon_script`` injects
+    this function's source via ``inspect.getsource`` into the in-container
+    mitmproxy addon, so host-side and in-container matching cannot drift.
+
+    ``prefix`` (default): pure ``str.startswith`` -- preserves legacy
+    behaviour. ``boundary``: prefix must terminate at a URL path boundary
+    (one of ``/``, ``.``, ``?``, ``#`` or end-of-path), which scopes the
+    rule to a single repository and prevents collisions like
+    ``/microsoft/amplifier`` capturing ``/microsoft/amplifier-foundation``.
+    """
+    if not path.startswith(path_prefix):
+        return False
+    if mode == "prefix":
+        return True
+    rest = path[len(path_prefix) :]
+    return not rest or rest[0] in _PATH_BOUNDARY_CHARS
+
+
+def match_url(
+    rules: list[UrlRewriteRule], host: str, path: str
+) -> UrlRewriteRule | None:
+    """Return the first rule that matches *host* and *path*, or None.
+
+    Rules are evaluated longest-prefix-first (stable sort: equal-length
+    prefixes preserve declared order). Within each candidate rule, matching
+    obeys the rule's ``match_mode``:
+
+    * ``prefix`` -- ``host == match_host`` and ``path.startswith(prefix)``.
+    * ``boundary`` -- as above, plus the next char after the prefix must be
+      a URL path boundary (``/.?#``) or end-of-path.
+
+    The input ``rules`` list is not mutated. The in-container mitmproxy addon
+    (``engine._ADDON_TEMPLATE``) executes this same matcher source via
+    ``inspect.getsource`` injection, so host-side and in-container callers
+    cannot drift.
+    """
+    sorted_rules = sorted(rules, key=lambda r: -len(_split_match(r.match)[1]))
+    for rule in sorted_rules:
+        rule_host, rule_prefix = _split_match(rule.match)
+        if host == rule_host and _path_matches(rule.match_mode, rule_prefix, path):
+            return rule
+    return None
+
+
+def _looks_like_repo_match(path_prefix: str) -> bool:
+    """Heuristic: does ``path_prefix`` look like an ``/org/repo`` shape that
+    will silently capture sibling repos under ``match_mode: prefix``?
+
+    True iff the prefix has exactly two non-empty path segments and the
+    trailing character is not a path boundary char (``/.?#``). Examples:
+
+    * ``/microsoft/foo`` -- True (the headline footgun)
+    * ``/microsoft/foo.git`` -- True (still over-matches ``/foo.gitX``)
+    * ``/microsoft/foo/`` -- False (already terminated by ``/``)
+    * ``/microsoft`` -- False (one segment; matches a whole org legitimately)
+    * ``/microsoft/foo/bar`` -- False (three segments; subpath rule)
+    """
+    p = path_prefix.lstrip("/")
+    if not p:
+        return False
+    if p[-1] in _PATH_BOUNDARY_CHARS:
+        return False
+    segments = p.split("/")
+    return len(segments) == 2 and all(segments)
+
+
+def _check_suspicious_prefix_rules(rules: list[UrlRewriteRule]) -> None:
+    """Warn when a single rule with effective ``match_mode: prefix`` has the
+    ``/org/repo`` shape that statistically over-matches sibling repositories.
+
+    Unlike ``_check_rule_overlaps`` (which needs two colliding rules), this
+    fires per individual rule. The user is told the specific rule and given
+    the fix. Suppressed implicitly when the rule's effective mode is
+    ``boundary`` (whether per-rule or via ``default_match_mode: boundary``).
+    """
+    for rule in rules:
+        if rule.match_mode != "prefix":
+            continue
+        _, path_prefix = _split_match(rule.match)
+        if not _looks_like_repo_match(path_prefix):
+            continue
+        warnings.warn(
+            f"url_rewrites: rule {rule.match!r} has the /org/repo shape "
+            f"and uses match_mode: prefix -- it will silently capture "
+            f"sibling repositories whose names share the prefix (e.g. "
+            f"/{path_prefix.lstrip('/')}-extra). Set 'match_mode: boundary' "
+            f"on this rule, or 'default_match_mode: boundary' on the "
+            f"url_rewrites block, to scope it to a single repository.",
+            SuspiciousPrefixRuleWarning,
+            stacklevel=3,
+        )
+
+
+_VALID_TARGET_SCHEMES = ("http", "https")
+
+
+def _validate_rule_targets(rules: list[UrlRewriteRule]) -> None:
+    """Reject ``url_rewrites`` rule targets that cannot be proxied.
+
+    Targets may legitimately contain unresolved ``${VAR}`` references --
+    when no value was provided for ``VAR``, the engine's
+    ``_should_setup_proxy`` gate skips the proxy entirely (the documented
+    "launch without Gitea" path). Those rules pass through this check.
+
+    Once a target is fully substituted, however, it must be a well-formed
+    http(s) URL with a host. Empty-string substitution (``--var GITEA_URL=``
+    turning ``${GITEA_URL}/admin/foo`` into ``/admin/foo``) and bare hosts
+    without a scheme (``gitea.local/admin/foo``) are silently broken at
+    runtime: mitmproxy gets ``host=None`` from the addon and 502s every
+    matching clone. We catch that here, at load time, with an actionable
+    error pointing to the offending rule.
+    """
+    for rule in rules:
+        if has_unresolved_vars(rule.target):
+            continue  # _should_setup_proxy will skip the proxy at launch.
+        parsed = urlsplit(rule.target)
+        if parsed.scheme not in _VALID_TARGET_SCHEMES or not parsed.hostname:
+            raise ValueError(
+                f"url_rewrites rule for {rule.match!r} has invalid target "
+                f"{rule.target!r}: expected an http(s):// URL with a host. "
+                f"This commonly happens when a ${{VAR}} reference substitutes "
+                f"to an empty string -- pass a real value for the variable "
+                f"or omit the --var flag entirely so the rule remains "
+                f"unresolved (the proxy will then be skipped)."
+            )
+
+
+def _check_rule_overlaps(rules: list[UrlRewriteRule]) -> None:
+    """Warn when two ``prefix``-mode rules' path prefixes overlap on the
+    same host. ``match_mode: boundary`` on either rule disambiguates and
+    suppresses the warning."""
+    parsed = [(r, *_split_match(r.match)) for r in rules]
+    for (a, a_host, a_prefix), (b, b_host, b_prefix) in itertools.combinations(
+        parsed, 2
+    ):
+        if a_host != b_host:
+            continue
+        if a.match_mode == "boundary" or b.match_mode == "boundary":
+            continue
+        if a_prefix.startswith(b_prefix) or b_prefix.startswith(a_prefix):
+            warnings.warn(
+                f"url_rewrites: rules {a.match!r} and {b.match!r} have "
+                f"overlapping path prefixes -- the shorter rule may capture "
+                f"requests intended for the longer one. Set 'match_mode: "
+                f"boundary' on one of them to disambiguate.",
+                OverlappingRewriteRulesWarning,
+                stacklevel=3,
+            )
 
 
 @dataclass
@@ -215,9 +423,11 @@ _PROFILE_SCHEMA: dict[str, Any] = {
             {
                 "match": None,
                 "target": None,
+                "match_mode": None,
             }
         ],
         "allow_uv_github_fast_path": None,
+        "default_match_mode": None,
     },
     "passthrough": {
         "allow_external": None,
@@ -539,14 +749,38 @@ def _load_profile_from_text(
                 username=auth_data.get("username", ""),
                 token_var=auth_data.get("token_var", ""),
             )
-        rules = [
-            UrlRewriteRule(match=r["match"], target=r["target"])
-            for r in uw.get("rules", [])
-        ]
+        # Block-level default for any rule that doesn't set ``match_mode``
+        # explicitly. Defaults to ``prefix`` for backwards compatibility.
+        default_mode = uw.get("default_match_mode", "prefix")
+        if default_mode not in _VALID_MATCH_MODES:
+            raise ValueError(
+                f"Invalid default_match_mode {default_mode!r}: "
+                f"must be one of {_VALID_MATCH_MODES}"
+            )
+        rules = []
+        for r in uw.get("rules", []):
+            # Per-rule match_mode overrides the block-level default.
+            mode = r.get("match_mode", default_mode)
+            if mode not in _VALID_MATCH_MODES:
+                raise ValueError(
+                    f"Invalid match_mode {mode!r} on rule {r.get('match')!r}: "
+                    f"must be one of {_VALID_MATCH_MODES}"
+                )
+            rules.append(
+                UrlRewriteRule(match=r["match"], target=r["target"], match_mode=mode)
+            )
+        # Hard error: a substituted target with no scheme/host cannot be
+        # proxied. Runs unconditionally (independent of `validate`) because
+        # this is a correctness check, not a re-parse warning.
+        _validate_rule_targets(rules)
+        if validate:
+            _check_rule_overlaps(rules)
+            _check_suspicious_prefix_rules(rules)
         url_rewrites = UrlRewrites(
             auth=auth,
             rules=rules,
             allow_uv_github_fast_path=bool(uw.get("allow_uv_github_fast_path", False)),
+            default_match_mode=default_mode,
         )
 
     # passthrough (optional)
