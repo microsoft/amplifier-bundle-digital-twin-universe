@@ -309,9 +309,9 @@ def test_unknown_field_in_url_rewrite_rule_warns_with_index():
         url_rewrites:
           rules:
             - match: a
-              target: b
+              target: http://b
             - match: c
-              target: d
+              target: http://d
               priority: 1
     """
     with pytest.warns(
@@ -689,7 +689,7 @@ _MULTI_TYPO_PROFILE = """
     url_rewrites:
       rules:
         - match: a
-          target: b
+          target: http://b
           priority: 1                            # url_rewrites.rules[0]
 """
 

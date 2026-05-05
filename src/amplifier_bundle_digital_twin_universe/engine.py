@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import glob
+import inspect
 import os
 import re
 import shlex
@@ -31,6 +32,8 @@ import yaml as _yaml
 
 from amplifier_bundle_digital_twin_universe.profile import (
     Profile,
+    _PATH_BOUNDARY_CHARS,
+    _path_matches,
     has_unresolved_vars,
     load_profile,
     load_profile_from_content,
@@ -168,6 +171,12 @@ PYPI_OVERRIDES = {pypi_overrides!r}
 PYPI_SERVER_PORT = {pypi_server_port}
 SERVICE_DOMAINS = {service_domains!r}
 
+# ---- canonical matcher source, injected from profile.py via inspect.getsource
+# The host-side validator and the in-container proxy share this source so they
+# cannot drift. See profile.match_url for the host-side caller.
+{matcher_source}
+# ---- end canonical matcher source
+
 def _log(msg):
     print(f"[rewrite] {{msg}}", file=sys.stderr, flush=True)
 
@@ -188,17 +197,25 @@ class RewriteAddon:
             flow.request.port = target["port"]
             return
 
-        # URL rewrite rules (GitHub -> Gitea etc.)
+        # URL rewrite rules (GitHub -> Gitea etc.).
+        # RULES is emitted longest-prefix-first so first-match-wins picks
+        # the most specific rule. The match decision is delegated to
+        # ``_path_matches`` (injected above), which is the single source of
+        # truth shared with the host-side ``profile.match_url``.
         for rule in RULES:
-            if host == rule["match_host"] and path.startswith(rule["match_path_prefix"]):
-                target = urlparse(rule["target_url"])
-                flow.request.scheme = target.scheme
-                flow.request.host = target.hostname
-                flow.request.port = target.port or (443 if target.scheme == "https" else 80)
-                flow.request.path = target.path + path[len(rule["match_path_prefix"]):]
-                if rule.get("auth_header"):
-                    flow.request.headers["Authorization"] = rule["auth_header"]
-                return
+            if host != rule["match_host"]:
+                continue
+            prefix = rule["match_path_prefix"]
+            if not _path_matches(rule.get("match_mode", "prefix"), prefix, path):
+                continue
+            target = urlparse(rule["target_url"])
+            flow.request.scheme = target.scheme
+            flow.request.host = target.hostname
+            flow.request.port = target.port or (443 if target.scheme == "https" else 80)
+            flow.request.path = target.path + path[len(prefix):]
+            if rule.get("auth_header"):
+                flow.request.headers["Authorization"] = rule["auth_header"]
+            return
 
         # PyPI interception -- redirect Simple API index requests and
         # wheel downloads for overridden packages to the local pypiserver.
@@ -293,7 +310,14 @@ def _generate_addon_script(
             cred = base64.b64encode(f"{username}:{token}".encode()).decode()
             auth_header = f"Basic {cred}"
 
-        for rule in profile.url_rewrites.rules:
+        # Emit longest-prefix-first so the in-container matcher's
+        # first-match-wins iteration produces the same answer as the
+        # host-side ``match_url`` (which does the same stable sort).
+        sorted_rules = sorted(
+            profile.url_rewrites.rules,
+            key=lambda r: -len(r.match.split("/", 1)[1]) if "/" in r.match else 0,
+        )
+        for rule in sorted_rules:
             parts = rule.match.split("/", 1)
             match_host = parts[0]
             match_path_prefix = "/" + parts[1] if len(parts) > 1 else "/"
@@ -303,6 +327,7 @@ def _generate_addon_script(
                     "match_path_prefix": match_path_prefix,
                     "target_url": rule.target,
                     "auth_header": auth_header,
+                    "match_mode": rule.match_mode,
                 }
             )
 
@@ -321,11 +346,21 @@ def _generate_addon_script(
         for pkg in profile.pypi_overrides.packages:
             pypi_overrides.append(pkg.name.lower().replace("-", "-"))
 
+    # Inject the canonical matcher source so the in-container addon executes
+    # the exact same Python as the host-side ``profile.match_url``. This is
+    # the single source of truth for per-request match decisions; no logic
+    # is duplicated in the template body.
+    matcher_source = (
+        f"_PATH_BOUNDARY_CHARS = {_PATH_BOUNDARY_CHARS!r}\n\n"
+        + inspect.getsource(_path_matches)
+    )
+
     return _ADDON_TEMPLATE.format(
         rules=rules,
         pypi_overrides=pypi_overrides,
         pypi_server_port=_PYPI_SERVER_PORT,
         service_domains=service_domains,
+        matcher_source=matcher_source,
     )
 
 

@@ -156,18 +156,28 @@ def mirror_repo_to_gitea(
     github_repo: str,
     github_token: str,
     *,
-    timeout: int = 180,
+    timeout: int = 300,
+    include_metadata: bool = False,
 ) -> None:
-    """Mirror a GitHub repo into Gitea via the amplifier-gitea CLI."""
-    run_gitea_cli_json(
+    """Mirror a GitHub repo into Gitea via the amplifier-gitea CLI.
+
+    Skips issues, pull requests, and labels by default because every test in
+    this suite only needs git refs -- pulling metadata for active repos like
+    ``microsoft/amplifier`` or ``microsoft/amplifier-foundation`` exceeds
+    the gitea CLI's 120s httpx timeout. Pass ``include_metadata=True`` only
+    when a test specifically needs the issue/PR data in the mirror.
+    """
+    args = [
         "mirror-from-github",
         gitea_id,
         "--github-repo",
         github_repo,
         "--github-token",
         github_token,
-        timeout=timeout,
-    )
+    ]
+    if not include_metadata:
+        args.extend(["--no-issues", "--no-prs", "--no-labels"])
+    run_gitea_cli_json(*args, timeout=timeout)
 
 
 def clone_local_repo(src_repo: Path, dest_dir: Path) -> Path:

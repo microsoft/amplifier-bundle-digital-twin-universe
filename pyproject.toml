@@ -1,6 +1,6 @@
 [project]
 name = "amplifier-bundle-digital-twin-universe"
-version = "0.1.4"
+version = "0.2.0"
 description = "On-demand ephemeral Digital Twin Universe environments from declarative profiles"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -45,4 +45,12 @@ pythonpath = ["tests"]
 markers = [
     "integration: tests that require Incus (deselected by default, use --run-integration)",
     "e2e: full end-to-end tests (requires Docker, Incus, API keys, use --run-e2e)",
+]
+# Silence url_rewrites diagnostic warnings during default test runs. Tests
+# that specifically exercise these warnings use ``warnings.catch_warnings``
+# + ``simplefilter("always")``, which override these filters and continue
+# to capture them. See test_url_rewrite_matching.py Sections E, G, H.
+filterwarnings = [
+    "ignore::amplifier_bundle_digital_twin_universe.profile.OverlappingRewriteRulesWarning",
+    "ignore::amplifier_bundle_digital_twin_universe.profile.SuspiciousPrefixRuleWarning",
 ]
