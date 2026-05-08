@@ -8,7 +8,10 @@
 - Present commands to the user one at a time, each in its own code block.
   Terminal copy-paste breaks with multiline blocks.
 - Always specify actions like "close and reopen your terminal" when group
-  changes or service restarts require it. -->
+  changes or service restarts require it.
+- If the user will use Docker inside Incus (you can ask), route the user to the Zabbly install
+  path below on bare-metal Ubuntu. Distro Incus 6.0.0 has an AppArmor bug
+  that breaks docker-in-incus and is silently pinned by Ubuntu ESM. -->
 
 Incus is the container runtime used by the Digital Twin Universe.
 
@@ -171,11 +174,39 @@ wsl --shutdown
 
 Then reopen your WSL terminal.
 
+### Bare-metal Ubuntu running Docker inside Incus: install from Zabbly
+
+Distro Incus on Ubuntu 24.04 is 6.0.0, which has an AppArmor bug that blocks
+`dockerd` from starting inside an Incus container. The fix shipped in 6.19
+(and 6.0.6 LTS) but has not been backported to the Ubuntu archive. WSL2 hosts
+are not affected.
+
+Add the Zabbly repo:
+```bash
+curl -fsSL https://pkgs.zabbly.com/key.asc | sudo gpg --dearmor -o /etc/apt/keyrings/zabbly.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/zabbly.gpg] \
+  https://pkgs.zabbly.com/incus/stable $(lsb_release -cs) main" \
+  | sudo tee /etc/apt/sources.list.d/zabbly-incus.list
+sudo apt update
+```
+
+If Ubuntu ESM is enabled it pins distro Incus 6.0.0 at apt priority 510, so
+`apt install incus` silently keeps the broken version. Pin the Zabbly version
+explicitly across all three packages:
+```bash
+ZABBLY_VERSION=$(apt-cache madison incus | grep zabbly | head -1 | awk '{print $3}')
+sudo apt install incus=$ZABBLY_VERSION incus-base=$ZABBLY_VERSION incus-client=$ZABBLY_VERSION
+sudo systemctl restart incus
+```
+
+See [docker-in-incus.md](docker-in-incus.md) for the full docker-in-incus
+guide including networking paths and other gotchas.
+
 ## Verifying the installation
 
 Run ALL of these verification commands yourself. All four must succeed.
-None require sudo. Report results to the user. If any fail, diagnose
-using the troubleshooting table before asking the user for help.
+None require sudo. Report results to the user. If any fail, see
+[troubleshooting.md](troubleshooting.md) before asking the user for help.
 
 Check that the Incus client and server are reachable:
 ```bash
@@ -197,18 +228,7 @@ Clean up:
 incus delete test-incus --force
 ```
 
-If `incus version` shows `Server version: unreachable`, the shell doesn't have the `incus-admin` group yet. The user needs to run `newgrp incus-admin` or close and reopen their terminal.
-
 ## Troubleshooting
 
-| Symptom | Fix |
-|---------|-----|
-| `Server version: unreachable` (Linux) | `newgrp incus-admin` or close and reopen your terminal |
-| Container launches but no network | Docker coexistence issue — apply the fix for your platform above |
-| `incus: command not found` | Package not installed — run the install steps for the platform |
-| `Error: not found` on `incus launch` | `sudo incus admin init --minimal` was not run |
-| macOS: `sudo: incus: command not found` during `colima start` | Incus is not installed inside the Colima VM. Run macOS step 3. |
-| macOS: `Invalid config: No uid/gid allocation configured` on `incus launch` | `/etc/subuid` and `/etc/subgid` lack a `root:` entry. Run macOS step 4. |
-| macOS: containers launch but `apt-get update` fails inside | Docker FORWARD-DROP inside the Colima VM. Run macOS step 5. |
-| macOS: `This client hasn't been configured to use a remote server yet` | Host's `local` remote points at `/var/lib/incus/unix.socket` which doesn't exist on macOS. Run macOS step 6. |
-| macOS: `incus` works but no server | `colima start --runtime incus` not running |
+For Incus install errors, permission issues, networking problems,
+macOS/Colima-specific failures, and more see [troubleshooting.md](troubleshooting.md).
