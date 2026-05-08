@@ -60,10 +60,10 @@ def launch(
         sys.exit(1)
 
 
-def _parse_stream_timeout(
+def _parse_exec_timeout(
     ctx: click.Context, param: click.Parameter, value: str
 ) -> int | None:
-    """Parse --timeout for exec --stream.
+    """Parse --timeout for exec (JSON and --stream modes).
 
     Accepts an integer number of seconds, or ``none`` / ``null`` (case-insensitive)
     to disable the timeout entirely.
@@ -94,11 +94,11 @@ def _parse_stream_timeout(
     "--timeout",
     "timeout",
     default="600",
-    callback=_parse_stream_timeout,
+    callback=_parse_exec_timeout,
     help=(
-        "Timeout in seconds for --stream mode (default: 600). "
+        "Timeout in seconds for --stream and JSON modes (default: 600). "
         "Pass 'none' to disable the timeout entirely. "
-        "Ignored in interactive and JSON modes."
+        "Ignored in interactive mode."
     ),
 )
 @click.option(
@@ -134,6 +134,8 @@ def exec_(
         amplifier-digital-twin exec --visual-id "" dtu-a1b2c3d4
         amplifier-digital-twin exec --visual-id testing-pr-42 dtu-a1b2c3d4
         amplifier-digital-twin exec dtu-a1b2c3d4 -- amplifier --version
+        amplifier-digital-twin exec --timeout 1800 dtu-a1b2c3d4 -- long-task
+        amplifier-digital-twin exec --timeout none dtu-a1b2c3d4 -- long-task
         amplifier-digital-twin exec --stream dtu-a1b2c3d4 -- amplifier run "prompt"
         amplifier-digital-twin exec --stream --timeout 1800 dtu-a1b2c3d4 -- long-task
         amplifier-digital-twin exec --stream --timeout none dtu-a1b2c3d4 -- long-task
@@ -150,7 +152,7 @@ def exec_(
                 sys.exit(1)
         else:
             try:
-                result = engine.exec_command(id, list(command))
+                result = engine.exec_command(id, list(command), timeout=timeout)
                 click.echo(json.dumps(result))
             except Exception as exc:
                 click.echo(f"Error: {exc}", err=True)

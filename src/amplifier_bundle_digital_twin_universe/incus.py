@@ -182,7 +182,7 @@ def exec_command(
     name: str,
     command: list[str],
     env: dict[str, str] | None = None,
-    timeout: int = 600,
+    timeout: int | None = 600,
 ) -> tuple[int, str, str]:
     """Run *command* inside *name*.  Returns ``(exit_code, stdout, stderr)``.
 

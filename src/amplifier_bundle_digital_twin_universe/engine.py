@@ -1384,14 +1384,24 @@ def update(
     return result
 
 
-def exec_command(container_id: str, command: list[str]) -> dict:
-    """Run *command* inside the environment.  Returns JSON status dict."""
+def exec_command(
+    container_id: str,
+    command: list[str],
+    *,
+    timeout: int | None = 600,
+) -> dict:
+    """Run *command* inside the environment.  Returns JSON status dict.
+
+    ``timeout`` is the maximum number of seconds to wait for the command
+    to complete.  Pass ``None`` to disable the timeout entirely.  Default
+    is 600 seconds.
+    """
     if not incus.container_exists(container_id):
         raise RuntimeError(f"Environment not found: {container_id}")
 
     cmd_str = shlex.join(command)
     exit_code, stdout, stderr = incus.exec_command(
-        container_id, ["bash", "-lc", cmd_str]
+        container_id, ["bash", "-lc", cmd_str], timeout=timeout
     )
     return {
         "id": container_id,
