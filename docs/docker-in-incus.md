@@ -64,104 +64,10 @@ incus profile set default security.nesting=true
 
 ## Platform-Specific Issues
 
-### WSL2: Docker Blocks Incus Networking
-
-Docker sets the kernel's iptables FORWARD chain to DROP, which can block Incus
-bridge traffic (`incusbr0`).
-
-**Symptoms:** `apt-get update` fails inside containers, containers cannot
-reach external hosts.
-
-**Fix (one-time):**
-
-```bash
-echo '{"ip-forward-no-drop": true}' | sudo tee /etc/docker/daemon.json
-```
-
-Then from PowerShell: `wsl --shutdown`, and restart WSL.
-
-> **Note:** On our WSL2 test environment (Incus 6.0.0, Docker CE 28.x),
-> Docker nesting worked without this fix. However, this is the documented
-> fix for the iptables conflict when it does occur.
-
-
-### Bare-Metal Ubuntu: iptables Rules May Be Needed
-
-On bare-metal Ubuntu (not WSL2), the `daemon.json` fix alone may not be
-sufficient. If networking issues persist after applying the fixes above,
-try adding explicit iptables rules for the Incus bridge:
-
-```bash
-# Tell Docker not to drop forwarded traffic
-sudo python3 -c "
-import json, pathlib
-p = pathlib.Path('/etc/docker/daemon.json')
-d = json.loads(p.read_text()) if p.exists() else {}
-d['ip-forward-no-drop'] = True
-p.write_text(json.dumps(d, indent=2))
-"
-sudo systemctl restart docker
-
-# Allow Incus bridge traffic through Docker's DOCKER-USER chain
-sudo iptables -I DOCKER-USER -i incusbr0 -j ACCEPT
-sudo iptables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-```
-
-To persist the iptables rules across reboots, add them to `/etc/rc.local` or
-use `iptables-persistent`.
-
-
-### AppArmor Blocks Docker-in-Docker (Incus < 6.0.6 LTS / < 6.19)
-
-On some bare-metal Ubuntu configurations, AppArmor blocks Docker from
-starting inside an Incus container. This is a known issue affecting Incus
-versions older than 6.0.6 LTS (or 6.19 on the feature track) with
-runc >= 1.2.8.
-
-**Symptoms:** `dockerd` fails to start inside the container with AppArmor
-permission denied errors related to `/proc/sys/` or `/sys/`.
-
-**Fix:** Upgrade Incus. The fix shipped in Incus 6.19 and was backported to
-6.0.6 LTS. If you are on Ubuntu 24.04 and `apt install incus` gives you
-6.0.0, you need to install from the Zabbly repository:
-
-```bash
-# Add the Zabbly repo
-curl -fsSL https://pkgs.zabbly.com/key.asc | sudo gpg --dearmor -o /etc/apt/keyrings/zabbly.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/zabbly.gpg] \
-  https://pkgs.zabbly.com/incus/stable $(lsb_release -cs) main" \
-  | sudo tee /etc/apt/sources.list.d/zabbly-incus.list
-sudo apt update
-```
-
-**Important:** If Ubuntu ESM is enabled, it pins Incus 6.0.0 at apt priority
-510. You must specify the Zabbly version explicitly with all three packages:
-
-```bash
-ZABBLY_VERSION=$(apt-cache madison incus | grep zabbly | head -1 | awk '{print $3}')
-sudo apt install incus=$ZABBLY_VERSION incus-base=$ZABBLY_VERSION incus-client=$ZABBLY_VERSION
-sudo systemctl restart incus
-```
-
-> **Note:** WSL2 environments do not appear to be affected by this AppArmor
-> issue. Docker-in-Incus worked on WSL2 with Incus 6.0.0 without needing
-> the Zabbly upgrade.
-
-
-### Incus Group Permissions
-
-After installing Incus, your user needs the `incus-admin` group.
-
-**Symptom:** `incus version` shows `Server version: unreachable`.
-
-```bash
-sudo usermod -aG incus-admin $USER
-```
-
-**Gotcha:** Group membership requires a full session restart. `newgrp
-incus-admin` only affects the current shell — any process spawned before the
-group change (tmux sessions, Amplifier sessions, background services) will
-still lack the group. Log out and back in, or reboot.
+For symptoms and fixes covering Docker + Incus networking conflicts (WSL2,
+macOS/Colima, bare-metal iptables), AppArmor + Zabbly upgrade for
+docker-in-incus, and Incus group permissions, and more see
+[troubleshooting.md](troubleshooting.md)
 
 
 ## Networking Paths

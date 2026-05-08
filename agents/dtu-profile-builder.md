@@ -625,7 +625,13 @@ If the launch fails, the app doesn't work correctly, OR launch stderr emits any
 `UnknownProfileFieldWarning` lines, you MUST debug and fix the profile. Do not
 hand back a broken or noisy environment. The cycle is:
 
-1. Read error output, warnings, or logs
+1. Read error output, warnings, or logs. For known symptoms (Incus/Docker
+   networking, AppArmor + Docker-in-Incus, `apt-get` outages, `--var` parsing,
+   permissions, etc.), consult the consolidated troubleshooting reference
+   before guessing:
+   ```
+   read_file("@digital-twin-universe:docs/troubleshooting.md")
+   ```
 2. Fix the profile YAML (apply "did you mean" suggestions verbatim when present;
    delete unused fields you added speculatively)
 3. Destroy the failed environment (by its specific `id` -- do NOT destroy other instances)

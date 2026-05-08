@@ -225,12 +225,10 @@ or use `created_at` to narrow down which instance is yours.
 If you are unsure, leave it and tell the user to clean up when they are ready.
 
 
-## Troubleshooting
-
-### Docker Inside a Digital Twin Universe Environment
+### Docker Inside a Digital Twin Universe Environment (pre-flight)
 
 If a profile needs to run Docker inside the Incus container (e.g. spawning
-worker containers, running Docker Compose stacks), it should declare
+worker containers, running Docker Compose stacks), it must declare
 `security.nesting: "true"` in `base.config`:
 
 ```yaml
@@ -240,7 +238,8 @@ base:
     security.nesting: "true"
 ```
 
-At anypoint it is even a possibility that Docker in Incus might be required, you MUST read the full guide on platform-specific issues and networking paths:
+At any point that Docker in Incus might be required, you MUST read the full
+guide on platform-specific issues and networking paths:
 
 ```
 read_file("@digital-twin-universe:docs/docker-in-incus.md")
@@ -249,51 +248,11 @@ read_file("@digital-twin-universe:docs/docker-in-incus.md")
 The `docker-in-incus` profile can be used to verify the setup works before
 attempting more complex profiles.
 
-### Networking: Docker + Incus conflict (WSL2)
 
-The most common blocker. Docker sets the kernel's iptables FORWARD chain to DROP, which blocks Incus bridge traffic.
+## Troubleshooting
 
-**Symptoms:** `apt-get update` fails inside containers, containers can't reach any external hosts.
+For any error, unexpected behavior, or environment issue, read the troubleshooting reference:
 
-**Fix (permanent, one-time):**
-```bash
-echo '{"ip-forward-no-drop": true}' | sudo tee /etc/docker/daemon.json
-wsl --shutdown   # from PowerShell, then restart WSL
 ```
-
-If networking still fails after the Docker fix, make sure all services and WSL was properly restarted.
-
-### Incus permissions
-
-**Symptom:** `You don't have the needed permissions to talk to the incus daemon`
-
-```bash
-sudo usermod -aG incus-admin $USER
-newgrp incus-admin
+read_file("@digital-twin-universe:docs/troubleshooting.md")
 ```
-
-Note: `newgrp` doesn't propagate to existing subprocesses. If running from within an Amplifier session, you may need to restart the terminal entirely.
-
-### CLI argument parsing with `--var`
-
-**Symptom:** `Got unexpected extra arguments` when passing `--var` with subshell expansion.
-
-The JSON output from subshell commands gets expanded as multiple arguments. Extract just the value:
-```bash
-# Wrong:
---var GITEA_TOKEN=$(amplifier-gitea token <id>)
-
-# Right:
---var GITEA_TOKEN=$(amplifier-gitea token <id> | jq -r .token)
-```
-
-### General reference
-
-| Problem | Fix |
-|---------|-----|
-| `launch` hangs on provisioning | Usually a networking issue. Fix Docker/Incus networking first, then retry. Check container state with `incus list`. |
-| Provisioning fails on `apt-get update` with `archive.ubuntu.com` errors (`Failed to fetch`, `Mirror sync in progress?`, or exit 124 timeout with `Ign:` lines for `archive.ubuntu.com`) | `archive.ubuntu.com` is occasionally down. This is an upstream outage, not a `url_rewrite`/mitmproxy bug — don't investigate the proxy. You try trying switching the profile's `base.image` to a Debian image (e.g. `images:debian/12`) and retry. Debian's mirrors are independent of the Ubuntu archive. Note that there might be other effects of switching the base image. |
-| `Server version: unreachable` from `incus version` | Your shell doesn't have the `incus-admin` group. Run `newgrp incus-admin` or log out and back in. |
-| Provisioning fails with `command not found` | The provisioned tool isn't installed yet at that stage. Check profile provisioning order. |
-| Amplifier inside container extremely slow | May hang on `Loading foundation`. Check container networking and compute allocation. |
-| `Environment not found` for a previously created env | The Incus container was stopped or removed externally. Create a fresh environment. |

@@ -90,13 +90,9 @@ colima start
 docker run hello-world
 ```
 
-This should pull a test image and print a confirmation message. If it fails with a permission error, the `newgrp docker` step was missed or you need to close and reopen your terminal.
+This should pull a test image and print a confirmation message.
 
 ## Troubleshooting
 
-| Symptom | Fix |
-|---------|-----|
-| `docker: command not found` | Not installed -- run the install steps above |
-| `permission denied` on `docker run` | Run `sudo usermod -aG docker $USER`, then close and reopen your terminal |
-| `Cannot connect to the Docker daemon` | Docker service not running -- `sudo systemctl start docker` |
-| macOS: Docker commands fail | Start Docker Desktop or run `colima start` |
+For Docker install errors, permission issues, or daemon connection failures,
+and more see [troubleshooting.md](troubleshooting.md).
