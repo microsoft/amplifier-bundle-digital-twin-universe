@@ -15,8 +15,6 @@ description: >
 
 base:
   image: ubuntu:24.04
-  config:
-    security.nesting: "true"
 
 access:
   ports:

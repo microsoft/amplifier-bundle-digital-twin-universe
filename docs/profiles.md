@@ -58,16 +58,20 @@ Required.
 ```yaml
 base:
   image: ubuntu:24.04
-  config:                              # optional
-    security.nesting: "true"
+  config:                              # optional, merged on top of defaults
+    limits.cpu: "4"
 ```
 
 `base.image` (required) selects the container image.
 
 `base.config` (optional) passes Incus container config flags at creation time.
 Each key-value pair becomes an `incus launch --config key=value` argument. Use
-this for Incus-level settings like `security.nesting` (required for running
-Docker inside the environment), `limits.cpu`, `limits.memory`, etc.
+this for Incus-level settings like `limits.cpu`, `limits.memory`, etc.
+
+`security.nesting: "true"` is applied by default to every DTU launch (required
+for running Docker and other container runtimes inside Incus). Profiles can
+override it by setting it explicitly in `base.config`, including setting it to
+`"false"` to opt out.
 
 See [docs/docker-in-incus.md](docker-in-incus.md) for the Docker nesting use
 case.
