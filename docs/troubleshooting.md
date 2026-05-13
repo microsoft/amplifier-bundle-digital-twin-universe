@@ -148,10 +148,11 @@ Persist across reboots via `iptables-persistent` or `/etc/rc.local`.
 
 ## Docker inside Incus (nesting)
 
-> **If a profile runs Docker inside Incus** (look for `security.nesting: "true"`
-> in `base.config`, or any provisioning that installs Docker), read
-> [docker-in-incus.md](docker-in-incus.md) in full. It covers networking paths,
-> AppArmor, and `security.nesting` requirements end-to-end.
+> **If a profile runs Docker inside Incus** (any provisioning that installs
+> Docker), read [docker-in-incus.md](docker-in-incus.md) in full. It covers
+> networking paths, AppArmor, and `security.nesting` requirements end-to-end.
+> `security.nesting=true` is applied by default to every DTU launch; profiles
+> only need to mention it when opting out.
 
 ### `dockerd` fails to start inside the Incus container with AppArmor errors
 
@@ -169,15 +170,12 @@ packages to the Zabbly version explicitly.
 
 ### `dockerd` cannot create namespaces / cgroups
 
-Profile is missing `security.nesting`:
-```yaml
-base:
-  image: ubuntu:24.04
-  config:
-    security.nesting: "true"
-```
+`security.nesting=true` is applied by default to every DTU launch, so this
+should not normally trip. It only happens if a profile explicitly opts out by
+setting `security.nesting: "false"` in `base.config`. Remove that override
+to fall back to the default, or set the setting globally on the host's Incus
+profile (applies to all Incus containers):
 
-Or set on the host's default Incus profile (applies globally):
 ```bash
 incus profile set default security.nesting=true
 ```

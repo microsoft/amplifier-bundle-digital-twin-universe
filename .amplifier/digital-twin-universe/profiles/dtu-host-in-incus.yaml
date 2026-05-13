@@ -44,8 +44,6 @@ description: >
 
 base:
   image: ubuntu:24.04
-  config:
-    security.nesting: "true"
 
 # Forward the inner amplifier-chat DTU's 8410 up to the host.
 # The inner DTU binds 8410 to the outer DTU's localhost via Incus proxy,

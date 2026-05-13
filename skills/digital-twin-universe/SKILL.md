@@ -227,16 +227,11 @@ If you are unsure, leave it and tell the user to clean up when they are ready.
 
 ### Docker Inside a Digital Twin Universe Environment (pre-flight)
 
-If a profile needs to run Docker inside the Incus container (e.g. spawning
-worker containers, running Docker Compose stacks), it must declare
-`security.nesting: "true"` in `base.config`:
-
-```yaml
-base:
-  image: ubuntu:24.04
-  config:
-    security.nesting: "true"
-```
+DTU launches enable `security.nesting=true` by default, so profiles that run
+Docker inside the Incus container (e.g. spawning worker containers, running
+Docker Compose stacks) do not need to set it explicitly. A profile can opt out
+by setting `security.nesting: "false"` in `base.config` if isolation matters
+more than Docker support.
 
 At any point that Docker in Incus might be required, you MUST read the full
 guide on platform-specific issues and networking paths:

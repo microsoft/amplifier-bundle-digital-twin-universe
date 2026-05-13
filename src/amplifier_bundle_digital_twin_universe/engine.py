@@ -47,6 +47,16 @@ _PROFILE_SNAPSHOT_PATH = "/opt/dtu/profile.yaml"
 # Port used by the local pypiserver inside the container.
 _PYPI_SERVER_PORT = 8081
 
+# Default Incus container config applied to every DTU launch. Profiles can
+# override any key (including setting it to "false") via ``base.config``.
+#
+# ``security.nesting=true`` is required for running Docker (and other container
+# runtimes) inside Incus. DTU environments routinely need it for mock service
+# sidecars, dockerized apps, and nested test fixtures, so it is on by default.
+DEFAULT_BASE_CONFIG: dict[str, str] = {
+    "security.nesting": "true",
+}
+
 
 # ---------------------------------------------------------------------------
 # Image helpers
@@ -989,9 +999,16 @@ def launch(
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     print(f"Creating container {container_name} ({image})...", file=sys.stderr)
-    incus.create_container(
-        container_name, image, config=host_profile.base.config or None
-    )
+    # Default-on with override: always inject security.nesting=true unless the
+    # profile explicitly sets it (including setting it to "false"). Nesting is
+    # required for running Docker (and other container runtimes) inside Incus,
+    # and DTU environments routinely need it for mock service sidecars,
+    # dockerized apps, and nested test fixtures.
+    effective_config = {
+        **DEFAULT_BASE_CONFIG,
+        **(host_profile.base.config or {}),
+    }
+    incus.create_container(container_name, image, config=effective_config)
 
     try:
         # Store metadata so `status` and `list` can discover this instance.

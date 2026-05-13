@@ -15,9 +15,10 @@ amplifier-digital-twin launch docker-in-incus --var PORT=8080
 curl http://localhost:8080   # => nginx welcome page
 ```
 
-The `docker-in-incus` profile sets `security.nesting: "true"` via `base.config`,
-so no host-level Incus profile change is required. If that works, you're done.
-If not, read on.
+`security.nesting=true` is applied by default to every DTU launch (the engine
+injects it into `base.config` unless the profile sets it explicitly), so no
+host-level Incus profile change is required. If that works, you're done. If
+not, read on.
 
 
 ## Reference Profile
@@ -40,26 +41,6 @@ Incus containers are unprivileged by default — they cannot create
 sub-namespaces, which is exactly what Docker needs to do. The
 `security.nesting=true` setting relaxes this, allowing `dockerd` inside the
 container to create its own cgroups and network namespaces.
-
-Profiles can set this via `base.config`:
-
-```yaml
-base:
-  image: ubuntu:24.04
-  config:
-    security.nesting: "true"
-```
-
-This passes `--config security.nesting=true` to `incus launch`, so no
-host-level Incus profile change is needed. The `docker-in-incus` reference
-profile already includes this.
-
-Alternatively, you can set it on the host's default Incus profile (applies to
-all future containers, including those without `base.config`):
-
-```bash
-incus profile set default security.nesting=true
-```
 
 
 ## Platform-Specific Issues
