@@ -90,6 +90,40 @@ def test_build_visual_id_rcfile_rejects_invalid() -> None:
         engine.build_visual_id_rcfile('has"quote')
 
 
+def test_build_visual_id_rcfile_sources_profile_d() -> None:
+    """Visual-id rcfile must source /etc/profile.d/*.sh so interactive shells
+    inherit PATH and passthrough env vars written by DTU provisioning.
+
+    Regression test for the bug where `bash --rcfile <X> -i` sources
+    /etc/bash.bashrc and ~/.bashrc but never /etc/profile.d/dtu-env.sh, leaving
+    `amplifier`, `uv`, and forwarded API keys missing from interactive shells
+    launched via `exec --visual-id`.
+    """
+    content = engine.build_visual_id_rcfile("foo")
+    assert "/etc/profile.d" in content, (
+        "visual-id rcfile must source /etc/profile.d/*.sh so amplifier, uv, "
+        "and passthrough env vars are available in --visual-id shells. "
+        f"Got:\n{content}"
+    )
+
+
+def test_build_visual_id_rcfile_sources_profile_d_before_ps1() -> None:
+    """/etc/profile.d/*.sh must be sourced before PS1 is set so that any
+    PS1 customizations there don't override our (dtu:<id>) prefix."""
+    content = engine.build_visual_id_rcfile("foo")
+    lines = content.splitlines()
+    profile_d_idx = next(
+        (i for i, line in enumerate(lines) if "/etc/profile.d" in line),
+        -1,
+    )
+    ps1_idx = next(i for i, line in enumerate(lines) if line.startswith("PS1="))
+    assert profile_d_idx != -1, "expected /etc/profile.d sourcing in rcfile"
+    assert ps1_idx > profile_d_idx, (
+        "PS1 must be set after /etc/profile.d/*.sh is sourced so the dtu prompt "
+        "prefix isn't clobbered by env scripts"
+    )
+
+
 # ---------------------------------------------------------------------------
 # CLI flag parsing and forwarding
 # ---------------------------------------------------------------------------
