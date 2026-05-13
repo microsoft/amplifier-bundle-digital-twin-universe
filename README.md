@@ -17,6 +17,10 @@ so consumers can clone, install, run, and experience it like a real user.
 It answers "What reality will be like if this was actually deployed?" 
 in a way that an everyday person can understand and interact without deep technical knowledge or special setup.
 
+Example Uses:
+
+- "I want to try out amplifier-chat as a real user would, with everything provisioned for me, without touching my local setup."
+- "I want to develop multiple Amplifier components in parallel without them modifying my system installation."
 
 ![Architecture](docs/amplifier-dtu-architecture.svg)
 
