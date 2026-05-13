@@ -1470,10 +1470,25 @@ def sanitize_visual_id(value: str) -> str:
 
 
 def build_visual_id_rcfile(visual_id: str) -> str:
-    """Return the bash rcfile content that injects a blue (dtu:<id>) prompt prefix."""
+    """Return the bash rcfile content that injects a blue (dtu:<id>) prompt prefix.
+
+    Sources /etc/profile.d/*.sh first so DTU-provisioned PATH and passthrough
+    env vars (written to /etc/profile.d/dtu-env.sh) are available in the
+    interactive shell. `bash --rcfile <X> -i` is an interactive non-login shell
+    and does not source profile.d on its own; without this step `amplifier`,
+    `uv`, and forwarded API keys would be missing from --visual-id sessions.
+    """
     visual_id = sanitize_visual_id(visual_id)
     return (
         "# amplifier-digital-twin visual id prompt injection\n"
+        # Source /etc/profile.d/*.sh so DTU-provisioned PATH and env vars are
+        # picked up in this interactive non-login shell.
+        "if [ -d /etc/profile.d ]; then\n"
+        '  for _dtu_f in /etc/profile.d/*.sh; do\n'
+        '    [ -r "$_dtu_f" ] && . "$_dtu_f"\n'
+        "  done\n"
+        "  unset _dtu_f\n"
+        "fi\n"
         "[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc\n"
         "[ -f ~/.bashrc ] && . ~/.bashrc\n"
         # Re-apply after sourcing so the container's default bashrc doesn't
