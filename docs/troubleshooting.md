@@ -145,6 +145,38 @@ sudo iptables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLIS
 
 Persist across reboots via `iptables-persistent` or `/etc/rc.local`.
 
+### macOS: Gitea (or other host-Docker service) unreachable from Incus container
+
+**Symptom:** `amplifier-digital-twin launch` hangs or fails with errors like:
+
+```
+fatal: unable to access 'http://<ip>:10110/.../': Could not connect to server
+```
+
+when the container tries to clone from a Gitea instance running in Docker.
+
+**Cause:** On macOS, Incus runs inside a Colima (or similar) VM and Docker Desktop runs inside its own hypervisor VM. The two VMs have isolated network bridges and cannot reach each other directly. None of the obvious addresses route correctly:
+
+| Address | Why it fails |
+|---|---|
+| `localhost` / `127.0.0.1` | Resolves to the container itself |
+| Your LAN IP (e.g. `10.0.0.42`) | Works briefly, breaks whenever you change WiFi networks |
+| `192.168.100.1` (Incus VM gateway) | Docker Desktop is not on that network |
+
+**Fix:** Use Docker Desktop's internal VM bridge IP `192.168.64.1` — it is stable across WiFi changes and reachable from inside the Incus container:
+
+```bash
+amplifier-digital-twin launch <profile> --var GITEA_URL=http://192.168.64.1:<port>
+```
+
+Verify reachability first from inside a test container:
+
+```bash
+incus exec <container> -- curl -sf http://192.168.64.1:10110/
+```
+
+**Note:** The `dtu-profile-builder` agent probes connectivity from a test container and discovers the correct IP automatically. This issue only surfaces when launching `amplifier-digital-twin` manually with a hardcoded `GITEA_URL`, or when the agent skips its probe step.
+
 
 ## Docker inside Incus (nesting)
 

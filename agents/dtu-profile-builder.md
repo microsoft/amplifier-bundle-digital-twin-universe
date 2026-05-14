@@ -230,6 +230,23 @@ git push gitea HEAD:main
 git remote remove gitea
 ```
 
+**Determine correct GITEA_URL accessible from within the DTU.** If the automatic `localhost` → host-gateway rewrite doesn't reach Gitea (e.g. when Incus and Docker run in separate VMs), probe from inside a temporary container to find a working host IP:
+
+```bash
+incus launch images:ubuntu/24.04 probe-tmp --quiet
+for ip in <candidate-host-ips>; do
+  incus exec probe-tmp -- curl -sf --connect-timeout 2 "http://$ip:<port>/" \
+    && echo "$ip works" && break
+done
+incus delete probe-tmp --force
+```
+
+Then pass the working IP explicitly:
+
+```bash
+amplifier-digital-twin launch <profile> --var GITEA_URL=http://<host-ip>:<port>
+```
+
 Note the Gitea URL and token -- you'll pass these as `--var` when launching the DTU.
 
 **IMPORTANT:** When configuring the profile's install commands to reference this Gitea
@@ -237,6 +254,8 @@ repo, you cannot use `localhost` from inside the container. Use the host gateway
 The DTU engine handles `localhost` → host gateway rewriting for `--var` values
 automatically, so use the literal `${GITEA_URL}` variable in your profile and pass
 the localhost URL via `--var`.
+
+If you run into issues, check `docs/troubleshooting.md`.
 
 **Capture truth SHAs (required if `url_rewrites` covers git hosts):**
 
