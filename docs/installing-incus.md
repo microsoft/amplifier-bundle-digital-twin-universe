@@ -153,6 +153,7 @@ profiles that use the Gitea bundle or mock service sidecars on the host
 side. If the profile you're launching requires it, see
 [installing-docker.md](installing-docker.md).
 
+
 ## Docker coexistence (Ubuntu / WSL2)
 
 If Docker is also installed, it sets an iptables rule that blocks Incus networking. Containers will launch but have no internet.
@@ -201,6 +202,13 @@ sudo systemctl restart incus
 
 See [docker-in-incus.md](docker-in-incus.md) for the full docker-in-incus
 guide including networking paths and other gotchas.
+
+## Docker coexistence (macOS)
+
+Docker Desktop and Incus (Colima) each run in their own hypervisor VM with
+isolated network bridges, so `localhost`-based Gitea URLs fail from inside an
+Incus container. When passing `GITEA_URL` manually, use Docker Desktop's
+internal bridge IP (typically `192.168.64.1`) instead of `localhost`.
 
 ## Verifying the installation
 

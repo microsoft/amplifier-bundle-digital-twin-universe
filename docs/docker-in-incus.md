@@ -80,8 +80,9 @@ default gateway. Discover it with:
 ip route | grep default | awk '{print $3}'
 ```
 
-This is how Docker containers inside the environment reach host-side services
-like Gitea or APIs running on the host.
+This is how Docker containers inside the environment reach host-side services like Gitea or APIs running on the host. 
+On macOS, the Incus gateway routes to the Colima VM, not to Docker Desktop — so Gitea running in Docker Desktop requires the bridge address instead, which usually defaults to `192.168.64.1`.
+See [troubleshooting.md](troubleshooting.md) for details.
 
 ### Docker -> Docker (inter-container)
 
