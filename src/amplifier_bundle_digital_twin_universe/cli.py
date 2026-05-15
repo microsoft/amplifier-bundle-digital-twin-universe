@@ -292,8 +292,11 @@ def update(id: str, var: tuple[str, ...], skip_readiness: bool) -> None:
 @click.option(
     "-r/-R",
     "--recursive/--no-recursive",
-    default=True,
-    help="Recursively transfer files (default: on).",
+    default=False,
+    help=(
+        "Recursively transfer directories (default: off). Required when any "
+        "source is a directory. Leave off for single-file or multi-file pushes."
+    ),
 )
 @click.option(
     "-p/-P",
@@ -364,8 +367,11 @@ def file_push(
 @click.option(
     "-r/-R",
     "--recursive/--no-recursive",
-    default=True,
-    help="Recursively transfer files (default: on).",
+    default=False,
+    help=(
+        "Recursively transfer directories (default: off). Required when any "
+        "source is a directory. Leave off for single-file or multi-file pulls."
+    ),
 )
 @click.option(
     "-p/-P",

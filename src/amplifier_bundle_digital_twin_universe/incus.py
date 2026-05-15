@@ -237,7 +237,12 @@ def exec_stream(
     return result.returncode
 
 
-def exec_interactive(name: str, command: list[str] | None = None) -> int:
+def exec_interactive(
+    name: str,
+    command: list[str] | None = None,
+    *,
+    env: dict[str, str] | None = None,
+) -> int:
     """Attach an interactive shell to *name*.
 
     Uses ``--force-interactive`` to allocate a PTY inside the container even
@@ -245,13 +250,20 @@ def exec_interactive(name: str, command: list[str] | None = None) -> int:
     stdin/stdout/stderr are inherited -- not captured.
 
     *command* defaults to ``["bash", "-l"]``.  Pass a custom command to launch
-    bash with additional flags (e.g. ``--rcfile /path/to/rc.sh``).
+    bash with additional flags.
+
+    *env* is forwarded as ``incus exec --env KEY=VALUE`` flags, exposing the
+    variables to the shell at attach time.  Used by ``engine.exec_interactive``
+    to set ``DTU_VISUAL_ID`` for the prompt-prefix profile.d script.
     """
     if command is None:
         command = ["bash", "-l"]
-    result = subprocess.run(
-        ["incus", "exec", "--force-interactive", name, "--", *command],
-    )
+    cmd: list[str] = ["incus", "exec", "--force-interactive", name]
+    if env:
+        for k, v in env.items():
+            cmd.extend(["--env", f"{k}={v}"])
+    cmd.extend(["--", *command])
+    result = subprocess.run(cmd)
     return result.returncode
 
 

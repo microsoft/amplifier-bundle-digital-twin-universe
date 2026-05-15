@@ -33,9 +33,6 @@
 #   - Both daemons run under the container's systemd. Manual
 #     `dockerd &` / `incusd &` start would race the auto-started
 #     socket units and cause init commands to hang.
-#   - uv tool install places binaries in /root/.local/bin; uv's
-#     installer appends that to ~/.profile so subsequent bash -lc
-#     (login-shell) setup_cmds and exec invocations pick it up.
 name: dtu-host-in-incus
 description: >
   DTU environment with Incus + Docker + Amplifier CLI + digital-twin-universe
@@ -168,12 +165,8 @@ provision:
       timeout 60 curl -LsSf --max-time 45 https://astral.sh/uv/install.sh | sh
 
     # --- Install Amplifier + DTU + Gitea CLIs -------------------------
-    # Each uv tool install creates an isolated venv; binaries end up in
-    # /root/.local/bin. Login-shell PATH picks them up for subsequent
-    # setup_cmds and exec invocations.
     - |
       set -euo pipefail
-      export PATH="/root/.local/bin:$PATH"
       timeout 120 uv tool install git+https://github.com/microsoft/amplifier
       timeout 60 uv tool install git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe
       timeout 60 uv tool install git+https://github.com/microsoft/amplifier-bundle-gitea
@@ -194,14 +187,12 @@ provision:
     # --- Compose bundles into Amplifier (url_rewrites apply here) -----
     - |
       set -euo pipefail
-      export PATH="/root/.local/bin:$PATH"
       timeout 60 amplifier bundle add git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe@main --app
       timeout 60 amplifier bundle add git+https://github.com/microsoft/amplifier-bundle-gitea@main --app
 
     # --- Verify all CLIs and bundles are present ----------------------
     - |
       set -euo pipefail
-      export PATH="/root/.local/bin:$PATH"
       echo "=== amplifier ==="
       amplifier --version
       echo "=== amplifier-digital-twin ==="
@@ -240,8 +231,8 @@ readiness:
   - name: docker-daemon
     command: "docker info >/dev/null 2>&1"
   - name: amplifier-cli
-    command: "test -x /root/.local/bin/amplifier"
+    command: "command -v amplifier"
   - name: amplifier-digital-twin-cli
-    command: "test -x /root/.local/bin/amplifier-digital-twin"
+    command: "command -v amplifier-digital-twin"
   - name: amplifier-gitea-cli
-    command: "test -x /root/.local/bin/amplifier-gitea"
+    command: "command -v amplifier-gitea"

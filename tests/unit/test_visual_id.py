@@ -4,7 +4,7 @@
 
 These tests do not require Incus or Docker. They exercise:
 - sanitize_visual_id validation
-- build_visual_id_rcfile output shape
+- _VISUAL_ID_PROFILE_D_SCRIPT content shape
 - CLI flag parsing and forwarding via a mocked engine
 
 The --visual-id flag uses an empty-string sentinel for "use profile name":
@@ -12,7 +12,11 @@ The --visual-id flag uses an empty-string sentinel for "use profile name":
   --visual-id ""         -> visual_id=""           -> resolve to profile name
   --visual-id LABEL      -> visual_id="LABEL"      -> use LABEL literally
 
-Run with: uv run pytest tests/test_visual_id.py -v
+The engine forwards the label as the ``DTU_VISUAL_ID`` env var to the
+``bash -l`` shell; the static ``/etc/profile.d/dtu-visual-id.sh`` script
+written at launch picks it up via PROMPT_COMMAND.
+
+Run with: uv run pytest tests/unit/test_visual_id.py -v
 """
 
 from __future__ import annotations
@@ -65,63 +69,71 @@ def test_sanitize_visual_id_rejects_invalid(value: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# build_visual_id_rcfile
+# /etc/profile.d/dtu-visual-id.sh script content
 # ---------------------------------------------------------------------------
 
 
-def test_build_visual_id_rcfile_contains_blue_escape() -> None:
-    content = engine.build_visual_id_rcfile("my-profile")
-    # Literal escape sequence for bold blue + reset, with \[ \] markers.
-    assert r"\[\e[1;34m\](dtu:my-profile)\[\e[0m\]" in content
+def test_profile_d_script_has_interactive_guard() -> None:
+    """The script must only act on interactive shells, gated by `case $- in *i*)`.
 
-
-def test_build_visual_id_rcfile_sources_default_bashrc_first() -> None:
-    content = engine.build_visual_id_rcfile("foo")
-    lines = content.splitlines()
-    # The PS1 assignment must come AFTER the bashrc sources so the container's
-    # default bashrc doesn't clobber our PS1.
-    bashrc_idx = next(i for i, line in enumerate(lines) if "bash.bashrc" in line)
-    ps1_idx = next(i for i, line in enumerate(lines) if line.startswith("PS1="))
-    assert ps1_idx > bashrc_idx
-
-
-def test_build_visual_id_rcfile_rejects_invalid() -> None:
-    with pytest.raises(ValueError):
-        engine.build_visual_id_rcfile('has"quote')
-
-
-def test_build_visual_id_rcfile_sources_profile_d() -> None:
-    """Visual-id rcfile must source /etc/profile.d/*.sh so interactive shells
-    inherit PATH and passthrough env vars written by DTU provisioning.
-
-    Regression test for the bug where `bash --rcfile <X> -i` sources
-    /etc/bash.bashrc and ~/.bashrc but never /etc/profile.d/dtu-env.sh, leaving
-    `amplifier`, `uv`, and forwarded API keys missing from interactive shells
-    launched via `exec --visual-id`.
+    Non-interactive shells (bash -lc invoked by exec_command / exec_stream)
+    must not have PROMPT_COMMAND modified -- PS1 is meaningless there and
+    we don't want side effects in those code paths.
     """
-    content = engine.build_visual_id_rcfile("foo")
-    assert "/etc/profile.d" in content, (
-        "visual-id rcfile must source /etc/profile.d/*.sh so amplifier, uv, "
-        "and passthrough env vars are available in --visual-id shells. "
-        f"Got:\n{content}"
-    )
+    assert "case $- in" in engine._VISUAL_ID_PROFILE_D_SCRIPT
+    assert "*i*)" in engine._VISUAL_ID_PROFILE_D_SCRIPT
 
 
-def test_build_visual_id_rcfile_sources_profile_d_before_ps1() -> None:
-    """/etc/profile.d/*.sh must be sourced before PS1 is set so that any
-    PS1 customizations there don't override our (dtu:<id>) prefix."""
-    content = engine.build_visual_id_rcfile("foo")
-    lines = content.splitlines()
-    profile_d_idx = next(
-        (i for i, line in enumerate(lines) if "/etc/profile.d" in line),
-        -1,
-    )
-    ps1_idx = next(i for i, line in enumerate(lines) if line.startswith("PS1="))
-    assert profile_d_idx != -1, "expected /etc/profile.d sourcing in rcfile"
-    assert ps1_idx > profile_d_idx, (
-        "PS1 must be set after /etc/profile.d/*.sh is sourced so the dtu prompt "
-        "prefix isn't clobbered by env scripts"
-    )
+def test_profile_d_script_checks_dtu_visual_id_set() -> None:
+    """The script must be inert unless DTU_VISUAL_ID is set on the shell env."""
+    assert 'if [ -n "${DTU_VISUAL_ID:-}" ]' in engine._VISUAL_ID_PROFILE_D_SCRIPT
+
+
+def test_profile_d_script_installs_prompt_command() -> None:
+    """The script must chain a _dtu_apply_prompt entry into PROMPT_COMMAND
+    (preserving any existing user-set PROMPT_COMMAND on the right).
+    """
+    script = engine._VISUAL_ID_PROFILE_D_SCRIPT
+    assert "_dtu_apply_prompt()" in script
+    assert "PROMPT_COMMAND=" in script
+    # Preserve any pre-existing PROMPT_COMMAND on the tail.
+    assert "${PROMPT_COMMAND:+; $PROMPT_COMMAND}" in script
+
+
+def test_profile_d_script_idempotency_guard() -> None:
+    """_dtu_apply_prompt must skip re-application if the marker is already in PS1.
+
+    Without this guard, each prompt redraw would stack a new copy of the
+    prefix on top of the previous one.
+    """
+    script = engine._VISUAL_ID_PROFILE_D_SCRIPT
+    assert '*"(dtu:${DTU_VISUAL_ID})"*' in script
+
+
+def test_profile_d_script_contains_blue_escape_marker() -> None:
+    """PS1 assignment must use the bold-blue ANSI escape pair wrapped in
+    \\[ \\] readline non-printing markers so line-edit behaves correctly.
+    """
+    # The script is a Python string with single backslash escapes (\\[ -> \[).
+    # We check for the literal bash form that bash will see.
+    script = engine._VISUAL_ID_PROFILE_D_SCRIPT
+    assert r"\[\e[1;34m\]" in script
+    assert r"\[\e[0m\]" in script
+
+
+def test_profile_d_script_starts_with_shebang() -> None:
+    """The script needs a shebang so chmod +x and standalone invocation work
+    (profile.d sourcing only needs read+exec, but the shebang is the
+    convention used by dtu-env.sh as well).
+    """
+    assert engine._VISUAL_ID_PROFILE_D_SCRIPT.startswith("#!/bin/bash\n")
+
+
+def test_profile_d_path_matches_engine_constant() -> None:
+    """The container path the engine writes the script to must be in /etc/profile.d
+    so login shells source it automatically via /etc/profile.
+    """
+    assert engine._VISUAL_ID_PROFILE_D_PATH == "/etc/profile.d/dtu-visual-id.sh"
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +155,7 @@ def test_exec_without_flag_passes_none() -> None:
 
 
 def test_exec_with_empty_visual_id_resolves_to_profile() -> None:
-    """--visual-id \"\" (empty sentinel) resolves the profile name via engine.status()."""
+    """--visual-id "" (empty sentinel) resolves the profile name via engine.status()."""
     runner = CliRunner()
     with (
         patch.object(engine, "exec_interactive", return_value=0) as mock_exec,
@@ -251,7 +263,7 @@ def test_exec_with_command_ignores_visual_id_in_json_mode() -> None:
 
 
 def test_exec_warns_when_profile_missing() -> None:
-    """--visual-id \"\" with no profile in status should warn and fall back."""
+    """--visual-id "" with no profile in status should warn and fall back."""
     runner = CliRunner()
     with (
         patch.object(engine, "exec_interactive", return_value=0) as mock_exec,

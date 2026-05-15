@@ -34,10 +34,8 @@ provision:
     # Authenticate all GitHub clones with the passed-through token
     - git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
 
-    # Install Amplifier CLI
-    - |
-      export PATH="/root/.local/bin:$PATH"
-      uv tool install git+https://github.com/microsoft/amplifier
+    # Install Amplifier CLI. /root/.cargo/bin and /root/.local/bin are on
+    - uv tool install git+https://github.com/microsoft/amplifier
 
     # Configure Amplifier provider
     - |
@@ -52,13 +50,11 @@ provision:
       EOF
 
     # Install your private bundle -- change this URL to your repo
-    - |
-      export PATH="/root/.local/bin:$PATH"
-      amplifier bundle add git+https://github.com/your-org/your-private-bundle@main --app
+    - amplifier bundle add git+https://github.com/your-org/your-private-bundle@main --app
 
     - amplifier --version
     - amplifier bundle list
 
 readiness:
   - name: amplifier-installed
-    command: "PATH=/root/.local/bin:$PATH amplifier --version"
+    command: amplifier --version

@@ -62,8 +62,11 @@ provision:
   files:
     - src: {seed_files / "single.txt"}
       dest: /root/provisioned/single.txt
+    # `incus file push --recursive` preserves the source basename inside dest,
+    # so passing src=<host>/tree and dest=/root/provisioned/ lands files at
+    # /root/provisioned/tree/... (not /root/provisioned/tree/tree/...).
     - src: {seed_files / "tree"}
-      dest: /root/provisioned/tree/
+      dest: /root/provisioned/
       recursive: true
   setup_cmds:
     - test -f /root/provisioned/single.txt
@@ -153,8 +156,12 @@ class TestFilePush:
         assert "b.txt" in out["stdout"]
 
     def test_push_recursive_directory(self, dtu_env, seed_files):
+        # Directory sources require -r/--recursive (off by default since it
+        # changes the dest semantics -- with -r, dest is treated as a parent
+        # directory and the source basename is preserved inside it).
         run_cli_json(
             "file-push",
+            "-r",
             dtu_env["id"],
             str(seed_files / "tree"),
             "/root/pushed/tree-copy/",
@@ -201,7 +208,10 @@ class TestFilePull:
 
     def test_pull_recursive_directory(self, dtu_env, tmp_path_factory):
         dest_dir = str(tmp_path_factory.mktemp("dtu-pull-tree"))
-        run_cli_json("file-pull", dtu_env["id"], "/root/provisioned/tree", dest_dir)
+        # Directory sources require -r/--recursive (off by default).
+        run_cli_json(
+            "file-pull", "-r", dtu_env["id"], "/root/provisioned/tree", dest_dir
+        )
         pulled = Path(dest_dir) / "tree" / "nested" / "deep.txt"
         assert pulled.exists()
         assert "nested-file" in pulled.read_text()

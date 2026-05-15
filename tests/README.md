@@ -26,11 +26,18 @@ tests/
 │   ├── test_hostname.py            # HostnameManager, fully mocked
 │   ├── test_visual_id.py           # --visual-id CLI flag, fully mocked
 │   ├── test_readiness_access.py    # _poll_port + verify_access_ports against localhost
+│   ├── test_default_base_config.py # default security.nesting=true injection + override
+│   ├── test_nested_incus.py        # nested-Incus self-proxy support, fully mocked
 │   └── profile/
-│       ├── test_resolution.py            # find_profile_path() lookup logic
-│       ├── test_smoke.py                 # every shipped profile parses cleanly
-│       ├── test_validation_warnings.py   # UnknownProfileFieldWarning behaviour
-│       └── test_validation_schema_sync.py# schema↔dataclass field-sync contract
+│       ├── test_resolution.py                  # find_profile_path() lookup logic
+│       ├── test_smoke.py                       # every shipped profile parses cleanly
+│       ├── test_validation_warnings.py         # UnknownProfileFieldWarning behaviour
+│       ├── test_validation_schema_sync.py      # schema↔dataclass field-sync contract
+│       ├── test_url_rewrite_matching.py        # url_rewrites matcher semantics (prefix/boundary)
+│       ├── test_url_rewrite_addon_emit.py      # mitmproxy addon wire-format contract
+│       ├── test_url_rewrite_target_validation.py # load-time target validation
+│       ├── test_url_rewrite_auth_safety.py     # auth header leakage prevention
+│       └── test_addon_matcher_parity.py        # host ↔ in-container matcher parity
 │
 ├── integration/
 │   └── test_lifecycle.py     # launch / exec / status / list / destroy
@@ -49,7 +56,8 @@ tests/
 │   └── profiles/                         # full profile-launch verification
 │       ├── test_amplifier_chat.py
 │       ├── test_amplifier_user_sim.py
-│       └── test_amplifier_user_sim_single_module.py
+│       ├── test_amplifier_user_sim_single_module.py
+│       └── test_url_rewrite_match_modes.py     # boundary match_mode E2E via Gitea
 │
 └── point_time_bugfixes/
     └── test_e2e_uv_fast_path_bypass.py

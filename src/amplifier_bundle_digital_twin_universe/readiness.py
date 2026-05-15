@@ -84,11 +84,19 @@ def _run_tcp_check(container_name: str, check: ReadinessCheck) -> dict:
 
 
 def _run_command_check(container_name: str, check: ReadinessCheck) -> dict:
-    """Run a command readiness check inside the container."""
+    """Run a command readiness check inside the container.
+
+    Uses ``bash -lc`` (login shell) so the command sees the same environment
+    that ``provision.setup_cmds`` and ``exec``/``exec --stream`` run under,
+    including the PATH and passthrough env vars written to
+    ``/etc/profile.d/dtu-env.sh``. Without ``-l``, readiness commands run in
+    a bare non-login shell and cannot find binaries installed to
+    ``/root/.local/bin`` (uv, amplifier) without an inline ``PATH=...`` prefix.
+    """
     assert check.command is not None
     exit_code, _stdout, stderr = incus.exec_command(
         container_name,
-        ["bash", "-c", check.command],
+        ["bash", "-lc", check.command],
         timeout=30,
     )
     if exit_code != 0:

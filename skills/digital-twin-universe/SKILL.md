@@ -66,6 +66,11 @@ Clone the local repos into Gitea first, then reference those in the profile via
 
 If the use case warrants it, you should FIRST load the `gitea` skill and setup the environment for the user.
 
+**Use the correct Gitea URL/endpoint for the system.** When the profile uses
+`url_rewrites` or `pypi_overrides`, pass the Gitea endpoint via
+`--var GITEA_URL=...` (and `--var GITEA_TOKEN=...`). The right value depends
+on where the DTU host and the Gitea container can reach each other.
+
 ## Documentation
 
 You **must** load these files and refer to them as they contain necessary information on how to use the digital twin universe correctly.
@@ -121,6 +126,61 @@ amplifier-digital-twin exec --visual-id testing-pr-42 <id>
 means "use the profile name"; any non-empty value is used as the literal
 label. Always quote the empty string -- `--visual-id ""`.
 
+## Running Commands in a DTU
+
+Every command path (`exec`, `exec --stream`, `provision.setup_cmds`,
+`provision.update.cmds`, `readiness.command`, bare interactive) is wrapped
+in `bash -lc`. The login shell sources `/etc/profile.d/dtu-env.sh`, which
+puts `/root/.cargo/bin:/root/.local/bin` on PATH and exports passthrough
+env vars.
+
+**Write commands bare.** Anything from `uv tool install` (`amplifier`,
+`uv`, etc.) resolves without help:
+
+```bash
+amplifier-digital-twin exec <id> -- amplifier --version
+```
+
+Do NOT add any of the following — all redundant, all dead weight from older profiles:
+
+- `bash -lc '...'` wrapping (double-wraps).
+- `bash -c 'export PATH="/root/.local/bin:$PATH" && cmd'`.
+- `PATH=/root/.local/bin:$PATH cmd` prefix on `readiness.command`.
+- Hardcoded `/root/.local/bin/<tool>` paths — use bare commands or
+  `command -v <tool>` for existence checks.
+- `export PATH="/root/.local/bin:$PATH"` at the top of heredoc
+  `setup_cmds` blocks.
+
+Use `bash -c` only when you need a shell construct (pipes, redirects,
+`&&`/`||`, expansion) in a single command. Do not use `bash -lc` — the
+outer wrap already provides the login shell.
+
+## File Transfer
+
+`file-push` and `file-pull` move files between the host and a running DTU
+without going through `exec`. Both commands accept multiple sources before
+the destination.
+
+```bash
+# Single file
+amplifier-digital-twin file-push <id> ./config.yaml /root/config.yaml
+amplifier-digital-twin file-pull <id> /var/log/app.log ./app.log
+
+# Directory (-r is required when any source is a directory)
+amplifier-digital-twin file-push -r <id> ./data/ /root/app/
+amplifier-digital-twin file-pull -r <id> /root/results/ ./
+```
+
+`-r/--recursive` defaults to **off** for both commands. Pass `-r` when any
+source is a directory; leave it off for single-file or multi-file transfers.
+
+On `file-push -r`, the destination is treated as the **parent directory**
+and the source's basename is preserved inside it. Pushing `./data/` to
+`/root/app/` lands files at `/root/app/data/...`. To put contents directly
+at `/root/app/data/`, push to `/root/app/` and let the basename land
+naturally (do not push to `/root/app/data/` -- that produces
+`/root/app/data/data/...`).
+
 ## Hostname Support (mDNS)
 
 Environments can register a `.local` hostname via Avahi mDNS, making it easy to
@@ -170,9 +230,15 @@ When constructing profiles, read the most relevant examples first to understand 
 ```
 read_file("@digital-twin-universe:profiles/tests/amplifier-user-sim.yaml")
 read_file("@digital-twin-universe:profiles/amplifier/amplifier-chat.yaml")
+read_file("@digital-twin-universe:profiles/amplifier/amplifier-standalone.yaml")
 read_file("@digital-twin-universe:profiles/patterns/private-github-repo.yaml")
 read_file("@digital-twin-universe:profiles/tests/docker-in-incus.yaml")
 ```
+
+The `amplifier-standalone` profile is a standalone Amplifier user environment
+with the foundation bundle composed onto every session. Use it when the user
+wants to `exec` in and run interactive `amplifier` sessions immediately, with
+no extra services or UI on top.
 
 The `private-github-repo` profile shows how to install from a private GitHub
 repo without Gitea. It passes `GH_TOKEN` via `passthrough.services` and

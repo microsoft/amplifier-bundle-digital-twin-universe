@@ -161,11 +161,11 @@ def mirror_repo_to_gitea(
 ) -> None:
     """Mirror a GitHub repo into Gitea via the amplifier-gitea CLI.
 
-    Skips issues, pull requests, and labels by default because every test in
-    this suite only needs git refs -- pulling metadata for active repos like
-    ``microsoft/amplifier`` or ``microsoft/amplifier-foundation`` exceeds
-    the gitea CLI's 120s httpx timeout. Pass ``include_metadata=True`` only
-    when a test specifically needs the issue/PR data in the mirror.
+    The CLI now uses positive opt-in flags (``--include-issues``,
+    ``--include-prs``, ``--include-labels``). Its default already skips
+    metadata, so we only pass the flags when ``include_metadata=True``.
+    Skipping metadata avoids the gitea CLI's 120s httpx timeout when mirroring
+    active repos like ``microsoft/amplifier`` or ``microsoft/amplifier-foundation``.
     """
     args = [
         "mirror-from-github",
@@ -175,8 +175,8 @@ def mirror_repo_to_gitea(
         "--github-token",
         github_token,
     ]
-    if not include_metadata:
-        args.extend(["--no-issues", "--no-prs", "--no-labels"])
+    if include_metadata:
+        args.extend(["--include-issues", "--include-prs", "--include-labels"])
     run_gitea_cli_json(*args, timeout=timeout)
 
 

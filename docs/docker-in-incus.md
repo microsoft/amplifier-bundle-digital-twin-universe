@@ -55,7 +55,7 @@ docker-in-incus, and Incus group permissions, and more see
 
 A Digital Twin Universe environment with Docker nesting supports three
 networking paths. All three are verified by the
-[e2e test](../tests/test_e2e_docker_in_incus.py).
+[e2e test](../tests/e2e/features/test_docker_in_incus.py).
 
 ### Host -> Docker (inbound)
 
@@ -100,7 +100,7 @@ network for DNS-based container name resolution.
 Run the e2e test to verify all networking paths:
 
 ```bash
-uv run pytest tests/test_e2e_docker_in_incus.py --run-e2e -v -s
+uv run pytest tests/e2e/features/test_docker_in_incus.py --run-e2e -v -s
 ```
 
 Or launch the profile manually:
