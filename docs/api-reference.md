@@ -1,5 +1,7 @@
 # API Reference
 
+This reference documents v0.3.0. For previous versions, check out the corresponding git tag or commit (`git checkout v<version>`). When upgrading across a breaking change, review the diff between versions to find the migration steps. The source can be cloned from https://github.com/microsoft/amplifier-bundle-digital-twin-universe
+
 CLI: `amplifier-digital-twin`
 
 All commands return JSON to stdout unless noted otherwise.
@@ -141,7 +143,7 @@ amplifier-digital-twin exec dtu-a1b2c3d4 -- amplifier --version
 amplifier-digital-twin exec --stream dtu-a1b2c3d4 -- amplifier run "test prompt"
 
 # Interactive shell with a blue (dtu:<profile>) prompt prefix
-amplifier-digital-twin exec --visual-id dtu-a1b2c3d4
+amplifier-digital-twin exec --visual-id "" dtu-a1b2c3d4
 
 # Same, but with a custom label instead of the profile name
 amplifier-digital-twin exec --visual-id testing-pr-42 dtu-a1b2c3d4
@@ -153,18 +155,24 @@ amplifier-digital-twin exec --visual-id testing-pr-42 dtu-a1b2c3d4
 prompt so you can tell multiple DTU sessions apart. It is **off by default**
 and only affects interactive mode.
 
-- Bare flag (`--visual-id`) uses the DTU's profile name, e.g.
-  `(dtu:amplifier-user-sim)`.
-- With an explicit value (`--visual-id testing-pr-42`) uses the string you
-  pass, e.g. `(dtu:testing-pr-42)`. Useful when several DTUs share a profile.
+The flag always takes a value. The value controls the label:
+
+- `--visual-id ""` (empty string sentinel) uses the DTU's profile name, e.g.
+  `(dtu:amplifier-user-sim)`. Always quote the empty string so the shell
+  passes it through.
+- `--visual-id testing-pr-42` uses the string you pass, e.g.
+  `(dtu:testing-pr-42)`. Useful when several DTUs share a profile.
 - Values are restricted to `[A-Za-z0-9._:/-]` and capped at 40 characters.
 - In JSON and `--stream` modes the flag is accepted but ignored -- there is
   no prompt to prefix.
 
-Under the hood, the flag writes a small bash rcfile into the container at
-`/tmp/dtu-visual-id-rc.sh` and launches bash with `--rcfile` pointed at it.
-The rcfile sources the container's default bashrc first, then re-applies
-`PS1` so the prefix survives.
+Under the hood, every `exec` surface launches the same `bash -l` login shell
+(`exec -- <cmd>` uses `bash -lc`, bare interactive uses `bash -l`,
+`--visual-id` uses `bash -l` with `DTU_VISUAL_ID=<label>` forwarded via
+`incus exec --env`). A static `/etc/profile.d/dtu-visual-id.sh` script
+written at launch picks up `DTU_VISUAL_ID` on interactive shells and chains
+a `_dtu_apply_prompt` entry into `PROMPT_COMMAND` so the prefix re-applies
+each prompt redraw even if `~/.bashrc` resets `PS1` afterward.
 
 Without a command, attaches a terminal to the container with a PTY.
 Exit code comes from the shell when you exit.
@@ -258,14 +266,19 @@ Use the default (no `--stream`) when:
 
 Run readiness checks for an environment. Checks are defined in the profile's
 `readiness` section and evaluated inside the container on each invocation.
-This command is stateless -- the caller owns the polling loop.
+Host-side verification of `access.ports` is included by default. This command
+is stateless -- the caller owns the polling loop.
 
 ```bash
-amplifier-digital-twin check-readiness <id>
+amplifier-digital-twin check-readiness <id> [--skip-access-check]
 ```
 
 `<id>` (required)
   Environment ID.
+
+`--skip-access-check` (optional)
+  Skip host-side verification of `access.ports`. Only the profile's
+  `readiness` checks are evaluated.
 
 Exit codes:
 - `0` -- all checks passed (ready), or no readiness checks configured
@@ -483,11 +496,23 @@ amplifier-digital-twin file-push <id> <source>... <container_path> [flags]
   One or more local file or directory paths.
 
 `<container_path>` (required)
-  Destination path inside the container. When pushing multiple sources, this
-  must be an existing directory.
+  Destination path inside the container.
 
-`-r/--recursive` (default: on)
-  Recursively transfer directories. Use `-R` or `--no-recursive` to disable.
+  - **Single-file or multi-file push:** treated as a file path (for a single
+    source) or a parent directory (for multiple sources).
+  - **Directory push (`-r`):** `<container_path>` is treated as the **parent
+    directory**, and the source's basename is preserved inside it. Pushing
+    `./data/` to `/root/app/data/` lands files at `/root/app/data/data/...`,
+    not directly at `/root/app/data/`. To land contents directly, push to
+    the parent and let the basename land naturally
+    (e.g. `./data/` → `/root/app/` produces `/root/app/data/...`).
+
+`-r/--recursive` (default: off)
+  Recursively transfer directories. Required when any source is a directory;
+  must be off (the default) for single-file or multi-file pushes -- otherwise
+  the destination path is treated as a directory and the source is created
+  inside it (e.g. `file-push -r foo.txt /dest/file.txt` creates
+  `/dest/file.txt/foo.txt`, where `file.txt` becomes a directory).
 
 `-p/--create-dirs` (default: on)
   Create any intermediate directories necessary in the container.
@@ -506,17 +531,15 @@ amplifier-digital-twin file-push <id> <source>... <container_path> [flags]
   Timeout in seconds (default: 120).
 
 ```bash
-# Single file
+# Single file -> file path
 amplifier-digital-twin file-push dtu-a1b2c3d4 ./config.yaml /root/config.yaml
 
-# Multiple files into a directory
+# Multiple files -> directory (no -r needed)
 amplifier-digital-twin file-push dtu-a1b2c3d4 a.yaml b.yaml /root/data/
 
-# Directory tree
-amplifier-digital-twin file-push dtu-a1b2c3d4 ./data/ /root/app/data/
-
-# Disable recursive (single files only)
-amplifier-digital-twin file-push dtu-a1b2c3d4 -R ./file.txt /root/file.txt
+# Directory tree -- basename preserved inside dest.
+# ./data/ lands at /root/app/data, so use the parent as dest.
+amplifier-digital-twin file-push -r dtu-a1b2c3d4 ./data/ /root/app/
 ```
 
 Returns:
@@ -526,7 +549,7 @@ Returns:
   "instance_id": "dtu-a1b2c3d4",
   "sources": ["./config.yaml"],
   "dest": "/root/config.yaml",
-  "recursive": true
+  "recursive": false
 }
 ```
 
@@ -549,8 +572,9 @@ amplifier-digital-twin file-pull <id> <container_path>... <local_path> [flags]
   Destination path on the host. When pulling multiple sources, this must be
   an existing directory.
 
-`-r/--recursive` (default: on)
-  Recursively transfer directories. Use `-R` or `--no-recursive` to disable.
+`-r/--recursive` (default: off)
+  Recursively transfer directories. Required when any source is a directory;
+  leave off for single-file or multi-file pulls.
 
 `-p/--create-dirs` (default: on)
   Create any intermediate directories necessary on the host.

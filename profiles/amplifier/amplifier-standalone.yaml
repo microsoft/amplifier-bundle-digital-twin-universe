@@ -29,14 +29,10 @@ provision:
     - curl -LsSf https://astral.sh/uv/install.sh | sh
 
     # Install Amplifier from upstream
-    - |
-      export PATH="/root/.local/bin:$PATH"
-      uv tool install -vv git+https://github.com/microsoft/amplifier
+    - uv tool install -vv git+https://github.com/microsoft/amplifier
 
     # Compose the foundation bundle onto every session
-    - |
-      export PATH="/root/.local/bin:$PATH"
-      amplifier bundle add git+https://github.com/microsoft/amplifier-foundation@main --app
+    - amplifier bundle add git+https://github.com/microsoft/amplifier-foundation@main --app
 
     # Configure the Anthropic provider so sessions can reach the LLM.
     # $ANTHROPIC_API_KEY is forwarded via passthrough.services.
@@ -52,6 +48,4 @@ provision:
       EOF
 
     # Sanity check
-    - |
-      export PATH="/root/.local/bin:$PATH"
-      amplifier --version
+    - amplifier --version

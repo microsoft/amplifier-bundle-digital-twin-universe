@@ -33,9 +33,7 @@ provision:
   setup_cmds:
     - apt-get update && apt-get install -y git curl
     - curl -LsSf https://astral.sh/uv/install.sh | sh
-    - |
-      export PATH="/root/.local/bin:$PATH"
-      uv tool install -vv git+https://github.com/microsoft/amplifier
+    - uv tool install -vv git+https://github.com/microsoft/amplifier
     - |
       mkdir -p /root/.amplifier
       cat > /root/.amplifier/settings.yaml << EOF

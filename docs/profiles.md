@@ -289,6 +289,12 @@ Fields:
 - `container` (required) -- port to forward to inside the container
 - `label` (optional) -- human-readable name shown in launch output
 - `path` (optional, default `/`) -- URL path appended when constructing access URLs
+- `verify` (optional, default `true`) -- whether `check-readiness` should
+  poll the host-side port after launch
+- `verify_timeout` (optional, default `30`) -- seconds to wait for the host
+  port to become reachable during verification
+- `verify_interval` (optional, default `2`) -- seconds between verification
+  polls
 
 When `access.ports` is defined, the launch JSON includes additional fields:
 
@@ -297,10 +303,13 @@ When `access.ports` is defined, the launch JSON includes additional fields:
   "hostname": "amplifier-chat.local",
   "container_ip": "10.x.x.x",
   "access": [
-    {"label": "Chat UI", "url": "http://amplifier-chat.local:8410/chat/"}
+    {"label": "Chat UI", "url": "http://localhost:8410/chat/", "mdns_url": "http://amplifier-chat.local:8410/chat/"}
   ]
 }
 ```
+
+`url` always points at `localhost`. `mdns_url` is added per entry only when
+a `.local` hostname was successfully registered via Avahi.
 
 `amplifier-chat` uses this to expose the web UI on `localhost:8410` (or
 `amplifier-chat.local:8410` when hostname registration succeeds).
@@ -417,8 +426,10 @@ Optional. Supports file seeding and shell commands during launch.
 ```yaml
 provision:
   files:
+    # Directory push: `seed-data/` lands inside `dest` as `/root/app/seed-data/`.
+    # If you want the contents at /root/app/data/, point dest at the parent.
     - src: ./seed-data/
-      dest: /root/app/data/
+      dest: /root/app/
       recursive: true
     - src: ./config/settings.yaml
       dest: /root/.config/app/settings.yaml
@@ -437,7 +448,19 @@ Fields per entry:
 - `src` (required) -- host path. Relative paths are resolved relative to the
   profile file's directory.
 - `dest` (required) -- absolute path inside the container.
+
+  Behavior depends on whether `src` is a file or a directory:
+
+  - **File:** `dest` is treated as a file path; the file lands at `dest`.
+  - **Directory (with `recursive: true`):** `dest` is treated as the **parent
+    directory**, and the source basename is preserved inside it. Pushing
+    `./data/` to `/root/app/data/` lands files at `/root/app/data/data/...`;
+    pushing the same source to `/root/app/` lands them at `/root/app/data/...`.
+
 - `recursive` (optional, default `false`) -- recursively transfer a directory.
+  Required when `src` is a directory; off by default to match the file-only
+  case (where leaving it on would create a directory at the destination path
+  and put the source inside it).
 - `create_dirs` (optional, default `true`) -- create intermediate directories
   in the container if they don't exist.
 - `mode` (optional) -- file permission string (e.g. `"0644"`).
@@ -564,7 +587,10 @@ Profiles in this repo are organized into four buckets by intent:
 
 Profiles that run an Amplifier experience — the Amplifier CLI, a chat
 UI, a dev-machine configuration, or any other first-class Amplifier
-feature. Example: [`amplifier-chat`](../profiles/amplifier/amplifier-chat.yaml).
+feature. Examples:
+
+- [`amplifier-chat`](../profiles/amplifier/amplifier-chat.yaml) — browser-accessible chat UI backed by amplifierd
+- [`amplifier-standalone`](../profiles/amplifier/amplifier-standalone.yaml) — standalone Amplifier user environment with the foundation bundle composed, ready for interactive `amplifier` sessions via `exec`
 
 ### `profiles/patterns/`
 

@@ -61,9 +61,7 @@ provision:
     # Install Amplifier. amplifier-core is resolved from the local
     # simple index / pypiserver override; everything else comes from
     # the normal upstream GitHub / package index sources.
-    - |
-      export PATH="/root/.local/bin:$PATH"
-      uv tool install -vv git+https://github.com/microsoft/amplifier
+    - uv tool install -vv git+https://github.com/microsoft/amplifier
 
     # Configure Amplifier provider so the first-run wizard is skipped.
     # $ANTHROPIC_API_KEY is available via passthrough env forwarding.

@@ -6,6 +6,7 @@ environments. Organized by category. Install-step-specific tables also live in
 
 ## Categories
 
+- [Version mismatches](#version-mismatches)
 - [Incus permissions and access](#incus-permissions-and-access)
 - [Incus install issues](#incus-install-issues)
 - [Docker install issues](#docker-install-issues)
@@ -13,6 +14,46 @@ environments. Organized by category. Install-step-specific tables also live in
 - [Docker inside Incus (nesting)](#docker-inside-incus-nesting)
 - [DTU launch and provisioning](#dtu-launch-and-provisioning)
 - [DTU CLI usage](#dtu-cli-usage)
+
+
+## Version mismatches
+
+Before deeper troubleshooting, confirm CLI, bundle, and profiles are aligned.
+
+Check the CLI version and compare against the latest
+[tag](https://github.com/microsoft/amplifier-bundle-digital-twin-universe/tags):
+
+```bash
+amplifier-digital-twin --version
+uv tool upgrade amplifier-bundle-digital-twin-universe
+```
+
+Refresh the Amplifier bundle cache so it lines up with the CLI:
+
+```bash
+amplifier reset --remove cache -y
+```
+
+Check your saved profiles against the current schema in
+[profiles.md](profiles.md). Symptoms of drift: `UnknownProfileFieldWarning`,
+`requires exactly one of ...` validation errors, or `Invalid match_mode`.
+
+To review what changed and update your profiles, clone the repo to a
+temporary directory and read the latest `docs/` and `skills/`:
+
+```bash
+git clone --depth 1 https://github.com/microsoft/amplifier-bundle-digital-twin-universe \
+  /tmp/dtu-latest
+less /tmp/dtu-latest/docs/profiles.md
+less /tmp/dtu-latest/skills/digital-twin-universe/SKILL.md
+```
+
+If updating is disruptive, downgrade the CLI to match your profiles:
+
+```bash
+uv tool install --reinstall \
+  'git+https://github.com/microsoft/amplifier-bundle-digital-twin-universe@v<tag>'
+```
 
 
 ## Incus permissions and access

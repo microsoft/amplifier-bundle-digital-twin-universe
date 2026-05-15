@@ -11,14 +11,14 @@ You have access to Digital Twin Universe (DTU) capabilities for on-demand isolat
 
 ## How to Use
 
-**ALWAYS delegate DTU work to the specialized agents.** Do NOT attempt to drive the `amplifier-digital-twin` CLI directly. The agents carry the full DTU knowledge in their own context, keeping your session lean. Default to passing full context so the agent has everything it needs.
+**ALWAYS delegate DTU work to the specialized agent.** Do NOT attempt to drive the `amplifier-digital-twin` CLI directly. The agent carries the full DTU knowledge in its own context, keeping your session lean. Default to passing full context so the agent has everything it needs.
 
 Build a DTU profile for a project, launch and verify an environment (also handles Gitea setup for local repos):
 ```
 delegate(agent="digital-twin-universe:dtu-profile-builder", instruction="<what the user needs>", context_depth="all", context_scope="full")
 ```
 
-If the user's request doesn't match either agent (e.g. general DTU questions, installation help, troubleshooting), load the skill instead:
+If the user's request doesn't match this agent (e.g. general DTU questions, installation help, troubleshooting), load the skill instead:
 ```
 load_skill(skill_name="digital-twin-universe")
 ```

@@ -937,6 +937,57 @@ def _write_env(
     _exec_checked(container_name, "chmod +x /etc/profile.d/dtu-env.sh")
 
 
+_VISUAL_ID_PROFILE_D_PATH = "/etc/profile.d/dtu-visual-id.sh"
+
+# Static profile.d script that prepends a blue ``(dtu:<label>)`` marker to
+# PS1 when the attaching shell has ``DTU_VISUAL_ID`` set. Written once at
+# launch alongside ``dtu-env.sh``; inert when the env var is unset, so it
+# costs nothing for any other exec path.
+#
+# Uses PROMPT_COMMAND rather than a direct PS1 assignment so the prefix
+# survives a later ``~/.bashrc`` that resets PS1. PROMPT_COMMAND runs right
+# before each prompt is drawn -- after /etc/profile, /etc/profile.d/*.sh,
+# ~/.profile, and ~/.bashrc have all completed. The idempotency check
+# prevents the prefix from stacking on every redraw.
+_VISUAL_ID_PROFILE_D_SCRIPT = """\
+#!/bin/bash
+# amplifier-digital-twin visual id prompt injection
+# Activates only when DTU_VISUAL_ID is set on the attaching shell's env.
+# Bash-only; gated on interactive shells (PS1 only matters there).
+case $- in
+  *i*)
+    if [ -n "${DTU_VISUAL_ID:-}" ]; then
+      _dtu_apply_prompt() {
+        case "$PS1" in
+          *"(dtu:${DTU_VISUAL_ID})"*) ;;  # already applied this draw
+          *) PS1="\\[\\e[1;34m\\](dtu:${DTU_VISUAL_ID})\\[\\e[0m\\] $PS1" ;;
+        esac
+      }
+      PROMPT_COMMAND="_dtu_apply_prompt${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+    fi
+    ;;
+esac
+"""
+
+
+def _write_visual_id_profile_d(container_name: str) -> None:
+    """Write ``/etc/profile.d/dtu-visual-id.sh`` inside the container.
+
+    The script is content-static: it does not embed the visual-id value.
+    The per-attach label is supplied via the ``DTU_VISUAL_ID`` env var when
+    ``exec_interactive`` runs ``bash -l``. This keeps multi-attach safe and
+    means launch-time installation is a one-shot operation.
+    """
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
+        f.write(_VISUAL_ID_PROFILE_D_SCRIPT)
+        local_path = f.name
+    try:
+        incus.file_push(container_name, [local_path], _VISUAL_ID_PROFILE_D_PATH)
+    finally:
+        os.unlink(local_path)
+    _exec_checked(container_name, f"chmod +x {_VISUAL_ID_PROFILE_D_PATH}")
+
+
 # ---------------------------------------------------------------------------
 # Provisioning
 # ---------------------------------------------------------------------------
@@ -1070,6 +1121,10 @@ def launch(
 
         # Environment variables
         _write_env(container_name, profile, rewritten_vars, proxy_enabled)
+
+        # Visual-id prompt-prefix profile.d script (inert unless an
+        # `exec --visual-id LABEL` session passes DTU_VISUAL_ID in the env).
+        _write_visual_id_profile_d(container_name)
 
         # Provision files (pushed before setup_cmds so commands can use them)
         if profile.provision and profile.provision.files:
@@ -1452,14 +1507,16 @@ def exec_stream(
 
 
 _VISUAL_ID_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,40}$")
-_VISUAL_ID_RCFILE_PATH = "/tmp/dtu-visual-id-rc.sh"
 
 
 def sanitize_visual_id(value: str) -> str:
-    """Validate *value* is safe to embed in a PS1 rcfile.
+    """Validate *value* is safe to embed in a shell env var.
 
     Only allows alphanumerics, dot, underscore, colon, slash, and hyphen.
-    Caps at 40 characters to keep prompts readable.
+    Caps at 40 characters to keep prompts readable. The character set
+    excludes ``$``, backticks, quotes, backslashes, and whitespace so the
+    value is safe to expand inside the profile.d script that builds PS1.
+
     Raises ValueError on invalid input.
     """
     if not _VISUAL_ID_RE.match(value):
@@ -1469,74 +1526,25 @@ def sanitize_visual_id(value: str) -> str:
     return value
 
 
-def build_visual_id_rcfile(visual_id: str) -> str:
-    """Return the bash rcfile content that injects a blue (dtu:<id>) prompt prefix.
-
-    Sources /etc/profile.d/*.sh first so DTU-provisioned PATH and passthrough
-    env vars (written to /etc/profile.d/dtu-env.sh) are available in the
-    interactive shell. `bash --rcfile <X> -i` is an interactive non-login shell
-    and does not source profile.d on its own; without this step `amplifier`,
-    `uv`, and forwarded API keys would be missing from --visual-id sessions.
-    """
-    visual_id = sanitize_visual_id(visual_id)
-    return (
-        "# amplifier-digital-twin visual id prompt injection\n"
-        # Source /etc/profile.d/*.sh so DTU-provisioned PATH and env vars are
-        # picked up in this interactive non-login shell.
-        "if [ -d /etc/profile.d ]; then\n"
-        '  for _dtu_f in /etc/profile.d/*.sh; do\n'
-        '    [ -r "$_dtu_f" ] && . "$_dtu_f"\n'
-        "  done\n"
-        "  unset _dtu_f\n"
-        "fi\n"
-        "[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc\n"
-        "[ -f ~/.bashrc ] && . ~/.bashrc\n"
-        # Re-apply after sourcing so the container's default bashrc doesn't
-        # clobber our PS1.
-        f'PS1="\\[\\e[1;34m\\](dtu:{visual_id})\\[\\e[0m\\] $PS1"\n'
-    )
-
-
-def install_visual_id_rcfile(container_id: str, visual_id: str) -> str:
-    """Write the visual-id rcfile into *container_id*. Returns the container path."""
-    content = build_visual_id_rcfile(visual_id)
-    with tempfile.NamedTemporaryFile(
-        "w", delete=False, suffix=".sh", prefix="dtu-visual-id-"
-    ) as f:
-        f.write(content)
-        tmp_path = f.name
-    try:
-        incus.file_push(
-            container_id,
-            [tmp_path],
-            _VISUAL_ID_RCFILE_PATH,
-            create_dirs=True,
-            mode="0644",
-            uid=0,
-            gid=0,
-        )
-    finally:
-        os.unlink(tmp_path)
-    return _VISUAL_ID_RCFILE_PATH
-
-
 def exec_interactive(container_id: str, *, visual_id: str | None = None) -> int:
     """Attach an interactive shell to the environment.
 
-    When *visual_id* is set, inject a blue ``(dtu:<visual_id>)`` prefix into
-    PS1 by launching bash with a custom rcfile.  The raw value is validated
-    via :func:`sanitize_visual_id` before being embedded in the rcfile.
+    Always launches ``bash -l`` (login shell, sources ``/etc/profile.d/*.sh``
+    natively -- same as the ``exec -- <cmd>`` and ``exec --stream`` paths).
+
+    When *visual_id* is set, the value is forwarded as the ``DTU_VISUAL_ID``
+    env var; the static ``/etc/profile.d/dtu-visual-id.sh`` script written
+    at launch picks it up and prepends a blue ``(dtu:<visual_id>)`` marker
+    to PS1 via PROMPT_COMMAND. The raw value is validated via
+    :func:`sanitize_visual_id` before being passed.
     """
     if not incus.container_exists(container_id):
         print(f"Error: Environment not found: {container_id}", file=sys.stderr)
         return 1
+    env: dict[str, str] | None = None
     if visual_id is not None:
-        install_visual_id_rcfile(container_id, visual_id)
-        return incus.exec_interactive(
-            container_id,
-            command=["bash", "--rcfile", _VISUAL_ID_RCFILE_PATH, "-i"],
-        )
-    return incus.exec_interactive(container_id)
+        env = {"DTU_VISUAL_ID": sanitize_visual_id(visual_id)}
+    return incus.exec_interactive(container_id, env=env)
 
 
 def file_push(
