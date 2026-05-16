@@ -164,6 +164,25 @@ See [docs/profiles.md](docs/profiles.md#mock_services) for the `mock_services` s
 - **Mock service catalog (TBD).** A catalog of pre-built mock images for common external services (M365, Slack, GSuite, etc.) allowing for testing without rate limits, manual app registration overhead, etc.
 
 
+## Known Issues
+
+### Access URLs on macOS + colima: use the VM IP, not `localhost`
+
+On macOS hosts running [colima](https://github.com/abiosoft/colima) with the default `macOS Virtualization.framework` networking, `amplifier-digital-twin list` reports access URLs in `http://localhost:<PORT>/...` form, but those URLs are **not reachable** from the macOS host.
+
+**Cause:** the DTU's Incus `proxy` device binds to `0.0.0.0:<PORT>` inside the colima Linux VM. Under Virtualization.framework, `localhost` on the macOS host is not bridged into the VM's listening sockets.
+
+**Workaround:** substitute the colima VM's IP for `localhost`. On a default colima install:
+
+```
+http://192.168.64.2:<PORT>/api/health   # instead of http://localhost:<PORT>/api/health
+```
+
+Find the VM IP via `colima status` (look for the `address` line) or `colima ls -j` (the `address` field). For non-default colima profiles, substitute that profile's VM address.
+
+**Proper fix:** the engine should detect the colima/Linux-VM topology when the calling host is non-Linux and emit VM-routable URLs in the `access` output of `amplifier-digital-twin list`. Tracking this here for now since the repo does not have issues enabled.
+
+
 ## Development
 
 For development setup and test workflows, see
