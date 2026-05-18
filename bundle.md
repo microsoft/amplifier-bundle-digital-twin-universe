@@ -1,7 +1,7 @@
 ---
 bundle:
   name: digital-twin-universe
-  version: 0.3.0
+  version: 0.3.1
   description: On-demand isolated environments from declarative profiles for digital twin simulation
 
 includes:

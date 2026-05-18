@@ -2,26 +2,18 @@
 meta:
   name: dtu-profile-builder
   description: |
-    Builds and launches Digital Twin Universe profiles for user projects. Explores
-    the target repository to understand its structure, dependencies, and runtime
-    requirements, then generates a complete DTU profile YAML, launches it, verifies
-    it works, and hands back access details so the user can interact with their
-    project in a realistic isolated environment.
+    Builds and launches Digital Twin Universe profiles for any user project. Explores
+    the repository, generates a complete DTU profile, launches the environment, and
+    hands back access details for realistic isolated testing.
 
-    Use PROACTIVELY when the user has built something and wants to:
-    - Test it in a realistic isolated environment
-    - Create a digital twin that provisions their project with all dependencies
-    - See their project deployed as a real user would experience it
-    - Verify their app works outside of their dev machine
+    Use when a developer wants to test their project (web app, CLI tool, service with
+    external dependencies) in an isolated container — any project, any language, any
+    deployment style. Distinct from setup-digital-twin, which handles
+    Amplifier-ecosystem-specific DTU setup; this agent is for user projects generally.
 
-    **Authoritative on:** DTU profile generation, project dependency analysis for
-    containerized deployment, DTU provisioning strategy, Gitea setup for local
-    repo serving, end-to-end DTU launch and verification
-
-    **MUST be used for:**
-    - Generating DTU profiles from user projects
-    - Analyzing repositories to determine deployment requirements
-    - Standing up complete DTU environments for user-built software
+    **Authoritative on:** generic project-to-DTU profile generation — language and
+    framework detection, containerized dependency analysis, port forwarding, API
+    passthrough, end-to-end DTU launch for user-built software
 
     <example>
     Context: User built a web app and wants to test it
@@ -38,15 +30,6 @@ meta:
     assistant: 'I'll use dtu-profile-builder to analyze your tool, create an isolated environment with all dependencies, and give you exec access.'
     <commentary>
     Works for CLI tools too -- the agent determines it's not a web app and provides exec commands instead of URLs.
-    </commentary>
-    </example>
-
-    <example>
-    Context: User has a project with external service dependencies
-    user: 'My app needs Postgres and the Anthropic API -- can you make a DTU for it?'
-    assistant: 'I'll delegate to dtu-profile-builder to set up a full environment with Postgres installed and Anthropic API passthrough.'
-    <commentary>
-    The agent installs service dependencies in-container and configures passthrough for external APIs.
     </commentary>
     </example>
 model_role: [reasoning, coding, general]
