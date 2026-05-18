@@ -188,7 +188,9 @@ def create_container(
     if config:
         for k, v in config.items():
             cmd.extend(["--config", f"{k}={v}"])
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=_get_launch_timeout_seconds())
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=_get_launch_timeout_seconds()
+    )
     if result.returncode != 0:
         raise IncusError(f"Failed to create container {name}: {result.stderr.strip()}")
 
@@ -348,6 +350,104 @@ def get_host_gateway_ip(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _file_push_single(
+    name: str,
+    local_file: str,
+    remote_path: str,
+    *,
+    create_dirs: bool = False,
+    mode: str | None = None,
+    uid: int | None = None,
+    gid: int | None = None,
+    timeout: int = 120,
+) -> None:
+    """Push one local file to an exact remote path inside *name*.
+
+    Internal helper used by both the directory-recursive walk and the
+    mixed-source path in :func:`file_push`.  *remote_path* is the full
+    destination path inside the container (not a parent directory).
+    """
+    dest = f"{name}/{remote_path.lstrip('/')}"
+    cmd = ["incus", "file", "push"]
+    if create_dirs:
+        cmd.append("--create-dirs")
+    if mode is not None:
+        cmd.extend(["--mode", mode])
+    if uid is not None:
+        cmd.extend(["--uid", str(uid)])
+    if gid is not None:
+        cmd.extend(["--gid", str(gid)])
+    cmd.extend([local_file, dest])
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        raise IncusError(f"Failed to push {local_file!r}: {result.stderr.strip()}")
+
+
+def _file_push_dir(
+    name: str,
+    local_dir: str,
+    container_parent: str,
+    *,
+    mode: str | None = None,
+    uid: int | None = None,
+    gid: int | None = None,
+    timeout: int = 120,
+) -> None:
+    """Recursively push *local_dir* into *container_parent*, preserving the dir name.
+
+    Algorithm:
+
+    1. Compute ``remote_root = <container_parent>/<basename(local_dir)>``.
+    2. Create ``remote_root`` via ``incus exec <name> -- mkdir -p``.
+    3. Walk the local tree (depth-first, sorted for determinism):
+
+       * Sub-directories → ``mkdir -p <remote_item>``
+       * Files          → ``incus file push <local> <name>/<remote_item>``
+
+    This sidesteps the ``is a directory`` error from the Incus HTTP API
+    (``POST /1.0/instances/{id}/files`` is file-only on many Incus versions).
+    Directories are created with system-default permissions (0755 modified by
+    umask); no explicit mode flag is added to ``mkdir``.
+    """
+    from pathlib import Path
+
+    local_path = Path(local_dir)
+    dir_name = local_path.name  # basename
+    remote_root = f"{container_parent.rstrip('/')}/{dir_name}"
+
+    # Create the root directory in the container.
+    ec, _, stderr = exec_command(name, ["mkdir", "-p", remote_root], timeout=timeout)
+    if ec != 0:
+        raise IncusError(
+            f"Failed to create remote directory {remote_root!r} in {name!r}: "
+            f"{stderr.strip()}"
+        )
+
+    # Walk the tree depth-first (sorted for determinism).
+    for item in sorted(local_path.rglob("*")):
+        rel = item.relative_to(local_path)
+        remote_item = f"{remote_root}/{rel.as_posix()}"
+        if item.is_dir():
+            ec, _, stderr = exec_command(
+                name, ["mkdir", "-p", remote_item], timeout=timeout
+            )
+            if ec != 0:
+                raise IncusError(
+                    f"Failed to create remote directory {remote_item!r} in {name!r}: "
+                    f"{stderr.strip()}"
+                )
+        else:
+            _file_push_single(
+                name,
+                str(item),
+                remote_item,
+                mode=mode,
+                uid=uid,
+                gid=gid,
+                timeout=timeout,
+            )
+
+
 def file_push(
     name: str,
     local_paths: list[str],
@@ -360,11 +460,56 @@ def file_push(
     gid: int | None = None,
     timeout: int = 120,
 ) -> None:
-    """``incus file push <path>... <name>/<container_path>``"""
+    """``incus file push <path>... <name>/<container_path>``
+
+    When any source is a directory (or *recursive* is ``True``), the function
+    automatically walks each source recursively: sub-directories are created
+    inside the container via ``incus exec -- mkdir -p`` and files are pushed
+    individually via ``incus file push``.  This sidesteps the
+    ``is a directory`` error from the Incus HTTP API
+    (``POST /1.0/instances/{id}/files`` is file-only on many Incus versions).
+
+    For purely file-based pushes (the common case), the existing single
+    ``incus file push`` invocation is used unchanged.
+
+    Directory push semantics — the directory *name* is preserved:
+    ``file_push(name, ["greeter/"], "/workspace/")`` creates
+    ``/workspace/greeter/`` in the container (not ``/workspace/`` itself).
+    This matches ``incus file push --recursive`` and ``cp -r`` conventions.
+    """
+    has_dir = any(os.path.isdir(p) for p in local_paths)
+    if has_dir or recursive:
+        for local_path in local_paths:
+            if os.path.isdir(local_path):
+                _file_push_dir(
+                    name,
+                    local_path,
+                    container_path,
+                    mode=mode,
+                    uid=uid,
+                    gid=gid,
+                    timeout=timeout,
+                )
+            else:
+                # Mixed source: file alongside a directory.  Push individually
+                # so it lands at <container_path>/<filename>.
+                filename = os.path.basename(local_path)
+                dest_path = f"{container_path.rstrip('/')}/{filename}"
+                _file_push_single(
+                    name,
+                    local_path,
+                    dest_path,
+                    create_dirs=create_dirs,
+                    mode=mode,
+                    uid=uid,
+                    gid=gid,
+                    timeout=timeout,
+                )
+        return
+
+    # All sources are plain files: use a single incus file push invocation.
     dest = f"{name}/{container_path.lstrip('/')}"
     cmd = ["incus", "file", "push"]
-    if recursive:
-        cmd.append("--recursive")
     if create_dirs:
         cmd.append("--create-dirs")
     if mode is not None:
