@@ -4,7 +4,7 @@ bundle:
   description: Adds digital twin environment capability via the amplifier-digital-twin CLI
 
 includes:
-  - bundle: git+https://github.com/microsoft/amplifier-bundle-gitea@main
+  - bundle: git+https://github.com/microsoft/amplifier-bundle-gitea@main#subdirectory=behaviors/gitea.yaml
 
 agents:
   include:
