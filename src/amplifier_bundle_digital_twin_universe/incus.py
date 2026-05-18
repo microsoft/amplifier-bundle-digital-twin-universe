@@ -15,6 +15,7 @@ import re
 import socket
 import stat
 import subprocess
+import sys
 import tempfile
 
 
@@ -123,6 +124,56 @@ def diagnose_network_failure(container_name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Configurable incus launch timeout
+#
+# On a lightly loaded host the hardcoded 120 s is ample.  On hosts with many
+# running containers (30+), ``incus launch`` can take 130–170 s, exceeding
+# the default and raising TimeoutExpired.  Set the env var below to override.
+#
+# AMPLIFIER_DTU_INCUS_LAUNCH_TIMEOUT_SECONDS
+#   Override the incus launch timeout (positive integer, 1–3600 s).
+#   Unset, empty, non-integer, zero/negative, or >3600 values all fall back
+#   to the default (120 s) with a warning to stderr.
+#   Naming follows AMPLIFIER_CONTAINER_RUNTIME / AMPLIFIER_REALITY_CHECK_RUNTIME.
+#   See docs/OPERATIONS.md §2 for the broader container runtime config context.
+# ---------------------------------------------------------------------------
+
+_DEFAULT_INCUS_LAUNCH_TIMEOUT: int = 120
+_MAX_INCUS_LAUNCH_TIMEOUT: int = 3600
+_INCUS_LAUNCH_TIMEOUT_ENV_VAR: str = "AMPLIFIER_DTU_INCUS_LAUNCH_TIMEOUT_SECONDS"
+
+
+def _get_launch_timeout_seconds() -> int:
+    """Return the incus launch timeout in seconds, read from the environment.
+
+    Reads ``AMPLIFIER_DTU_INCUS_LAUNCH_TIMEOUT_SECONDS``.  Falls back to the
+    default (120 s) for unset/empty/invalid values; emits a warning to stderr
+    for non-empty invalid values.
+    """
+    raw = os.environ.get(_INCUS_LAUNCH_TIMEOUT_ENV_VAR, "").strip()
+    if not raw:
+        return _DEFAULT_INCUS_LAUNCH_TIMEOUT
+    try:
+        value = int(raw)
+    except ValueError:
+        print(
+            f"Warning: {_INCUS_LAUNCH_TIMEOUT_ENV_VAR}={raw!r} is not a valid integer; "
+            f"using default {_DEFAULT_INCUS_LAUNCH_TIMEOUT}s.",
+            file=sys.stderr,
+        )
+        return _DEFAULT_INCUS_LAUNCH_TIMEOUT
+    if value < 1 or value > _MAX_INCUS_LAUNCH_TIMEOUT:
+        print(
+            f"Warning: {_INCUS_LAUNCH_TIMEOUT_ENV_VAR}={raw!r} is out of range "
+            f"(must be 1\u2013{_MAX_INCUS_LAUNCH_TIMEOUT}); "
+            f"using default {_DEFAULT_INCUS_LAUNCH_TIMEOUT}s.",
+            file=sys.stderr,
+        )
+        return _DEFAULT_INCUS_LAUNCH_TIMEOUT
+    return value
+
+
+# ---------------------------------------------------------------------------
 # Container lifecycle
 # ---------------------------------------------------------------------------
 
@@ -137,7 +188,7 @@ def create_container(
     if config:
         for k, v in config.items():
             cmd.extend(["--config", f"{k}={v}"])
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=_get_launch_timeout_seconds())
     if result.returncode != 0:
         raise IncusError(f"Failed to create container {name}: {result.stderr.strip()}")
 
