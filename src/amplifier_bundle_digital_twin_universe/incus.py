@@ -524,6 +524,96 @@ def file_push(
         raise IncusError(f"Failed to push file: {result.stderr.strip()}")
 
 
+def _is_remote_directory(name: str, remote_path: str, *, timeout: int = 30) -> bool:
+    """Return True if *remote_path* inside *name* is a directory.
+
+    Uses ``incus exec <name> -- test -d <path>``.  Exit code 0 → directory,
+    non-zero → file or nonexistent path.
+    """
+    ec, _, _ = exec_command(name, ["test", "-d", remote_path], timeout=timeout)
+    return ec == 0
+
+
+def _file_pull_single(
+    name: str,
+    remote_file: str,
+    local_file: str,
+    *,
+    timeout: int = 120,
+) -> None:
+    """Pull one remote file to an exact local path inside *name*.
+
+    Internal helper used by both the directory-recursive walk and the
+    mixed-source path in :func:`file_pull`.  *local_file* is the full
+    destination path on the local host (not a parent directory).
+    """
+    src = f"{name}/{remote_file.lstrip('/')}"
+    cmd = ["incus", "file", "pull", src, local_file]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        raise IncusError(f"Failed to pull {remote_file!r}: {result.stderr.strip()}")
+
+
+def _file_pull_dir(
+    name: str,
+    remote_dir: str,
+    local_parent: str,
+    *,
+    timeout: int = 120,
+) -> None:
+    """Recursively pull *remote_dir* from *name* into *local_parent*, preserving dir name.
+
+    Algorithm:
+
+    1. Compute ``local_root = <local_parent>/<basename(remote_dir)>``.
+    2. Create ``local_root`` with ``os.makedirs``.
+    3. Enumerate all files: ``incus exec <name> -- find <remote_dir> -type f``.
+    4. For each file path:
+
+       * Compute relative path under remote_dir.
+       * Create local parent directories (``os.makedirs``).
+       * Pull the file via ``incus file pull``.
+
+    This sidesteps the ``Can't pull a directory`` error from the Incus CLI
+    (``GET /1.0/instances/{id}/files?path=...`` is file-only on many Incus
+    versions).  The remote directory structure is mirrored locally under
+    *local_parent*, with the directory's own name preserved — matching
+    ``cp -r`` and ``incus file pull --recursive`` conventions.
+    """
+    import posixpath
+    from pathlib import Path
+
+    # Normalize: strip trailing slash, extract basename.
+    norm_dir = remote_dir.rstrip("/") or "/"
+    dir_name = posixpath.basename(norm_dir)
+    local_root = Path(local_parent) / dir_name
+
+    # Always create the local root directory (even for an empty remote dir).
+    local_root.mkdir(parents=True, exist_ok=True)
+
+    # Enumerate all files under the remote directory.
+    ec, stdout, stderr = exec_command(
+        name, ["find", norm_dir, "-type", "f"], timeout=timeout
+    )
+    if ec != 0:
+        raise IncusError(
+            f"Failed to enumerate files in {remote_dir!r} on {name!r}: {stderr.strip()}"
+        )
+
+    remote_files = [line.strip() for line in stdout.splitlines() if line.strip()]
+
+    for remote_file in remote_files:
+        # Compute relative path from norm_dir.
+        if remote_file.startswith(norm_dir + "/"):
+            rel = remote_file[len(norm_dir) + 1 :]
+        else:
+            rel = posixpath.basename(remote_file)
+
+        local_file = local_root / rel
+        local_file.parent.mkdir(parents=True, exist_ok=True)
+        _file_pull_single(name, remote_file, str(local_file), timeout=timeout)
+
+
 def file_pull(
     name: str,
     container_paths: list[str],
@@ -533,7 +623,49 @@ def file_pull(
     create_dirs: bool = False,
     timeout: int = 120,
 ) -> None:
-    """``incus file pull <name>/<path>... <local_path>``"""
+    """``incus file pull <name>/<path>... <local_path>``
+
+    When any source is a remote directory, the function automatically walks
+    that source recursively: the remote file tree is enumerated via
+    ``incus exec -- find`` and each file is pulled individually via
+    ``incus file pull``.  This sidesteps the
+    ``Can't pull a directory without --recursive`` error from the Incus CLI
+    (``GET /1.0/instances/{id}/files?path=...`` is file-only on many Incus
+    versions).
+
+    For purely file-based pulls (the common case), the existing single
+    ``incus file pull`` invocation is used unchanged.
+
+    Directory pull semantics — the directory *name* is preserved:
+    ``file_pull(name, ["/root/.amplifier/projects/"], "/tmp/output/")`` creates
+    ``/tmp/output/projects/`` locally.  This matches ``cp -r`` and
+    ``incus file pull --recursive`` conventions.
+    """
+    # Auto-detect: check which container paths are directories.
+    # Pre-compute once to avoid duplicate exec_command calls.
+    path_is_dir = {
+        p: _is_remote_directory(name, p, timeout=min(timeout, 30))
+        for p in container_paths
+    }
+    has_dir = any(path_is_dir.values())
+
+    if has_dir:
+        import posixpath
+
+        for container_path in container_paths:
+            if path_is_dir[container_path]:
+                _file_pull_dir(name, container_path, local_path, timeout=timeout)
+            else:
+                # Mixed source: file alongside a directory.
+                # Pull to <local_path>/<filename> so it lands next to the dir.
+                filename = posixpath.basename(container_path.rstrip("/"))
+                local_file = os.path.join(local_path, filename)
+                if create_dirs:
+                    os.makedirs(local_path, exist_ok=True)
+                _file_pull_single(name, container_path, local_file, timeout=timeout)
+        return
+
+    # All sources are plain files: use a single incus file pull invocation.
     srcs = [f"{name}/{p.lstrip('/')}" for p in container_paths]
     cmd = ["incus", "file", "pull"]
     if recursive:
