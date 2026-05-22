@@ -38,8 +38,16 @@ provision:
     # Set environment for container usage (no sandbox needed inside DTU)
     - echo 'export CODEX_UNSAFE_ALLOW_NO_SANDBOX=1' >> /root/.bashrc
 
-    # Verify installation
+    # Persist the API key into codex's own credential store. Without this,
+    # codex picks up OPENAI_API_KEY but does not authenticate properly
+    # against the Responses websocket endpoint, leading to 401 errors.
+    # `codex login --with-api-key` reads the key from stdin and writes it
+    # to /root/.codex/auth.json, which codex prefers for all auth paths.
+    - printenv OPENAI_API_KEY | codex login --with-api-key
+
+    # Verify installation and auth
     - CODEX_UNSAFE_ALLOW_NO_SANDBOX=1 codex --help | head -5
+    - codex login status
 
     # Create a workspace for the user
     - mkdir -p /home/user/project
