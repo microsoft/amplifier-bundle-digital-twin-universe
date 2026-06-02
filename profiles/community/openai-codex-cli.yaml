@@ -35,8 +35,18 @@ provision:
 
     - npm install -g @openai/codex
 
-    # Set environment for container usage (no sandbox needed inside DTU)
-    - echo 'export CODEX_UNSAFE_ALLOW_NO_SANDBOX=1' >> /root/.bashrc
+    # Configure codex for an isolated container: disable the
+    # bubblewrap filesystem sandbox and the approval gate. 
+    # `sandbox_mode = "danger-full-access"`
+    # is the real switch that maps to SandboxType::None, leaving codex to
+    # run commands in the host mount namespace with full read/write access.
+    # `approval_policy = "never"` keeps `codex exec` non-interactive.
+    - |
+      mkdir -p /root/.codex
+      cat > /root/.codex/config.toml << 'EOF'
+      sandbox_mode = "danger-full-access"
+      approval_policy = "never"
+      EOF
 
     # Persist the API key into codex's own credential store. Without this,
     # codex picks up OPENAI_API_KEY but does not authenticate properly
@@ -46,7 +56,7 @@ provision:
     - printenv OPENAI_API_KEY | codex login --with-api-key
 
     # Verify installation and auth
-    - CODEX_UNSAFE_ALLOW_NO_SANDBOX=1 codex --help | head -5
+    - codex --help | head -5
     - codex login status
 
     # Create a workspace for the user
