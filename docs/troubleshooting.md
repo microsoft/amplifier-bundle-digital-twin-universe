@@ -12,6 +12,7 @@ environments. Organized by category. Install-step-specific tables also live in
 - [Docker install issues](#docker-install-issues)
 - [Docker + Incus coexistence](#docker--incus-coexistence)
 - [Docker inside Incus (nesting)](#docker-inside-incus-nesting)
+- [Reusable / published images](#reusable--published-images)
 - [DTU launch and provisioning](#dtu-launch-and-provisioning)
 - [DTU CLI usage](#dtu-cli-usage)
 
@@ -252,6 +253,38 @@ profile (applies to all Incus containers):
 ```bash
 incus profile set default security.nesting=true
 ```
+
+
+## Reusable / published images
+
+Baking a provisioned container into a reusable image with `incus publish` and
+launching later containers from it (a profile whose `base.image` is a `local:`
+image you published).
+
+### Launching from a published image fails with `tar` hard link errors
+
+```
+Unpack failed: ... tar ... Cannot hard link to '.../dev/...': No such file or directory
+```
+
+Incus < 6.0.1 unpacks with an unanchored `tar --exclude=dev/*`, which skips every
+`dev`-named directory at any depth (common in a Docker store or `node_modules`),
+breaking hardlinks whose target lives under one. It also silently drops those
+files even when it does not error ([lxc/incus#815](https://github.com/lxc/incus/issues/815)).
+
+**Fix:** Upgrade Incus to 6.0.1+ (Incus 7 LTS includes it); see
+[installing-incus.md → Recommended version](installing-incus.md#recommended-version).
+The published image is intact, so no re-publish is needed.
+
+### Docker images are missing after launching from a published image
+
+`docker images` is empty inside a container launched from an image baked with
+Docker images present (and `docker run` of them fails). Docker only sees the
+storage backend it is currently configured for; toggling
+`features.containerd-snapshotter` in `/etc/docker/daemon.json` between bake and
+reuse hides the images (still listed by `ctr -n moby images ls`).
+
+**Fix:** Keep Docker's storage backend identical between bake and reuse.
 
 
 ## DTU launch and provisioning

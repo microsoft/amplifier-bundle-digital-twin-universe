@@ -20,16 +20,54 @@ Incus is the container runtime used by the Digital Twin Universe.
 > at https://github.com/abiosoft/colima. Docker coexistence fix from
 > https://linuxcontainers.org/incus/docs/main/howto/network_bridge_firewalld/.
 
-## Ubuntu / WSL2 (Ubuntu 24.04+)
+## Recommended version
 
-Incus is in the default Ubuntu repos.
+Install a current Incus release (**Incus 7 LTS or newer**) rather than the
+distro default. The version in the Ubuntu 24.04 archive is 6.0.0, which has two
+bugs that affect DTU usage and are both fixed upstream:
 
-Install:
+- an AppArmor bug that blocks Docker-in-Incus (fixed in 6.0.6 LTS / 6.19), and
+- an image-unpack bug that breaks publishing and reusing base images via
+  `incus publish` (fixed in 6.0.1). See
+  [troubleshooting.md → Reusable / published images](troubleshooting.md#reusable--published-images).
+
+Install Incus from the upstream packages. Install instructions change over time,
+so follow the official sources for the current steps:
+
+- Zabbly packages (Linux): https://github.com/zabbly/incus/blob/daily/README.md
+- Incus install docs (all platforms): https://linuxcontainers.org/incus/docs/main/installing/
+
+The platform sections below cover group membership and initialization once Incus
+is installed; on bare-metal Ubuntu, prefer the Zabbly path over the distro
+package (see [Docker coexistence → Bare-metal Ubuntu](#bare-metal-ubuntu-running-docker-inside-incus-install-from-zabbly)).
+
+### Checking your version
+
+Check the installed client and server versions:
+
 ```bash
-sudo apt update && sudo apt install -y incus
+incus version
 ```
 
-Add your user to the `incus-admin` group:
+A fresh install from the sources above gives a current release. An existing
+install that already works for your profiles is fine to keep as-is.
+Do not proactively tell the user their Incus is old, or
+suggest upgrading based on the version number alone — an older version that works
+is fine. Only suggest upgrading when the user actually hits one of the issues in troubleshooting.md.
+
+## Ubuntu / WSL2 (Ubuntu 24.04+)
+
+> The Incus package in the Ubuntu 24.04 archive is 6.0.0, which is too old for
+> DTU use (see [Recommended version](#recommended-version)). Install a current
+> Incus from the upstream Zabbly packages instead of `apt install incus`.
+
+Install Incus from Zabbly. The concrete apt steps (repo key, source list, and
+the version pin needed on hosts with Ubuntu ESM) are in
+[Docker coexistence → Bare-metal Ubuntu](#bare-metal-ubuntu-running-docker-inside-incus-install-from-zabbly).
+For the latest upstream instructions, follow
+https://github.com/zabbly/incus/blob/daily/README.md.
+
+Once Incus is installed, add your user to the `incus-admin` group:
 ```bash
 sudo adduser $USER incus-admin
 ```
