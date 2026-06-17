@@ -82,9 +82,26 @@ provision:
     # Workspace -- empty dir where a user can launch Amplifier
     - mkdir -p /home/user/project
 
+    # Warm-up: install provider modules now so the first readiness smoke
+    # below doesn't hit the 30s command timeout on a cold cache.
+    - 'amplifier run "Say exactly: warmup-ok"'
+
 update:
   refresh_pypi: true
   cmds:
-    # Clear cached modules so Amplifier re-clones from the (rewritten) URLs.
-    - rm -rf /root/.amplifier/cache/
+    # Force a clean re-resolve from the (rewritten) URLs. `amplifier reset
+    # --remove cache -y` clears the cache AND reinstalls, so the editable
+    # provider installs are re-created -- unlike `rm -rf ~/.amplifier/cache`,
+    # which deletes the trees those installs point into and leaves them
+    # dangling ("No providers available").
+    - amplifier reset --remove cache -y
     - uv tool install --reinstall --force git+https://github.com/microsoft/amplifier
+    # Warm-up: trigger the lazy provider install now so the post-update
+    # readiness smoke doesn't race the cold install and hit the 30s timeout.
+    - 'amplifier run "Say exactly: warmup-ok"'
+
+readiness:
+  - name: amplifier-installed
+    command: amplifier --version
+  - name: providers-smoke
+    command: 'amplifier run "Say exactly: dtu-ready"'
