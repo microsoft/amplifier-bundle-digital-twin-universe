@@ -122,9 +122,7 @@ class TestExecStream:
 
     def test_stream_no_json_wrapper(self, dtu_env):
         """--stream output is raw text, not a JSON envelope."""
-        result = run_cli(
-            "exec", "--stream", dtu_env["id"], "--", "echo", "raw-text"
-        )
+        result = run_cli("exec", "--stream", dtu_env["id"], "--", "echo", "raw-text")
         assert result.returncode == 0
         try:
             parsed = json.loads(result.stdout)
@@ -147,9 +145,7 @@ class TestExecDefaultJson:
 
     def test_default_exec_returns_json(self, dtu_env):
         """Without --stream, exec returns the JSON envelope."""
-        data, _ = run_cli_json(
-            "exec", dtu_env["id"], "--", "echo", "json-mode"
-        )
+        data, _ = run_cli_json("exec", dtu_env["id"], "--", "echo", "json-mode")
         assert data["exit_code"] == 0
         assert "json-mode" in data["stdout"]
         assert "stderr" in data
