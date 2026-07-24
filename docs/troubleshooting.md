@@ -316,6 +316,18 @@ Check container networking (the foundation install fetches from GitHub) and
 compute allocation. If networking is the cause, work through
 [Docker + Incus coexistence](#docker--incus-coexistence) first.
 
+### Streaming from an in-container service arrives all at once
+
+A client inside the environment sees nothing until the response finishes, then
+gets the whole body at once. The proxy buffers response bodies, so loopback
+traffic must not go through it. Launch exempts loopback since v0.3.2; check
+nothing is overriding it:
+
+```bash
+amplifier-digital-twin exec <id> -- bash -lc 'env | grep -i proxy'
+# expect: no_proxy=localhost,127.0.0.1,::1 (and NO_PROXY)
+```
+
 ### `Environment not found` for a previously created environment
 
 The Incus container was stopped or removed externally. Create a fresh
@@ -335,3 +347,9 @@ Extract just the value:
 # Right
 --var GITEA_TOKEN=$(amplifier-gitea token <id> | jq -r .token)
 ```
+
+
+## Not listed here?
+
+If the behavior contradicts these docs, check whether it changed between
+versions: [CHANGELOG.md](CHANGELOG.md).

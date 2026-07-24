@@ -82,6 +82,11 @@ Optional. When present and fully resolved, launch configures a mitmproxy-based
 HTTPS proxy inside the environment and exports `HTTP_PROXY` / `HTTPS_PROXY`
 for later provisioning commands and interactive use.
 
+Loopback is exempted (`no_proxy` / `NO_PROXY` = `localhost,127.0.0.1,::1`), so
+in-container traffic to localhost goes direct instead of through mitmproxy. A
+profile can override this by forwarding the host's own `no_proxy` via
+`passthrough`.
+
 Shape:
 
 ```yaml

@@ -877,6 +877,16 @@ def _write_env(
                 'export HTTPS_PROXY="http://localhost:8080"',
                 'export http_proxy="http://localhost:8080"',
                 'export https_proxy="http://localhost:8080"',
+                # Exempt loopback from the proxy.  Without this, an
+                # in-container client talking to an in-container server on
+                # localhost routes through mitmproxy, which buffers whole
+                # response bodies and destroys SSE / token streaming.
+                # Nothing needs loopback traffic proxied: the pypiserver
+                # redirect happens proxy-side (the addon rewrites
+                # flow.request.host) and mock services resolve to the host
+                # gateway IP, not loopback.
+                'export no_proxy="localhost,127.0.0.1,::1"',
+                'export NO_PROXY="localhost,127.0.0.1,::1"',
                 # uv bundles its own TLS certs and ignores the system store
                 # by default.  UV_NATIVE_TLS makes it use OpenSSL / the
                 # system cert bundle where we installed the mitmproxy CA.
