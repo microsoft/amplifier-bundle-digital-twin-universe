@@ -317,3 +317,9 @@ For any error, unexpected behavior, or environment issue, read the troubleshooti
 ```
 read_file("@digital-twin-universe:docs/troubleshooting.md")
 ```
+
+If the behavior contradicts the docs, check what changed between versions:
+
+```
+read_file("@digital-twin-universe:docs/CHANGELOG.md")
+```
