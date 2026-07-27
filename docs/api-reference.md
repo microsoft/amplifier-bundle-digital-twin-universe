@@ -508,11 +508,13 @@ amplifier-digital-twin file-push <id> <source>... <container_path> [flags]
     (e.g. `./data/` → `/root/app/` produces `/root/app/data/...`).
 
 `-r/--recursive` (default: off)
-  Recursively transfer directories. Required when any source is a directory;
-  must be off (the default) for single-file or multi-file pushes -- otherwise
-  the destination path is treated as a directory and the source is created
+  Directory sources are **auto-detected** and pushed recursively regardless
+  of this flag (each lands at `<container_path>/<basename>`, `cp -r`
+  convention). The flag's only remaining effect is on **file-only** pushes:
+  it treats the destination as a parent directory and the source is created
   inside it (e.g. `file-push -r foo.txt /dest/file.txt` creates
-  `/dest/file.txt/foo.txt`, where `file.txt` becomes a directory).
+  `/dest/file.txt/foo.txt`, where `file.txt` becomes a directory). Leave it
+  off (the default) for exact-path single-file or multi-file pushes.
 
 `-p/--create-dirs` (default: on)
   Create any intermediate directories necessary in the container.
@@ -573,8 +575,12 @@ amplifier-digital-twin file-pull <id> <container_path>... <local_path> [flags]
   an existing directory.
 
 `-r/--recursive` (default: off)
-  Recursively transfer directories. Required when any source is a directory;
-  leave off for single-file or multi-file pulls.
+  Remote directory sources are **auto-detected** and pulled recursively
+  regardless of this flag (each lands at `<local_path>/<basename>`, `cp -r`
+  convention). For file-only pulls the flag is forwarded to
+  `incus file pull --recursive`; regular files are unaffected, but it
+  changes symlink handling: with the flag a symlink source is recreated as
+  a symlink instead of being dereferenced.
 
 `-p/--create-dirs` (default: on)
   Create any intermediate directories necessary on the host.

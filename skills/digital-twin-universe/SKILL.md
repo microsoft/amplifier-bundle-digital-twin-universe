@@ -166,16 +166,22 @@ the destination.
 amplifier-digital-twin file-push <id> ./config.yaml /root/config.yaml
 amplifier-digital-twin file-pull <id> /var/log/app.log ./app.log
 
-# Directory (-r is required when any source is a directory)
-amplifier-digital-twin file-push -r <id> ./data/ /root/app/
-amplifier-digital-twin file-pull -r <id> /root/results/ ./
+# Directory (auto-detected; -r not required)
+amplifier-digital-twin file-push <id> ./data/ /root/app/
+amplifier-digital-twin file-pull <id> /root/results/ ./
 ```
 
-`-r/--recursive` defaults to **off** for both commands. Pass `-r` when any
-source is a directory; leave it off for single-file or multi-file transfers.
+`-r/--recursive` defaults to **off** for both commands. Directory sources
+are **auto-detected** and transferred recursively regardless of the flag.
+Leave `-r` off for single-file or multi-file transfers: on push it changes
+the destination semantics (the destination is treated as a parent directory
+and each file lands at `<destination>/<filename>`), and on pull it changes
+symlink handling (with `-r` a symlink source is recreated as a symlink
+instead of being dereferenced).
 
-On `file-push -r`, the destination is treated as the **parent directory**
-and the source's basename is preserved inside it. Pushing `./data/` to
+When pushing a directory, the destination is treated as the **parent
+directory** and the source's basename is preserved inside it (`cp -r`
+convention). Pushing `./data/` to
 `/root/app/` lands files at `/root/app/data/...`. To put contents directly
 at `/root/app/data/`, push to `/root/app/` and let the basename land
 naturally (do not push to `/root/app/data/` -- that produces
