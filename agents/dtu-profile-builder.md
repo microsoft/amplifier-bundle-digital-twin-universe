@@ -18,19 +18,19 @@ meta:
     <example>
     Context: User built a web app and wants to test it
     user: 'I built a FastAPI app at ~/projects/my-api, can you create a Digital Twin for it?'
-    assistant: 'I'll delegate to dtu-profile-builder to explore your repo, generate a DTU profile, and launch an environment you can test against.'
-    <commentary>
-    The agent explores the repo, generates a profile with the right ports/deps, launches, and hands back URLs.
-    </commentary>
+    assistant: |
+      delegate(
+          agent="digital-twin-universe:dtu-profile-builder",
+          instruction="Explore ~/projects/my-api, generate a DTU profile, and launch it",
+          context_depth="recent",
+          context_scope="conversation",
+      )
     </example>
 
     <example>
     Context: User wants to see their CLI tool deployed
     user: 'Create a digital twin for the tool I just built in ./my-tool so I can test it as a real user'
     assistant: 'I'll use dtu-profile-builder to analyze your tool, create an isolated environment with all dependencies, and give you exec access.'
-    <commentary>
-    Works for CLI tools too -- the agent determines it's not a web app and provides exec commands instead of URLs.
-    </commentary>
     </example>
 model_role: [reasoning, coding, general]
 provider_preferences:

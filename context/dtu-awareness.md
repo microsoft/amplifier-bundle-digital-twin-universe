@@ -13,7 +13,7 @@ You have access to Digital Twin Universe (DTU) capabilities for on-demand isolat
 
 Build a DTU profile for a project, launch and verify an environment (also handles Gitea setup for local repos):
 ```
-delegate(agent="digital-twin-universe:dtu-profile-builder", instruction="<what the user needs>", context_depth="all", context_scope="full")
+delegate(agent="digital-twin-universe:dtu-profile-builder", instruction="<what the user needs>", context_depth="recent", context_scope="conversation")
 ```
 
 If the user's request doesn't match this agent (e.g. general DTU questions, installation help, troubleshooting), load the skill instead:
