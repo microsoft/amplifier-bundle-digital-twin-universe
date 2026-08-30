@@ -391,6 +391,31 @@ This keeps the profile self-contained and launchable on any machine.
 
 ### 6. Launch the DTU
 
+**Pre-launch check (REQUIRED): count existing instances first.**
+
+```bash
+amplifier-digital-twin list
+```
+
+Look at how many DTU environments already exist before adding another one.
+There is no reaper and no TTL -- anything already running has been left
+there by a previous launch that was never torn down. If the count is already
+high (as a rule of thumb: double digits), stop and reconsider before
+launching:
+
+- Is an existing instance already suitable for this task (check `profile` /
+  `created_at`)?
+- Should you flag the pile-up to the user/caller instead of silently adding
+  to it?
+
+The CLI backstops this judgment call with a hard ceiling: `launch` refuses
+(non-zero exit, no container created) once live instances reach
+`--max-instances` (default 15; override with `--max-instances N`, the
+`AMPLIFIER_DTU_MAX_INSTANCES` env var, or `--max-instances 0` for
+unlimited -- see [api-reference.md](../docs/api-reference.md#launch)). If you
+hit this refusal, do not reflexively raise the cap -- destroy instances you
+no longer need, or explicitly justify the override in your report.
+
 ```bash
 amplifier-digital-twin launch <profile-path> \
   [--hostname <descriptive-name>] \
@@ -427,13 +452,27 @@ If launch fails, read the error carefully. Common issues:
 - Missing system packages in provision (add them and retry)
 - Network issues reaching external services (check passthrough config)
 - Build failures during installation (check the build command)
+- The `--max-instances` guard refused the launch (see the pre-launch check
+  above) -- this is not a bug to work around; destroy unneeded instances or
+  justify an explicit override
 
-If a provision command fails, fix the profile and try again. Destroy the failed
-environment first (use the exact `id` from your `launch` output):
+**Destroy on terminal failure -- not optional.** If a provision command fails
+and you are not going to retry with the same `id` (i.e. you're about to fix
+the profile and re-launch, or you're giving up on this attempt entirely),
+destroy the failed environment **immediately**, before doing anything else.
+A half-provisioned, permanently-failed container left running is exactly the
+kind of orphan this workflow must never produce -- it consumes host
+resources indefinitely and nobody will come back for it. Use the exact `id`
+from your `launch` output:
 
 ```bash
 amplifier-digital-twin destroy <id>
 ```
+
+Do this for every terminal failure, not just the ones you happen to notice --
+including failures during Wait for Readiness (Step 7) and Verify (Step 8) if
+you are abandoning the attempt rather than iterating on the same running
+instance.
 
 ### 7. Wait for Readiness
 
@@ -619,6 +658,18 @@ Profile saved to: .amplifier/digital-twin-universe/profiles/<profile-name>.yaml
 5. Where the profile YAML was saved (so the user can iterate on it)
 6. A **state changes** section listing anything you changed on the host (installed CLIs, created Gitea environments, modified config, created files/directories)
 7. A **issues encountered** section listing anything that failed, timed out, or required workarounds -- even if you resolved it
+8. A **teardown ownership** statement -- REQUIRED, not optional. State explicitly,
+   for the instance `id` you launched, exactly one of:
+   - "Destroyed `<id>` -- work complete, no longer needed." (you already ran
+     `destroy` before finishing this report), or
+   - "Instance `<id>` is being handed off to <the user / the calling
+     session / a named owner> for continued use; they are responsible for
+     `destroy`-ing it when done."
+
+   There is no third option. Remember: no reaper or TTL will ever clean this
+   up for you -- an instance left running with no stated owner is an orphan
+   from the moment you hand back your report, not something that resolves
+   itself later.
 
 
 ## Iteration

@@ -40,8 +40,23 @@ def main() -> None:
     default=None,
     help="Hostname for .local mDNS registration. Requires avahi-utils.",
 )
+@click.option(
+    "--max-instances",
+    "max_instances",
+    type=int,
+    default=None,
+    help=(
+        "Refuse to launch if the number of live DTU instances already meets "
+        "or exceeds this count (no container is created). 0 = unlimited. "
+        "Default: AMPLIFIER_DTU_MAX_INSTANCES env var if set, else 15."
+    ),
+)
 def launch(
-    profile: str, var: tuple[str, ...], name: str | None, hostname: str | None
+    profile: str,
+    var: tuple[str, ...],
+    name: str | None,
+    hostname: str | None,
+    max_instances: int | None,
 ) -> None:
     """Launch a new Digital Twin Universe from a profile."""
     variables: dict[str, str] = {}
@@ -53,7 +68,13 @@ def launch(
         variables[key] = value
 
     try:
-        result = engine.launch(profile, variables, name=name, hostname=hostname)
+        result = engine.launch(
+            profile,
+            variables,
+            name=name,
+            hostname=hostname,
+            max_instances=max_instances,
+        )
         click.echo(json.dumps(result))
     except Exception as exc:
         click.echo(f"Error: {exc}", err=True)
