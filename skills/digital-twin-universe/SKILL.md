@@ -1,7 +1,10 @@
 ---
 name: digital-twin-universe
-description: Use when the user needs an isolated, realistic deployment environment to test code beyond "tests pass on my machine." Covers launching environments from declarative profiles, executing commands inside them, managing their lifecycle, debugging networking or provisioning issues, and working with Incus containers. Also use when the user wants to simulate an end-user experience (e.g. Amplifier CLI, web UIs) without touching production infrastructure. Triggers on digital twin, DTU, isolated environment, simulation environment, amplifier-digital-twin, incus container, profile launch, test in realistic environment, deploy simulation. ALWAYS use this skill whenever a "Digital Twin" is mentioned!
+description: Launch and manage isolated, realistic environments (Digital Twin Universe) to test code beyond "tests pass on my machine" and simulate end-user experiences. Debug networking/provisioning as needed. Triggers on digital twin, DTU, isolated environment, simulation environment, amplifier-digital-twin, incus container, profile launch, test in realistic environment, deploy simulation. ALWAYS use this skill whenever a "Digital Twin" is mentioned!
 user-invocable: true
+visibility:
+  priority: 5
+  summary: Launch and manage isolated Digital Twin Universe environments to test code as if deployed; ALWAYS use when a Digital Twin/DTU is mentioned.
 ---
 
 # Digital Twin Universe Environments
