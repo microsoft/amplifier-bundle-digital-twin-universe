@@ -1038,6 +1038,80 @@ def _run_provisioning(container_name: str, commands: list[str]) -> None:
 
 
 # ===================================================================
+# Instance cap enforcement
+# ===================================================================
+#
+# There is no reaper or TTL anywhere in this system -- an instance launched
+# and never destroyed sits there indefinitely.  Repeated or looped launches
+# (e.g. from an automated eval/pipeline, or many stateless agent delegations
+# each launching their own instance) can silently accumulate containers until
+# the host runs out of disk, memory, or CPU.  This guard is a hard backstop:
+# `launch` refuses outright once the number of live DTU instances meets a
+# configurable cap.  It does not destroy anything and is not a substitute for
+# callers actually tearing down instances they no longer need -- see
+# docs/profiles.md#instance-lifecycle.
+
+_DEFAULT_MAX_INSTANCES = 15
+_MAX_INSTANCES_ENV_VAR = "AMPLIFIER_DTU_MAX_INSTANCES"
+
+
+def resolve_max_instances(cli_value: int | None) -> int:
+    """Resolve the effective ``--max-instances`` cap.
+
+    Resolution order (first one set wins):
+      1. ``cli_value`` -- the ``--max-instances`` CLI flag, if passed.
+      2. ``AMPLIFIER_DTU_MAX_INSTANCES`` environment variable, if set.
+      3. Default: ``15``.
+
+    A resolved value of ``0`` means unlimited (the guard is disabled).
+    """
+    if cli_value is not None:
+        return cli_value
+    env_value = os.environ.get(_MAX_INSTANCES_ENV_VAR)
+    if env_value is not None and env_value.strip() != "":
+        try:
+            return int(env_value.strip())
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid {_MAX_INSTANCES_ENV_VAR} value: {env_value!r}. "
+                "Must be an integer."
+            ) from exc
+    return _DEFAULT_MAX_INSTANCES
+
+
+def count_live_instances() -> int:
+    """Count live DTU-managed instances.
+
+    Reuses the exact same discovery mechanism as ``list`` / ``list_environments``
+    (``incus list <managed-by key>=<value> --format=json``), so this count always
+    matches what ``amplifier-digital-twin list`` reports.
+    """
+    return len(incus.list_instances(_MANAGED_BY_KEY, _MANAGED_BY_VALUE))
+
+
+def _enforce_max_instances(max_instances: int) -> None:
+    """Raise if the live instance count already meets/exceeds *max_instances*.
+
+    ``max_instances == 0`` means unlimited -- the check is skipped entirely.
+    Must be called *before* any container is created so a refusal never
+    leaves a partially-provisioned instance behind.
+    """
+    if max_instances == 0:
+        return
+    current = count_live_instances()
+    if current >= max_instances:
+        raise RuntimeError(
+            f"Refusing to launch: {current} DTU instance(s) already running, "
+            f"which meets or exceeds --max-instances={max_instances}. "
+            "Nothing here auto-deletes instances -- destroy ones you no "
+            "longer need (`amplifier-digital-twin list` / "
+            "`amplifier-digital-twin destroy <id>`), or raise the cap "
+            "explicitly with --max-instances N (0 = unlimited) or the "
+            f"{_MAX_INSTANCES_ENV_VAR} environment variable."
+        )
+
+
+# ===================================================================
 # Public API
 # ===================================================================
 
@@ -1047,9 +1121,14 @@ def launch(
     variables: dict[str, str],
     name: str | None = None,
     hostname: str | None = None,
+    max_instances: int | None = None,
 ) -> dict:
     """Launch a Digital Twin Universe.  Returns the JSON status dict."""
     incus.check_incus()
+
+    # Enforce the instance cap before touching Incus at all -- a refusal here
+    # must never leave a partially-created container behind.
+    _enforce_max_instances(resolve_max_instances(max_instances))
 
     # Quick-load to get the base image.
     host_profile = load_profile(profile_arg, variables)

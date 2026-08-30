@@ -76,6 +76,47 @@ override it by setting it explicitly in `base.config`, including setting it to
 See [docs/docker-in-incus.md](docker-in-incus.md) for the Docker nesting use
 case.
 
+### Resource limits
+
+Set per-instance CPU and memory ceilings via `base.config`, the same
+mechanism as any other Incus config key:
+
+```yaml
+base:
+  image: ubuntu:24.04
+  config:
+    limits.cpu: "2"          # number of vCPUs (Incus accepts a count or a range)
+    limits.memory: "4GiB"    # Incus memory suffix syntax (e.g. 512MiB, 4GiB)
+```
+
+There is no default resource limit applied by the CLI beyond what the Incus
+image profile itself sets -- an unbounded instance can consume as much
+CPU/memory as the host has available. Setting `limits.cpu` / `limits.memory`
+is cheap insurance against a single misbehaving or long-lived instance
+starving the host, and is especially worth doing for anything launched
+unattended (e.g. by an automated pipeline or a delegated agent) where a
+human isn't watching resource usage in real time. See the [Instance
+lifecycle](#instance-lifecycle) section below for why this matters given
+there is no automatic cleanup.
+
+### Instance lifecycle
+
+**`launch` creates an unmanaged, long-lived Incus container.** Once created,
+it keeps running -- consuming CPU, memory, and disk -- until something
+explicitly destroys it. There is **no reaper and no TTL**: nothing in this
+system ever automatically stops or deletes an instance based on age,
+idleness, or any other signal. Teardown (`amplifier-digital-twin destroy
+<id>`) is entirely the launching caller's responsibility, every time.
+
+The CLI provides one enforcement mechanism to keep unbounded launching from
+silently exhausting the host: `launch --max-instances N` (see
+[api-reference.md](api-reference.md#launch)) refuses to create a new
+instance once the number of live DTU-managed instances reaches `N`. This
+bounds *how many* orphans can accumulate before launches start failing; it
+does not destroy anything on your behalf. Combine it with the resource
+limits above to bound how much damage each individual instance can do while
+it's running.
+
 ## `url_rewrites`
 
 Optional. When present and fully resolved, launch configures a mitmproxy-based

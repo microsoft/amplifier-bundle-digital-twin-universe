@@ -9,6 +9,13 @@ All commands return JSON to stdout unless noted otherwise.
 
 ## Lifecycle
 
+> **Instance lifecycle.** `launch` creates an unmanaged, long-lived Incus
+> container. There is no reaper and no TTL -- nothing here ever destroys an
+> instance automatically. Teardown (`destroy`) is always the caller's
+> responsibility. See [profiles.md#instance-lifecycle](profiles.md#instance-lifecycle)
+> for the full explanation and [`launch --max-instances`](#launch) for the
+> guard that bounds how many can accumulate.
+
 ### `launch`
 
 Launch a new Digital Twin Universe from a profile. Creates an Incus container,
@@ -20,7 +27,8 @@ provisioning, and returns connection details.
 amplifier-digital-twin launch <profile> \
   [--var KEY=VALUE ...] \
   [--name my-env] \
-  [--hostname my-project]
+  [--hostname my-project] \
+  [--max-instances N]
 ```
 
 `<profile>` (required)
@@ -43,6 +51,38 @@ amplifier-digital-twin launch <profile> \
   Overrides any `hostname` set in the profile's `access` section.
   Requires `avahi-utils`. If unavailable, silently skipped.
   See [profiles.md](profiles.md#hostname-support) for platform details.
+
+`--max-instances N` (optional)
+  Refuse to launch if the number of currently live DTU-managed instances
+  (the same population `list` returns) is already `>= N`. On refusal, `launch`
+  exits non-zero *before* creating any Incus container, and prints an error
+  naming the current instance count, the cap that was hit, and how to
+  override it. `N = 0` means unlimited (the guard is disabled).
+
+  Cap resolution order (first one set wins):
+  1. `--max-instances` flag, if passed
+  2. `AMPLIFIER_DTU_MAX_INSTANCES` environment variable, if set
+  3. Default: `15`
+
+  This exists because nothing else in the system ever destroys an instance
+  automatically -- see [profiles.md#instance-lifecycle](profiles.md#instance-lifecycle).
+  Without a cap, repeated or looped launches (e.g. from an automated
+  pipeline or a delegated agent that doesn't itself tear down after every
+  run) can silently accumulate containers until the host runs out of disk,
+  memory, or CPU. The cap is a backstop, not a substitute for destroying
+  instances you no longer need -- raising or disabling it does not make the
+  underlying resource pressure go away.
+
+  ```bash
+  # Use a higher cap for a workload that legitimately needs more instances
+  amplifier-digital-twin launch my-profile --max-instances 30
+
+  # Disable the guard entirely
+  amplifier-digital-twin launch my-profile --max-instances 0
+
+  # Same override via environment variable (useful for CI/pipelines)
+  AMPLIFIER_DTU_MAX_INSTANCES=0 amplifier-digital-twin launch my-profile
+  ```
 
 Returns (example):
 

@@ -287,8 +287,69 @@ tear down environments belonging to other sessions.
 
 There is currently no owner or session identifier in the `list` output. If you
 need to identify your instance, match on the `id` you received from `launch`,
-or use `created_at` to narrow down which instance is yours. 
-If you are unsure, leave it and tell the user to clean up when they are ready.
+or use `created_at` to narrow down which instance is yours.
+
+### Destroy-what-you-created (default posture)
+
+**Every `launch` you perform pairs with one of these two outcomes before you
+consider the work finished:**
+
+1. **Destroy it.** Once the work that needed the instance completes or fails,
+   `destroy` the specific `id` you launched. This is the default outcome for
+   the overwhelming majority of DTU usage (verification runs, one-off tests,
+   throwaway exploration).
+2. **Explicit handoff.** If the instance must outlive your session (e.g. the
+   user wants to keep exploring it interactively), your final report to the
+   user or caller MUST name the exact instance `id` and state who now owns
+   tearing it down. A handoff that doesn't name an owner is not a handoff --
+   it's an orphan.
+
+**"If you are unsure, leave it" is no longer an acceptable default.** An
+instance nobody destroys and nobody owns does not get cleaned up later --
+there is no reaper (see below). Stateless, repeated delegations that each
+independently default to "leave it" is exactly how a machine ends up with
+dozens of forgotten containers: no single delegation looks wrong in
+isolation, but nothing ever converges on zero. If you are genuinely unsure
+whether an instance is still needed, that uncertainty itself must be surfaced
+explicitly in your report (naming the `id`) rather than silently resolved by
+leaving the container running.
+
+### Count before you launch
+
+Before launching a new instance, run `amplifier-digital-twin list` and look
+at how many DTU environments already exist. If a substantial number are
+already running, reconsider whether you actually need another one --
+especially before a batch or loop that will launch more than one. A pile of
+existing instances is a signal that cleanup isn't keeping pace with launches,
+not a reason to add to the pile.
+
+The CLI enforces a hard ceiling on top of this judgment call: `launch`
+refuses (non-zero exit) once live DTU instances reach `--max-instances`
+(default 15, override via `--max-instances` or `AMPLIFIER_DTU_MAX_INSTANCES`,
+`0` = unlimited). See [api-reference.md](../../docs/api-reference.md) for the
+full flag reference. Treat a refusal from this guard as a real signal to
+destroy unneeded instances or use an explicit override -- not as an obstacle
+to route around reflexively.
+
+### No TTL, no reaper -- ever
+
+**Nothing in this system ever automatically destroys an instance.** There is
+no time-to-live, no idle timeout, no background sweep that reclaims
+forgotten containers. An instance launched and never destroyed will sit
+there indefinitely, consuming disk, memory, and CPU, until a human or agent
+explicitly runs `destroy` (or deletes the underlying Incus container
+directly). Teardown is -- and will remain -- entirely the launching caller's
+responsibility. Do not assume "it'll get cleaned up eventually."
+
+### Resource limits
+
+Profiles can (and, for anything beyond a quick throwaway check, should) set
+per-instance resource limits via `base.config` (`limits.memory`,
+`limits.cpu`). This bounds how much damage a single misbehaving or
+long-lived instance can do to the host even if cleanup is delayed. See
+[profiles.md](../../docs/profiles.md#base) for the schema and examples. Resource
+limits are a mitigation, not a substitute for actually destroying instances
+you no longer need.
 
 
 ### Docker Inside a Digital Twin Universe Environment (pre-flight)
