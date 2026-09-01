@@ -315,8 +315,12 @@ def update(id: str, var: tuple[str, ...], skip_readiness: bool) -> None:
     "--recursive/--no-recursive",
     default=False,
     help=(
-        "Recursively transfer directories (default: off). Required when any "
-        "source is a directory. Leave off for single-file or multi-file pushes."
+        "Directories are auto-detected and pushed recursively regardless of "
+        "this flag; each lands at <destination>/<basename> (cp -r convention). "
+        "With file-only sources, this flag changes the destination semantics: "
+        "the destination is treated as a parent directory and each file lands "
+        "at <destination>/<filename>. Leave off (default) for exact-path "
+        "single-file or multi-file pushes."
     ),
 )
 @click.option(
@@ -390,8 +394,12 @@ def file_push(
     "--recursive/--no-recursive",
     default=False,
     help=(
-        "Recursively transfer directories (default: off). Required when any "
-        "source is a directory. Leave off for single-file or multi-file pulls."
+        "Remote directories are auto-detected and pulled recursively "
+        "regardless of this flag; each lands at <local_path>/<basename> "
+        "(cp -r convention). For file-only pulls the flag is forwarded to "
+        "'incus file pull --recursive'; regular files are unaffected, but "
+        "it changes symlink handling: with the flag a symlink source is "
+        "recreated as a symlink instead of being dereferenced."
     ),
 )
 @click.option(
