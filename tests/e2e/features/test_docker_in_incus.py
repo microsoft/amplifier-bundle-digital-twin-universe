@@ -19,7 +19,6 @@ Run with::
 """
 
 import http.server
-import json
 import threading
 import urllib.request
 

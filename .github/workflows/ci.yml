@@ -1,0 +1,224 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Minimal read-only token -- no secrets needed or exposed.
+# Safe for Dependabot PRs and external fork contributors.
+permissions:
+  contents: read
+
+# There are no path filters anywhere in this file, on purpose. A path filter
+# that does not match leaves a required check permanently "expected" (or
+# silently absent), which is indistinguishable from a passing one. These jobs
+# are cheap; they run on every push and PR.
+#
+# No step swallows its exit code either: no error-suppressing job or step
+# directive, and no shell fallback that discards a non-zero status. Every
+# step's exit code is the gate.
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Lint -- pyflakes + pycodestyle errors across the whole repo.
+  #
+  # This repo carries a pyproject.toml but no [tool.ruff] config and no
+  # committed uv.lock (uv.lock is in .gitignore), so the sibling template's
+  # `uv sync --frozen --only-group dev && uv run ruff` shape does not apply --
+  # `--frozen` fails outright without a lockfile. The tool and the rule set
+  # are both pinned here instead:
+  #
+  #   * ruff 0.16.6      -- pinned so a future ruff release cannot turn this
+  #                         red without a visible change to this file. Same
+  #                         pin as the sibling bundles wayfinder, notify and
+  #                         browser-tester. The repo's own dev group declares
+  #                         a bare, unpinned `ruff`, which would let the gate
+  #                         drift.
+  #   * --isolated       -- ignore any ruff config, including one added later,
+  #                         so the gate means the same thing every run.
+  #   * --select E4,E7,E9,F
+  #                      -- ruff's own classic default tier: pycodestyle
+  #                         errors plus pyflakes (undefined names, unused
+  #                         imports, f-string bugs). Real breakage, not style.
+  #
+  # Clean on main as of the preceding commit, which fixes the one genuine F401
+  # this gate surfaced at 5b3767d. Ruff 0.16's FULL modern default tier is NOT
+  # used here and would be red: 101 findings, none of them breakage
+  # (32 PLW1510, 31 I001, 16 BLE001, 6 SIM117, 5 ISC004, 4 S110, 3 TRY004,
+  # 1 SIM114, 1 S102, 1 PERF102, plus the F401 fixed below). `ruff format
+  # --check` is likewise not run. Both are reported in the PR body rather than
+  # silently omitted; adopting either is a source change, out of scope for a
+  # workflow-only PR.
+  # ─────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # No `enable-cache:`. It caches keyed on **/uv.lock, and this repo
+      # commits no lockfile (see .gitignore), so setup-uv HARD-FAILS the step
+      # with "No file matched to [**/uv.lock]" -- a red that proves nothing,
+      # because it happens before ruff or pytest ever runs. Observed by the
+      # sibling wayfinder CI lane on its first red-proof run. Note also that
+      # `enable-caching:` (with a -ing) is NOT a valid input and is silently
+      # ignored -- do not "fix" it into `enable-cache: true` here.
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Lint (ruff, pinned)
+        run: uvx ruff@0.16.6 check --isolated --select E4,E7,E9,F .
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Tests -- the repo's OWN standing test command, verbatim from AGENTS.md
+  # ("Unit tests: `pytest tests/unit/`") and docs/development.md
+  # ("uv run pytest tests/unit/"), so CI and local mean the same thing. There
+  # is no Makefile in this repo, so that documented command IS the check
+  # target to honor.
+  #
+  # 303 real tests, not an import smoke: CLI argument parsing, profile
+  # resolution and validation, url_rewrite matching/auth-safety/target
+  # validation, file push/pull directory recursion, incus launch timeout
+  # handling, the max-instances guard, nested-incus and proxy-env handling,
+  # and the lean-head guardrail.
+  #
+  # tests/integration/ and tests/e2e/ are deliberately NOT run here. They are
+  # marked `integration` / `e2e` and the repo's own conftest.py deselects them
+  # unless --run-integration / --run-e2e is passed; they require a working
+  # Incus daemon, Docker, and live API keys, none of which exist on a GitHub
+  # runner. That is 77 tests this gate does not cover, stated plainly rather
+  # than left to look like coverage.
+  #
+  # `uv run` (not `uv sync --frozen`) because no lockfile is committed; uv
+  # resolves and builds the project on the fly, which also exercises the
+  # hatchling build of src/amplifier_bundle_digital_twin_universe. pytest comes
+  # from the project's own `dev` dependency-group, which uv installs by
+  # default -- the suite runs against the versions the repo itself declares.
+  #
+  # The project declares requires-python = ">=3.11". The matrix checks that
+  # claim at the floor and at a current minor rather than taking it on faith.
+  #
+  # A hang must fail LOUDLY and fast rather than sit burning runner time until
+  # the 6h default: a job stuck at "in_progress" reads as "not done yet"
+  # rather than "broken", which is how a false green gets merged.
+  # ─────────────────────────────────────────────────────────────────────────
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      # No `enable-cache:` -- see the note in the lint job above.
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Run the standing test command (AGENTS.md)
+        run: >
+          uv run --python ${{ matrix.python-version }}
+          pytest tests/unit/ -q --tb=short
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Bundle structure -- the YAML this bundle ships must parse and carry a
+  # bundle.name. Nothing else in the repo parses bundle.md's frontmatter or
+  # behaviors/*.yaml (verified: no source or test file references either), so
+  # a malformed one currently ships silently and only fails at
+  # session-composition time in a user's process.
+  #
+  # Kept inline rather than as a checked-in script so this workflow has no
+  # repo-side dependency to keep in sync: the gate is entirely defined by this
+  # one file. (This PR adds no executable file to the repo other than this
+  # workflow; the only other paths it touches are two test-fixture mocks, one
+  # unused import, and this lane's own evidence under docs/lanes/.)
+  #
+  # Nothing is interpolated into the Python source below (no ${{ }} inside the
+  # heredoc, and the heredoc delimiter is quoted) -- a repo path interpolated
+  # into Python source is how a sibling repo turned a backslash-a into BEL and
+  # got a silent empty result with exit 0.
+  # ─────────────────────────────────────────────────────────────────────────
+  bundle-structure:
+    name: Bundle structure (YAML)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install PyYAML
+        run: python -m pip install --quiet 'PyYAML>=6.0'
+
+      - name: Parse bundle.md frontmatter and behaviors/*.yaml
+        run: |
+          python - <<'PY'
+          import pathlib
+          import sys
+
+          import yaml
+
+          root = pathlib.Path.cwd()
+          failures: list[str] = []
+          checked = 0
+
+          bundle_md = root / "bundle.md"
+          if not bundle_md.is_file():
+              failures.append("bundle.md is missing")
+          else:
+              text = bundle_md.read_text(encoding="utf-8")
+              if not text.startswith("---\n"):
+                  failures.append("bundle.md: no YAML frontmatter (file does not open with '---')")
+              else:
+                  end = text.find("\n---", 3)
+                  if end == -1:
+                      failures.append("bundle.md: frontmatter opened but never closed")
+                  else:
+                      data = None
+                      try:
+                          data = yaml.safe_load(text[4 : end + 1])
+                          checked += 1
+                      except yaml.YAMLError as exc:
+                          failures.append("bundle.md frontmatter: " + str(exc))
+                      if data is not None:
+                          name = data.get("bundle", {}).get("name") if isinstance(data, dict) else None
+                          if not name:
+                              failures.append("bundle.md frontmatter: missing bundle.name")
+                          else:
+                              print("OK  bundle.md  (bundle.name=" + str(name) + ")")
+
+          behaviors = sorted((root / "behaviors").glob("*.yaml"))
+          if not behaviors:
+              failures.append(
+                  "behaviors/*.yaml matched NOTHING -- a structure gate that checks zero files is decoration"
+              )
+          for path in behaviors:
+              # .as_posix(), not str(): str() emits OS-native separators.
+              rel = path.relative_to(root).as_posix()
+              try:
+                  data = yaml.safe_load(path.read_text(encoding="utf-8"))
+                  checked += 1
+              except yaml.YAMLError as exc:
+                  failures.append(rel + ": " + str(exc))
+                  continue
+              name = data.get("bundle", {}).get("name") if isinstance(data, dict) else None
+              if not name:
+                  failures.append(rel + ": missing bundle.name")
+              else:
+                  print("OK  " + rel + "  (bundle.name=" + str(name) + ")")
+
+          print("")
+          print(str(checked) + " YAML document(s) parsed.")
+          if failures:
+              print("")
+              print("FAILURES:")
+              for item in failures:
+                  print("  - " + item)
+              sys.exit(1)
+          print("Bundle structure OK.")
+          PY
