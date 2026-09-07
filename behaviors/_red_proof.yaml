@@ -1,0 +1,5 @@
+# SCRATCH -- deliberately malformed YAML, proving the Bundle structure job
+# can go red. Never merged; lives only on ci/red-proof-j1e6.
+bundle:
+  name: red-proof
+   version: [unclosed
