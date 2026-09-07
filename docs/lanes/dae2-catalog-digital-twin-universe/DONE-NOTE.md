@@ -6,6 +6,8 @@ The parent was already held by another lane when this one woke
 so this lane used the established recovery pattern for this batch — file a per-repo child,
 claim and resolve that. Precedent: `model_performance-k75p`.
 
+**Draft PR:** https://github.com/microsoft/amplifier-bundle-digital-twin-universe/pull/36 (branch `lane/dae2-catalog-digital-twin-universe` -> `main`).
+
 **Landing stage:** draft PR. This lane may not merge. Fail-before / pass-after is demonstrated
 below; the merge is the manager's next stage.
 
