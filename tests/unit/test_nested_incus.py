@@ -184,6 +184,12 @@ def _patch_launch_infra(monkeypatch: pytest.MonkeyPatch):
 
     # No-op incus infrastructure calls
     monkeypatch.setattr(incus_mod, "check_incus", MagicMock())
+    # list_instances: launch() -> _enforce_max_instances() ->
+    # count_live_instances() reaches it, and it shells out to the real `incus`
+    # binary. Without this, these tests pass only on a machine that happens to
+    # have Incus installed and fail with FileNotFoundError anywhere else --
+    # which contradicts this module's own "No Incus ... required" contract.
+    monkeypatch.setattr(incus_mod, "list_instances", MagicMock(return_value=[]))
     monkeypatch.setattr(incus_mod, "create_container", MagicMock())
     monkeypatch.setattr(incus_mod, "set_config", MagicMock())
     monkeypatch.setattr(incus_mod, "file_push", MagicMock())
