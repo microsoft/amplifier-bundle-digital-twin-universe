@@ -4,7 +4,11 @@
 Run from the repo root:  python3 /tmp/census_dae2.py
 Body = everything after the closing `---` of the YAML frontmatter.
 """
-import hashlib, json, subprocess, sys
+import hashlib
+import json
+import subprocess
+import sys
+
 import yaml
 
 AGENT = "agents/dtu-profile-builder.md"

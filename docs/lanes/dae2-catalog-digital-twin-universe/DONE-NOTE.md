@@ -196,8 +196,21 @@ uvx ruff@0.16.6 check --isolated --select E4,E7,E9,F .   ->  All checks passed!
 ```
 
 Both are the repo's own standing commands, verbatim from `.github/workflows/ci.yml`. The repo **has
-CI** (added at `50c5d37`): `lint`, `test` on Python 3.11/3.12/3.13, and `bundle-structure`. CI state
-on the PR is recorded in the PR body.
+CI** (added at `50c5d37`): `lint`, `test` on Python 3.11/3.12/3.13, and `bundle-structure`.
+
+### CI caught a real lint failure this lane's own local run had missed — recorded, not smoothed over
+
+The first CI run on PR #36 was **Lint fail**, everything else pass. Cause: the local `ruff` run above
+was executed **before** `evidence/census.py` was written, so it never saw the file. `census.py`
+opened `import hashlib, json, subprocess, sys` — ruff `E401`, inside the workflow's own
+`--select E4,E7,E9,F` tier, and `docs/` is **not** excluded from the lint job (only from
+`validate-agents`' discovery). Split onto one-import-per-line, re-verified locally, and the census
+re-run afterwards reproduces byte-for-byte (`1468 -> 598`, `body_byte_identical: true`). Fixed in a
+follow-up commit on this branch.
+
+Two things worth keeping from that: the lint gate covers lane evidence too, and **a local check run
+before the last file is added has not checked that file** — the ordering, not the command, was the
+defect.
 
 `tests/unit/test_lean_head_guardrail.py` — which pins `context/dtu-awareness.md` to the measured V1
 lean head — is untouched and still green. This change is to `agents/`, a different head surface
