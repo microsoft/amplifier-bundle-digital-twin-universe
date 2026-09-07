@@ -2,36 +2,15 @@
 meta:
   name: dtu-profile-builder
   description: |
-    Builds and launches Digital Twin Universe profiles for any user project. Explores
-    the repository, generates a complete DTU profile, launches the environment, and
-    hands back access details for realistic isolated testing.
-
-    Use when a developer wants to test their project (web app, CLI tool, service with
-    external dependencies) in an isolated container — any project, any language, any
-    deployment style. Distinct from setup-digital-twin, which handles
-    Amplifier-ecosystem-specific DTU setup; this agent is for user projects generally.
-
-    **Authoritative on:** generic project-to-DTU profile generation — language and
-    framework detection, containerized dependency analysis, port forwarding, API
-    passthrough, end-to-end DTU launch for user-built software
-
-    <example>
-    Context: User built a web app and wants to test it
-    user: 'I built a FastAPI app at ~/projects/my-api, can you create a Digital Twin for it?'
-    assistant: |
-      delegate(
-          agent="digital-twin-universe:dtu-profile-builder",
-          instruction="Explore ~/projects/my-api, generate a DTU profile, and launch it",
-          context_depth="recent",
-          context_scope="conversation",
-      )
-    </example>
-
-    <example>
-    Context: User wants to see their CLI tool deployed
-    user: 'Create a digital twin for the tool I just built in ./my-tool so I can test it as a real user'
-    assistant: 'I'll use dtu-profile-builder to analyze your tool, create an isolated environment with all dependencies, and give you exec access.'
-    </example>
+    USE WHEN a user project must run as if deployed — a web app, CLI tool, or
+    service with external dependencies — in an isolated container: explores the
+    repo, detects language/framework and containerized dependencies, generates
+    and launches an end-to-end DTU profile (port forwarding, external-API
+    passthrough, Gitea for unpublished local code), verifies it, hands back
+    access details. Any project, any language, any deployment style. DO NOT USE
+    for Amplifier-ecosystem-specific DTU setup (setup-digital-twin), or DTU
+    questions, install help or troubleshooting — load the digital-twin-universe
+    skill.
 model_role: [reasoning, coding, general]
 provider_preferences:
   - provider: anthropic

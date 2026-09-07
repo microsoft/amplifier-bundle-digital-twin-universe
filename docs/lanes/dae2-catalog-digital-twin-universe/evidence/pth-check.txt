@@ -1,0 +1,9 @@
+CENSUS SAFETY CHECK (GOAL.md tripwire), 2026-09-07T22:52:54Z
+
+$ grep -l /tmp/ ~/.local/share/uv/tools/amplifier/lib/python3.13/site-packages/*.pth
+(exit 1 -- no matching files means CLEAN)
+
+RESULT: CLEAN -- zero .pth files point at /tmp/.
+No 'amplifier' binary was invoked with a scratch AMPLIFIER_HOME in this lane.
+Measurement was static (agent source) plus two validate-agents recipe runs in this
+session's own environment.

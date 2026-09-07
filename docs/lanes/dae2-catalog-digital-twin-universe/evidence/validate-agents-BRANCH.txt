@@ -1,0 +1,29 @@
+validate-agents v1.8.0  |  run-7f5f919ae775  |  foundation @v2.1.2 (a27d5824517d078097b60d84779dd3eae80202cd)
+repo_path: <this worktree>  (branch lane/dae2-catalog-digital-twin-universe, rebased on origin/main 50c5d37)
+engine: v2-closed-world-legacy-engine   session: a4bb1ab4b34f46eb-20260907-154254_recipe
+
+VERDICT: PASS WITH WARNINGS
+  agents discovered: 1 across 1 location  (candidates_scanned 1, non_agent_count 0)
+  scan_patterns: ["<repo>/**/agents/*.md", "<repo>/agents/*.md"]
+  excluded_parts: [".git", ".venv", "docs", "node_modules", "test-fixtures", "tests"]
+  location_counts: {"agents/": 1}
+  quality: 0 good, 0 polish, 1 needs_work, 0 critical
+      (needs_work driven ONLY by NO_TOOLS_SECTION -- identical to stock, not introduced here)
+  structural summary: {"errors": 0, "passed": 1, "total": 1, "warnings": 1}
+
+  dtu-profile-builder   desc 598 chars / 149 tok   example_count 0   commentary_count 0
+                        has_strong_trigger TRUE    triggers_found ["MUST", "DO NOT"]
+                        tools_source implicit
+                        model_role [reasoning, coding, general]   model_role_issues []
+
+  ERRORS (0):   none
+  WARNINGS (1):
+    NO_TOOLS_SECTION      "Agent has no explicit 'tools:' section - relying on inheritance"
+                          Byte-identical to stock's warning. Pre-existing and OUT OF SCOPE:
+                          adding a `tools:` block changes frontmatter beyond `description`
+                          and breaks this lane's own frontmatter-only fidelity gate.
+                          Recorded as a follow-up in DONE-NOTE.md, not remediated here.
+
+TRANSITION: FAIL -> PASS WITH WARNINGS.
+  NOT "PASS held": stock carried 2 structural ERRORs (see validate-agents-STOCK-main.txt).
+  The remaining warning count is unchanged at 1, from stock, by design.
