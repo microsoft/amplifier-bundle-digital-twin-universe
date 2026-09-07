@@ -1,0 +1,111 @@
+Using CPython 3.13.11
+Creating virtual environment at: .venv
+   Building amplifier-bundle-digital-twin-universe @ file:///home/bkrabach/dev/hw-model-performance/lanes/3ahq-leanhead-dtu/amplifier-bundle-digital-twin-universe
+      Built amplifier-bundle-digital-twin-universe @ file:///home/bkrabach/dev/hw-model-performance/lanes/3ahq-leanhead-dtu/amplifier-bundle-digital-twin-universe
+Installed 12 packages in 136ms
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- /home/bkrabach/dev/hw-model-performance/lanes/3ahq-leanhead-dtu/amplifier-bundle-digital-twin-universe/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/bkrabach/dev/hw-model-performance/lanes/3ahq-leanhead-dtu/amplifier-bundle-digital-twin-universe
+configfile: pyproject.toml
+collecting ... collected 25 items
+
+tests/unit/test_lean_head_guardrail.py::TestBytePinAgainstTheV1Head::test_dtu_awareness_is_byte_identical_to_v1 FAILED [  4%]
+tests/unit/test_lean_head_guardrail.py::TestBytePinAgainstTheV1Head::test_the_v1_fixture_is_the_measured_size PASSED [  8%]
+tests/unit/test_lean_head_guardrail.py::TestHeadCensus::test_context_file_within_budget FAILED [ 12%]
+tests/unit/test_lean_head_guardrail.py::TestHeadCensus::test_the_recorded_saving_has_not_moved PASSED [ 16%]
+tests/unit/test_lean_head_guardrail.py::TestOneColdHeadWritePerSession::test_context_file_carries_no_volatile_token PASSED [ 20%]
+tests/unit/test_lean_head_guardrail.py::TestOneColdHeadWritePerSession::test_the_file_reads_identically_twice PASSED [ 24%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[Digital Twin Universe] PASSED [ 28%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[DTU] PASSED [ 32%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[isolated environments] PASSED [ 36%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[declarative profiles] PASSED [ 40%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[as if actually deployed] PASSED [ 44%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[simulated Amplifier user environment or web UI] PASSED [ 48%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[ephemeral container] PASSED [ 52%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[DNS rewriting] PASSED [ 56%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[API passthrough] PASSED [ 60%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[port forwarding] PASSED [ 64%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[local repos] PASSED [ 68%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[launch and verify an environment] PASSED [ 72%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[Gitea setup for local repos] PASSED [ 76%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[delegate(agent="digital-twin-universe:dtu-profile-builder", instruction="<what the user needs>", context_depth="recent", context_scope="conversation")] PASSED [ 80%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[load_skill(skill_name="digital-twin-universe")] PASSED [ 84%]
+tests/unit/test_lean_head_guardrail.py::TestFidelityBeatsCompression::test_every_required_rule_survived[troubleshooting] PASSED [ 88%]
+tests/unit/test_lean_head_guardrail.py::TestCitedEffects::test_cited_quality_lower_bound_clears_the_frozen_margin PASSED [ 92%]
+tests/unit/test_lean_head_guardrail.py::TestCitedEffects::test_the_frozen_margin_has_not_been_loosened PASSED [ 96%]
+tests/unit/test_lean_head_guardrail.py::TestCitedEffects::test_the_cited_cost_effect_excludes_zero PASSED [100%]
+
+=================================== FAILURES ===================================
+____ TestBytePinAgainstTheV1Head.test_dtu_awareness_is_byte_identical_to_v1 ____
+
+self = <tests.unit.test_lean_head_guardrail.TestBytePinAgainstTheV1Head object at 0xfe5b3f1d7b10>
+
+    def test_dtu_awareness_is_byte_identical_to_v1(self) -> None:
+        want, got = _pinned(), _shipped()
+>       assert got == want, (
+            "context/dtu-awareness.md has drifted from the V1 lean head "
+            f"({len(got)} chars vs the pinned {len(want)}). The -13.57% cost reduction was "
+            "measured against these exact bytes.\n"
+            f"--- pinned v1 ---\n{want}\n--- shipped now ---\n{got}"
+        )
+E       AssertionError: context/dtu-awareness.md has drifted from the V1 lean head (1093 chars vs the pinned 686). The -13.57% cost reduction was measured against these exact bytes.
+E         --- pinned v1 ---
+E         # Digital Twin Universe (DTU)
+E         On-demand isolated environments from declarative profiles; test code as if actually deployed — realistic-deployment testing, a simulated Amplifier user environment or web UI, an ephemeral container with DNS rewriting / API passthrough / port forwarding, local repos tested as if published.
+E         Build a profile, launch and verify an environment (also handles Gitea setup for local repos): `delegate(agent="digital-twin-universe:dtu-profile-builder", instruction="<what the user needs>", context_depth="recent", context_scope="conversation")`. Other DTU needs (general questions, install help, troubleshooting): `load_skill(skill_name="digital-twin-universe")`.
+E         
+E         --- shipped now ---
+E         # Digital Twin Universe Environments
+E         
+E         You have access to Digital Twin Universe (DTU) capabilities for on-demand isolated environments stood up from declarative profiles. Use it to simulate real-world deployment scenarios so code can be tested as if actually deployed.
+E         
+E         ## When to Use
+E         
+E         - User needs an isolated environment to test code in a realistic deployment setting
+E         - User wants to launch a simulated Amplifier user environment or web UI
+E         - User needs an ephemeral container with DNS rewriting, API passthrough, or port forwarding
+E         - User has local repos that need to be tested as if they were already published
+E         
+E         ## How to Use
+E         
+E         Build a DTU profile for a project, launch and verify an environment (also handles Gitea setup for local repos):
+E         ```
+E         delegate(agent="digital-twin-universe:dtu-profile-builder", instruction="<what the user needs>", context_depth="recent", context_scope="conversation")
+E         ```
+E         
+E         If the user's request doesn't match this agent (e.g. general DTU questions, installation help, troubleshooting), load the skill instead:
+E         ```
+E         load_skill(skill_name="digital-twin-universe")
+E         ```
+E         
+E       assert '# Digital Tw...erse")\n```\n' == '# Digital Tw...niverse")`.\n'
+E         
+E         - # Digital Twin Universe (DTU)
+E         - On-demand isolated environments from declarative profiles; test code as if actually deployed — realistic-deployment testing, a simulated Amplifier user environment or web UI, an ephemeral container with DNS rewriting / API passthrough / port forwarding, local repos tested as if published.
+E         - Build a profile, launch and verify an environment (also handles Gitea setup for local repos): `delegate(agent="digital-twin-universe:dtu-profile-builder", instruction="<what the user needs>", context_depth="recent", context_scope="conversation")`. Othe...
+E         
+E         ...Full output truncated (23 lines hidden), use '-vv' to show
+
+tests/unit/test_lean_head_guardrail.py:149: AssertionError
+________________ TestHeadCensus.test_context_file_within_budget ________________
+
+self = <tests.unit.test_lean_head_guardrail.TestHeadCensus object at 0xfe5b3f044050>
+
+    def test_context_file_within_budget(self) -> None:
+        actual = len(_shipped())
+>       assert actual <= BUDGET_CHARS, (
+            f"context/dtu-awareness.md is {actual} chars, over its pinned lean budget of "
+            f"{BUDGET_CHARS} (+{actual - BUDGET_CHARS}). This file is in the head of every "
+            "session that loads this bundle, on every request, paid on one cold write per "
+            "session. If the growth is a RULE that must be there, raise the budget in the "
+            "same commit and say why in the message — never silently."
+        )
+E       AssertionError: context/dtu-awareness.md is 1093 chars, over its pinned lean budget of 686 (+407). This file is in the head of every session that loads this bundle, on every request, paid on one cold write per session. If the growth is a RULE that must be there, raise the budget in the same commit and say why in the message — never silently.
+E       assert 1093 <= 686
+
+tests/unit/test_lean_head_guardrail.py:170: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_lean_head_guardrail.py::TestBytePinAgainstTheV1Head::test_dtu_awareness_is_byte_identical_to_v1
+FAILED tests/unit/test_lean_head_guardrail.py::TestHeadCensus::test_context_file_within_budget
+========================= 2 failed, 23 passed in 0.03s =========================
