@@ -130,8 +130,11 @@ jobs:
   # a malformed one currently ships silently and only fails at
   # session-composition time in a user's process.
   #
-  # Kept inline rather than as a checked-in script because this PR
-  # deliberately adds no file to the repo other than this workflow.
+  # Kept inline rather than as a checked-in script so this workflow has no
+  # repo-side dependency to keep in sync: the gate is entirely defined by this
+  # one file. (This PR adds no executable file to the repo other than this
+  # workflow; the only other paths it touches are two test-fixture mocks, one
+  # unused import, and this lane's own evidence under docs/lanes/.)
   #
   # Nothing is interpolated into the Python source below (no ${{ }} inside the
   # heredoc, and the heredoc delimiter is quoted) -- a repo path interpolated
