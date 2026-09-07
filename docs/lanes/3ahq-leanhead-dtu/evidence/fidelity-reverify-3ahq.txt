@@ -1,0 +1,33 @@
+generated_at: 2026-09-07T19:11:42.767450+00:00
+stock: context/dtu-awareness.md @ today's head
+stock chars=1093 bytes=1093
+lean  chars=686 bytes=688
+saved chars=407
+
+extracted 0 rules/constraints/commands/pointers from STOCK:
+
+MISSING COUNT: 0
+MISSING: []
+
+hand-audit of stock concepts (case-folded substring in lean):
+  [PRESENT] Digital Twin Universe
+  [PRESENT] DTU abbreviation
+  [PRESENT] on-demand isolated environments
+  [PRESENT] declarative profiles
+  [PRESENT] tested as if actually deployed
+  [PRESENT] realistic deployment setting
+  [PRESENT] simulated Amplifier user env/web UI
+  [PRESENT] ephemeral container
+  [PRESENT] DNS rewriting
+  [PRESENT] API passthrough
+  [PRESENT] port forwarding
+  [PRESENT] local repos as if published
+  [PRESENT] Gitea setup for local repos
+  [PRESENT] launch and verify an environment
+  [PRESENT] general questions
+  [PRESENT] install help
+  [PRESENT] troubleshooting
+
+HAND-AUDIT MISSING COUNT: 0
+
+VERDICT: CLEAN - no rule, constraint, command or pointer dropped
