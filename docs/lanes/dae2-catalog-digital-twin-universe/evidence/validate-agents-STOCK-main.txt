@@ -1,0 +1,25 @@
+validate-agents v1.8.0  |  run-0f1a33de2991  |  foundation @v2.1.2 (a27d5824517d078097b60d84779dd3eae80202cd)
+repo_path: /tmp/dtu-stock-dae2  (git worktree of origin/main @ 50c5d37eeb1ca4b438dc8c364d3f6b550aa08bb5)
+engine: v2-closed-world-legacy-engine   session: a8e951cee3594df0-20260907-154636_recipe
+
+VERDICT: FAIL
+  agents discovered: 1 across 1 location  (candidates_scanned 1, non_agent_count 0)
+  scan_patterns: ["<repo>/**/agents/*.md", "<repo>/agents/*.md"]
+  excluded_parts: [".git", ".venv", "docs", "node_modules", "test-fixtures", "tests"]
+  location_counts: {"agents/": 1}
+  quality: 0 good, 0 polish, 0 needs_work, 1 CRITICAL
+  structural summary: {"errors": 2, "passed": 0, "total": 1, "warnings": 1}
+
+  dtu-profile-builder   desc 1468 chars / 367 tok   example_count 2   commentary_count 0
+                        has_strong_trigger FALSE   triggers_found []
+                        tools_source implicit
+
+  ERRORS (2):
+    DESCRIPTION_EXCESSIVE   "Description is 1468 chars (>1200, 2x the 600-char cap)"
+    EXAMPLE_BLOCK_PRESENT   "Description has 2 <example> block(s) -- example blocks are
+                             rejected entirely, not merely capped"
+
+  WARNINGS (1):
+    NO_TOOLS_SECTION        "Agent has no explicit 'tools:' section - relying on inheritance"
+
+This is the FAIL-BEFORE half of the lane's fail-before/pass-after pair.

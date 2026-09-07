@@ -1,0 +1,56 @@
+{
+  "origin_main_sha": "50c5d37eeb1ca4b438dc8c364d3f6b550aa08bb5",
+  "agents_discovered_this_repo": 1,
+  "stock": {
+    "arm": "STOCK (origin/main)",
+    "agent": "dtu-profile-builder",
+    "desc_chars": 1468,
+    "desc_bytes": 1472,
+    "desc_chars_stripped": 1467,
+    "est_tokens_chars_div_4": 367,
+    "example_blocks": 2,
+    "commentary_blocks": 0,
+    "body_chars": 28119,
+    "body_md5": "dd26089828b867a15a3ca91c6f906af4",
+    "body_sha256": "42cfd5745135bc9f22398e047b5c5b5d97908adf27ea9634a67b855a2ea7f96b",
+    "model_role": [
+      "reasoning",
+      "coding",
+      "general"
+    ],
+    "provider_preferences": [
+      {
+        "provider": "anthropic",
+        "model": "claude-opus-*"
+      }
+    ]
+  },
+  "lean": {
+    "arm": "LEAN (branch)",
+    "agent": "dtu-profile-builder",
+    "desc_chars": 598,
+    "desc_bytes": 604,
+    "desc_chars_stripped": 597,
+    "est_tokens_chars_div_4": 150,
+    "example_blocks": 0,
+    "commentary_blocks": 0,
+    "body_chars": 28119,
+    "body_md5": "dd26089828b867a15a3ca91c6f906af4",
+    "body_sha256": "42cfd5745135bc9f22398e047b5c5b5d97908adf27ea9634a67b855a2ea7f96b",
+    "model_role": [
+      "reasoning",
+      "coding",
+      "general"
+    ],
+    "provider_preferences": [
+      {
+        "provider": "anthropic",
+        "model": "claude-opus-*"
+      }
+    ]
+  },
+  "delta_desc_chars": -870,
+  "delta_desc_pct": -59.3,
+  "body_byte_identical": true,
+  "non_description_frontmatter_unchanged": true
+}
