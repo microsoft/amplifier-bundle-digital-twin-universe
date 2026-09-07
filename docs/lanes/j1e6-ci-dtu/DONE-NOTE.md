@@ -153,6 +153,21 @@ Note the standing `tests/unit/` command was **already** covering `tests/unit/tes
    good as the read-back** — the same rule the publication marker enforces for branches.
 2. **The first red-proof run was kept, not discarded.** It is the evidence for finding 1. The gate was then
    re-proved on the fixed tree so the quoted RED run shows the clean `1 failed, 303 passed` shape.
+3. **A sibling lane on this host clobbered `/tmp/pr_body.md`, and one `PATCH` briefly published THEIR PR
+   body onto PR #35.** Parallel lanes share `/tmp`. This lane staged its PR body at the obvious shared path;
+   a sibling CI lane (a bundle with `modules/tool-skills` and a new `ruff.toml` — not this repo) wrote its
+   own body to the same filename between my write and my next read. The next `gh api -X PATCH
+   ... -F body=@/tmp/pr_body.md` published that text as mine. Caught within one command by reading the body
+   back (`gh pr view 35 --json body`) instead of trusting the `PATCH`'s 200. Corrected by re-writing the
+   body to a **lane-private** path (`lanes/j1e6-ci-dtu/.lane-tmp/`) and re-`PATCH`ing, then verifying:
+   0 occurrences of the sibling's text, both run URLs present.
+   **Checked the blast radius in the other direction, read-only:** the two other live `lane/j1e6-ci-*` PRs
+   (`amplifier-bundle-skills#68`, `amplifier-bundle-modes#32`) carry **no** text from this repo — modes'
+   single "DTU" hit is its own spend line ("no API calls, no DTU"). Nothing of mine leaked outward. No
+   other repo was edited.
+   **Rule for every parallel-lane batch: never stage anything at a fixed `/tmp/<generic-name>`.** A shared
+   path plus N concurrent lanes is a silent cross-write, and `PATCH` returning 200 proves only that
+   *something* was published, never that it was yours.
 
 ---
 
