@@ -498,15 +498,15 @@ Fields per entry:
   Behavior depends on whether `src` is a file or a directory:
 
   - **File:** `dest` is treated as a file path; the file lands at `dest`.
-  - **Directory (with `recursive: true`):** `dest` is treated as the **parent
+  - **Directory (auto-detected):** `dest` is treated as the **parent
     directory**, and the source basename is preserved inside it. Pushing
     `./data/` to `/root/app/data/` lands files at `/root/app/data/data/...`;
     pushing the same source to `/root/app/` lands them at `/root/app/data/...`.
 
-- `recursive` (optional, default `false`) -- recursively transfer a directory.
-  Required when `src` is a directory; off by default to match the file-only
-  case (where leaving it on would create a directory at the destination path
-  and put the source inside it).
+- `recursive` (optional, default `false`) -- directory sources are
+  auto-detected and pushed recursively regardless of this setting. With a
+  file `src`, leave it `false` for exact-path pushes (setting it on would
+  create a directory at the destination path and put the source inside it).
 - `create_dirs` (optional, default `true`) -- create intermediate directories
   in the container if they don't exist.
 - `mode` (optional) -- file permission string (e.g. `"0644"`).
