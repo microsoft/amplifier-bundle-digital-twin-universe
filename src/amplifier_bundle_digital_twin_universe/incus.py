@@ -17,10 +17,36 @@ import stat
 import subprocess
 import sys
 import tempfile
+from urllib.parse import quote
+
+
+def _run(command, *args, **kwargs):
+    """Pin every Incus call to an explicitly selected project when configured."""
+    project = os.environ.get("AMPLIFIER_DTU_INCUS_PROJECT")
+    if command and command[0] == "incus" and project:
+        if command[1] == "query":
+            # Incus query explicitly rejects --project; REST uses a parameter.
+            separator = "&" if "?" in command[2] else "?"
+            command = [
+                *command[:2],
+                f"{command[2]}{separator}project={quote(project, safe='')}",
+                *command[3:],
+            ]
+        else:
+            command = [command[0], "--project", project, *command[1:]]
+    return subprocess.run(command, *args, check=False, **kwargs)
 
 
 class IncusError(Exception):
     """Raised when an Incus command fails."""
+
+
+def query(path: str) -> dict:
+    """Read JSON from the current Incus daemon and project."""
+    result = _run(["incus", "query", path], capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise IncusError(f"Failed to query Incus: {result.stderr.strip()}")
+    return json.loads(result.stdout)
 
 
 # ---------------------------------------------------------------------------
@@ -31,7 +57,7 @@ class IncusError(Exception):
 def check_incus() -> None:
     """Verify the ``incus`` CLI is available and the daemon is reachable."""
     try:
-        result = subprocess.run(
+        result = _run(
             ["incus", "version"],
             capture_output=True,
             text=True,
@@ -97,7 +123,7 @@ def diagnose_network_failure(container_name: str) -> str:
     ]
 
     # Detect Docker -- it sets FORWARD policy to DROP.
-    r = subprocess.run(["docker", "version"], capture_output=True, timeout=5)
+    r = _run(["docker", "version"], capture_output=True, timeout=5)
     if r.returncode == 0:
         fix_cmds.extend(
             [
@@ -182,13 +208,16 @@ def create_container(
     name: str,
     image: str,
     config: dict[str, str] | None = None,
+    isolated_pool: str | None = None,
 ) -> None:
-    """``incus launch <image> <name> [--config k=v ...]``"""
+    """Launch; an isolated pool omits every inherited profile and NIC."""
     cmd = ["incus", "launch", image, name]
+    if isolated_pool:
+        cmd.extend(["--no-profiles", "--storage", isolated_pool])
     if config:
         for k, v in config.items():
             cmd.extend(["--config", f"{k}={v}"])
-    result = subprocess.run(
+    result = _run(
         cmd, capture_output=True, text=True, timeout=_get_launch_timeout_seconds()
     )
     if result.returncode != 0:
@@ -197,7 +226,7 @@ def create_container(
 
 def stop_container(name: str) -> None:
     """``incus stop <name>`` -- silently ignores already-stopped containers."""
-    subprocess.run(
+    _run(
         ["incus", "stop", name],
         capture_output=True,
         text=True,
@@ -210,14 +239,14 @@ def delete_container(name: str, force: bool = False) -> None:
     cmd = ["incus", "delete", name]
     if force:
         cmd.append("--force")
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    result = _run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise IncusError(f"Failed to delete container {name}: {result.stderr.strip()}")
 
 
 def container_exists(name: str) -> bool:
     """Return *True* if an Incus instance with *name* exists."""
-    result = subprocess.run(
+    result = _run(
         ["incus", "info", name],
         capture_output=True,
         text=True,
@@ -253,7 +282,7 @@ def exec_command(
             cmd.extend(["--env", f"{k}={v}"])
     cmd.extend(["--", *command])
     with tempfile.TemporaryFile("w+") as out_f, tempfile.TemporaryFile("w+") as err_f:
-        result = subprocess.run(
+        result = _run(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=out_f,
@@ -286,7 +315,7 @@ def exec_stream(
         for k, v in env.items():
             cmd.extend(["--env", f"{k}={v}"])
     cmd.extend(["--", *command])
-    result = subprocess.run(cmd, timeout=timeout)
+    result = _run(cmd, timeout=timeout)
     return result.returncode
 
 
@@ -316,7 +345,7 @@ def exec_interactive(
         for k, v in env.items():
             cmd.extend(["--env", f"{k}={v}"])
     cmd.extend(["--", *command])
-    result = subprocess.run(cmd)
+    result = _run(cmd)
     return result.returncode
 
 
@@ -378,7 +407,7 @@ def _file_push_single(
     if gid is not None:
         cmd.extend(["--gid", str(gid)])
     cmd.extend([local_file, dest])
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    result = _run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise IncusError(f"Failed to push {local_file!r}: {result.stderr.strip()}")
 
@@ -519,7 +548,7 @@ def file_push(
     if gid is not None:
         cmd.extend(["--gid", str(gid)])
     cmd.extend([*local_paths, dest])
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    result = _run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise IncusError(f"Failed to push file: {result.stderr.strip()}")
 
@@ -549,7 +578,7 @@ def _file_pull_single(
     """
     src = f"{name}/{remote_file.lstrip('/')}"
     cmd = ["incus", "file", "pull", src, local_file]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    result = _run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise IncusError(f"Failed to pull {remote_file!r}: {result.stderr.strip()}")
 
@@ -673,7 +702,7 @@ def file_pull(
     if create_dirs:
         cmd.append("--create-dirs")
     cmd.extend([*srcs, local_path])
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    result = _run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise IncusError(f"Failed to pull file: {result.stderr.strip()}")
 
@@ -685,7 +714,7 @@ def file_pull(
 
 def set_config(name: str, key: str, value: str) -> None:
     """``incus config set <name> <key>=<value>``"""
-    result = subprocess.run(
+    result = _run(
         ["incus", "config", "set", name, f"{key}={value}"],
         capture_output=True,
         text=True,
@@ -699,7 +728,7 @@ def set_config(name: str, key: str, value: str) -> None:
 
 def get_config(name: str, key: str) -> str:
     """``incus config get <name> <key>`` -- returns the value or empty string."""
-    result = subprocess.run(
+    result = _run(
         ["incus", "config", "get", name, key],
         capture_output=True,
         text=True,
@@ -719,7 +748,7 @@ def get_config(name: str, key: str) -> str:
 
 def get_instance_state(name: str) -> str:
     """Return the Incus status string for *name* (e.g. ``"Running"``)."""
-    result = subprocess.run(
+    result = _run(
         ["incus", "list", name, "--format=json"],
         capture_output=True,
         text=True,
@@ -739,7 +768,7 @@ def list_instances(config_key: str, config_value: str) -> list[dict]:
 
     Each entry is the raw Incus JSON dict (keys: name, status, config, ...).
     """
-    result = subprocess.run(
+    result = _run(
         ["incus", "list", f"{config_key}={config_value}", "--format=json"],
         capture_output=True,
         text=True,
@@ -759,7 +788,7 @@ def get_container_ip(name: str) -> str:
     Parses ``incus list <name> --format=json`` and finds the first
     ``inet`` address with ``global`` scope on any interface.
     """
-    result = subprocess.run(
+    result = _run(
         ["incus", "list", name, "--format=json"],
         capture_output=True,
         text=True,
@@ -812,7 +841,7 @@ def add_proxy_device(
         listen_addr = f"tcp:127.0.0.1:{host_port}"
         extra_args = ["bind=container"]
 
-    result = subprocess.run(
+    result = _run(
         [
             "incus",
             "config",

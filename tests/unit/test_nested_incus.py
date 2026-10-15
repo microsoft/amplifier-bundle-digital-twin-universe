@@ -174,7 +174,7 @@ access:
 
 
 @pytest.fixture()
-def _patch_launch_infra(monkeypatch: pytest.MonkeyPatch):
+def _patch_launch_infra(monkeypatch: pytest.MonkeyPatch, admission_infra):
     """Patch all infrastructure calls in launch() that require real Incus/Docker.
 
     Yields the patched incus module so tests can add further monkeypatches.

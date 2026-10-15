@@ -44,7 +44,7 @@ def _write_profile(tmp_path: Path, body: str) -> str:
 
 
 @pytest.fixture()
-def _patch_launch_infra(monkeypatch: pytest.MonkeyPatch):
+def _patch_launch_infra(monkeypatch: pytest.MonkeyPatch, admission_infra):
     """Patch all infrastructure calls in launch() so we can call it without Incus.
 
     Yields the create_container MagicMock so tests can inspect its call args.

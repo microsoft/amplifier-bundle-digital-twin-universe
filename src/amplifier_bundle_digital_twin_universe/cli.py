@@ -9,7 +9,7 @@ import sys
 
 import click
 
-from amplifier_bundle_digital_twin_universe import engine
+from amplifier_bundle_digital_twin_universe import admission, engine
 
 
 @click.group()
@@ -33,7 +33,7 @@ def main() -> None:
 @click.option(
     "--name",
     default=None,
-    help="Human-readable name. Defaults to dtu-<uuid8>.",
+    help="Human-readable name. Defaults to dtu-<request hash>.",
 )
 @click.option(
     "--hostname",
@@ -43,13 +43,39 @@ def main() -> None:
 @click.option(
     "--max-instances",
     "max_instances",
-    type=int,
+    type=click.IntRange(min=0),
     default=None,
     help=(
-        "Refuse to launch if the number of live DTU instances already meets "
-        "or exceeds this count (no container is created). 0 = unlimited. "
-        "Default: AMPLIFIER_DTU_MAX_INSTANCES env var if set, else 15."
+        "Total active + retained DTUs ceiling. 0 disables only this ceiling. "
+        "Default: AMPLIFIER_DTU_MAX_INSTANCES env var if set, else 256."
     ),
+)
+@click.option(
+    "--max-running",
+    type=click.IntRange(min=0),
+    default=None,
+    help="Active/starting DTUs ceiling (default: AMPLIFIER_DTU_MAX_RUNNING or 15).",
+)
+@click.option(
+    "--min-free-bytes",
+    type=click.IntRange(min=0),
+    default=None,
+    help="Minimum free storage-pool bytes (default: AMPLIFIER_DTU_MIN_FREE_BYTES or 10 GiB).",
+)
+@click.option(
+    "--owner-root",
+    default=None,
+    help="Root task owner metadata; not an authorization grant.",
+)
+@click.option(
+    "--request-id",
+    default=None,
+    help="Stable launch request ID. Retrying never repeats provisioning.",
+)
+@click.option(
+    "--offline",
+    is_flag=True,
+    help="Omit inherited profiles, NICs and host mounts; use only the root storage pool.",
 )
 def launch(
     profile: str,
@@ -57,6 +83,11 @@ def launch(
     name: str | None,
     hostname: str | None,
     max_instances: int | None,
+    max_running: int | None,
+    min_free_bytes: int | None,
+    owner_root: str | None,
+    request_id: str | None,
+    offline: bool,
 ) -> None:
     """Launch a new Digital Twin Universe from a profile."""
     variables: dict[str, str] = {}
@@ -74,10 +105,66 @@ def launch(
             name=name,
             hostname=hostname,
             max_instances=max_instances,
+            max_running=max_running,
+            min_free_bytes=min_free_bytes,
+            owner_root=owner_root,
+            request_id=request_id,
+            offline=offline,
         )
         click.echo(json.dumps(result))
+    except admission.AdmissionError as exc:
+        click.echo(json.dumps(exc.as_dict()))
+        sys.exit(1)
     except Exception as exc:
         click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
+@main.command()
+@click.option("--max-running", type=click.IntRange(min=0), default=None)
+@click.option("--max-instances", type=click.IntRange(min=0), default=None)
+@click.option("--min-free-bytes", type=click.IntRange(min=0), default=None)
+def capacity(max_running, max_instances, min_free_bytes) -> None:
+    """Observe execution, retained-instance and storage admission constraints."""
+    try:
+        click.echo(
+            json.dumps(engine.capacity(max_running, max_instances, min_free_bytes))
+        )
+    except admission.AdmissionError as exc:
+        click.echo(json.dumps(exc.as_dict()))
+        sys.exit(1)
+    except Exception as exc:
+        click.echo(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "error": "backend_unavailable",
+                    "message": str(exc),
+                }
+            )
+        )
+        sys.exit(1)
+
+
+@main.command(name="launch-status")
+@click.argument("request_id")
+def launch_status(request_id: str) -> None:
+    """Reconcile a recorded request without launching or provisioning again."""
+    try:
+        click.echo(json.dumps(engine.launch_status(request_id)))
+    except admission.AdmissionError as exc:
+        click.echo(json.dumps(exc.as_dict()))
+        sys.exit(1)
+    except Exception as exc:
+        click.echo(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "error": "backend_unavailable",
+                    "message": str(exc),
+                }
+            )
+        )
         sys.exit(1)
 
 
@@ -454,11 +541,22 @@ def file_pull(
 
 @main.command()
 @click.argument("id")
-def destroy(id: str) -> None:
+@click.option(
+    "--owner-root", default=None, help="Require this exact root owner before deletion."
+)
+@click.option(
+    "--request-id",
+    default=None,
+    help="Require this exact launch request before deletion.",
+)
+def destroy(id: str, owner_root: str | None, request_id: str | None) -> None:
     """Destroy an environment. Stops and deletes the Incus container and any associated storage."""
     try:
-        result = engine.destroy(id)
+        result = engine.destroy(id, owner_root=owner_root, request_id=request_id)
         click.echo(json.dumps(result))
+    except admission.AdmissionError as exc:
+        click.echo(json.dumps(exc.as_dict()))
+        sys.exit(1)
     except Exception as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
