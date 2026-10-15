@@ -407,3 +407,85 @@ def test_ready_retry_rechecks_owner_and_ready_marker(launch_infra, key, value):
         engine.launch(profile, {}, request_id="r", owner_root="o")
     assert raised.value.code == "ownership_conflict"
     assert create.call_count == 1
+
+
+def _exact_offline_profile(profile):
+    from pathlib import Path
+    Path(profile).write_text('name: pinned\nbase:\n  image: local:' + 'a' * 64 + '\n')
+
+
+def test_missing_exact_image_never_creates_or_reserves(monkeypatch, launch_infra):
+    profile, observed, create = launch_infra
+    _exact_offline_profile(profile)
+    monkeypatch.setattr(incus, 'local_image_available', lambda fingerprint: False)
+    with pytest.raises(admission.AdmissionError) as error:
+        engine.launch(profile, {}, name='missing-image', request_id='missing-image', offline=True)
+    assert error.value.code == 'approved_image_missing'
+    assert error.value.details['admitted'] is False
+    create.assert_not_called()
+    assert engine.launch_status('missing-image')['state'] == 'not_recorded'
+    assert engine.capacity()['counts']['active'] == 0
+    assert engine.capacity()['counts']['pending_unobserved'] == 0
+
+
+def test_unobservable_image_never_creates_or_reserves(monkeypatch, launch_infra):
+    profile, _, create = launch_infra
+    _exact_offline_profile(profile)
+    monkeypatch.setattr(incus, 'local_image_available', MagicMock(side_effect=incus.IncusError('private path /secret')))
+    with pytest.raises(admission.AdmissionError) as error:
+        engine.launch(profile, {}, name='unobserved-image', request_id='unobserved-image', offline=True)
+    assert error.value.code == 'approved_image_unavailable'
+    assert '/secret' not in json.dumps(error.value.as_dict())
+    create.assert_not_called()
+    assert engine.launch_status('unobserved-image')['state'] == 'not_recorded'
+
+
+def test_present_exact_image_launch_and_ready_retry_are_unchanged(monkeypatch, launch_infra):
+    profile, observed, create = launch_infra
+    _exact_offline_profile(profile)
+    present = MagicMock(return_value=True)
+    monkeypatch.setattr(incus, 'local_image_available', present)
+    create.side_effect = lambda name, image, config, isolated_pool: observed.append(
+        {'name': name, 'status': 'Running', 'config': dict(config)})
+    result = engine.launch(profile, {}, name='pinned', request_id='pinned', offline=True)
+    assert result['id'] == 'pinned' and create.call_count == 1
+    present.side_effect = AssertionError('ready reconciliation must not depend on cached image')
+    assert engine.launch(profile, {}, name='pinned', request_id='pinned', offline=True)['reused']
+    assert create.call_count == 1
+
+
+def test_creation_failure_retains_sanitized_cause_and_unknown_reservation(monkeypatch, launch_infra):
+    profile, _, create = launch_infra
+    create.side_effect = incus.IncusError('Image not found; sensitive path /secret and token=private')
+    with pytest.raises(admission.AdmissionError) as error:
+        engine.launch(profile, {}, name='race', request_id='race')
+    assert error.value.code == 'launch_unknown'
+    receipt = engine.launch_status('race')
+    assert receipt['state'] == 'unknown'
+    assert receipt['failure_cause'] == {'stage': 'create', 'code': 'image_not_found'}
+    assert 'secret' not in json.dumps(receipt) and 'private' not in json.dumps(error.value.as_dict())
+    assert engine.capacity()['counts']['pending_unobserved'] == 1
+
+
+@pytest.mark.parametrize('present', [True, False])
+def test_exact_local_image_observation_is_read_only(monkeypatch, present):
+    fingerprint = 'a' * 64
+    run = MagicMock(return_value=subprocess.CompletedProcess([], 0, json.dumps([{'fingerprint':fingerprint}] if present else []), ''))
+    monkeypatch.setattr(incus, '_run', run)
+    assert incus.local_image_available(fingerprint) is present
+    assert run.call_args.args[0] == ['incus', 'image', 'list', 'local:', fingerprint, '--format=json']
+
+
+def test_prior_unknown_launch_is_not_reclassified_when_image_disappears(monkeypatch, launch_infra):
+    profile, _, create = launch_infra
+    _exact_offline_profile(profile)
+    present = MagicMock(return_value=True)
+    monkeypatch.setattr(incus, 'local_image_available', present)
+    create.side_effect = subprocess.TimeoutExpired('incus', 30)
+    with pytest.raises(admission.AdmissionError):
+        engine.launch(profile, {}, name='uncertain-pinned', request_id='uncertain-pinned', offline=True)
+    present.side_effect = AssertionError('An uncertain request must reconcile before any new admission')
+    with pytest.raises(admission.AdmissionError) as error:
+        engine.launch(profile, {}, name='uncertain-pinned', request_id='uncertain-pinned', offline=True)
+    assert error.value.code == 'launch_unknown' and create.call_count == 1
+    assert engine.launch_status('uncertain-pinned')['state'] == 'unknown'

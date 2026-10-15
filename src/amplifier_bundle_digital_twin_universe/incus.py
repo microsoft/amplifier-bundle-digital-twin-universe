@@ -204,6 +204,25 @@ def _get_launch_timeout_seconds() -> int:
 # ---------------------------------------------------------------------------
 
 
+def local_image_available(fingerprint: str) -> bool:
+    """Observe one exact local image in the selected project; never download it."""
+    if not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
+        raise ValueError("An exact local image fingerprint is required")
+    result = _run(
+        ["incus", "image", "list", "local:", fingerprint, "--format=json"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode:
+        raise IncusError("The approved local image could not be inspected")
+    try:
+        rows = json.loads(result.stdout)
+        if not isinstance(rows, list):
+            raise ValueError("Expected image list")
+        return any(row.get("fingerprint") == fingerprint for row in rows)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise IncusError("The approved local image observation was invalid") from exc
+
+
 def create_container(
     name: str,
     image: str,

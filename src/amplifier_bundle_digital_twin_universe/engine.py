@@ -1121,6 +1121,21 @@ def launch_status(request_id: str) -> dict:
 # ===================================================================
 
 
+def _creation_failure_cause(exc: Exception) -> dict:
+    """Preserve useful failure classes without persisting stderr or private paths."""
+    detail = str(exc).lower()
+    if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)):
+        code = "timeout"
+    else:
+        code = next((label for phrase, label in (
+            ("image not found", "image_not_found"),
+            ("permission denied", "permission_denied"),
+            ("no space left on device", "storage_full"),
+            ("file name too long", "path_too_long"),
+        ) if phrase in detail), "backend_error")
+    return {"stage": "create", "code": code}
+
+
 def launch(
     profile_arg: str,
     variables: dict[str, str],
@@ -1237,6 +1252,23 @@ def launch(
                 "An environment with this name already exists; it was not changed",
                 {"id": container_name},
             )
+        # Cached images can disappear during automatic refresh. An exact pinned
+        # offline image must exist before admission; never silently substitute it.
+        if offline and re.fullmatch(r"local:[a-f0-9]{64}", image):
+            try:
+                image_available = incus.local_image_available(image[6:])
+            except Exception as exc:
+                raise admission.AdmissionError(
+                    "approved_image_unavailable",
+                    "The approved local image could not be inspected; no launch was admitted",
+                    {"image": image, "admitted": False},
+                ) from exc
+            if not image_available:
+                raise admission.AdmissionError(
+                    "approved_image_missing",
+                    "The approved local image is missing; retain that exact image before testing. No launch was admitted",
+                    {"image": image, "admitted": False},
+                )
         available = admission.snapshot(ctx, limits, root)
         if not available["available"]:
             raise admission.AdmissionError(
@@ -1268,11 +1300,12 @@ def launch(
             # Timeout does not mean failure: the daemon may still create the
             # instance. Retain the reservation and never replay this request.
             receipt["state"] = "unknown"
+            receipt["failure_cause"] = _creation_failure_cause(exc)
             admission.save_receipt(root, receipt)
             raise admission.AdmissionError(
                 "launch_unknown",
                 "Container creation did not return a confirmed outcome; inspect launch-status",
-                {"request_id": request_id, "id": container_name},
+                {"request_id": request_id, "id": container_name, "failure_cause": receipt["failure_cause"]},
             ) from exc
 
     try:

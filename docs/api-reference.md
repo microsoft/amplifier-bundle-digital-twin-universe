@@ -1,6 +1,6 @@
 # API Reference
 
-This reference documents v0.4.0. For previous versions, check out the corresponding git tag or commit (`git checkout v<version>`). When upgrading across a breaking change, review the diff between versions to find the migration steps. The source can be cloned from https://github.com/microsoft/amplifier-bundle-digital-twin-universe
+This reference documents v0.4.1. For previous versions, check out the corresponding git tag or commit (`git checkout v<version>`). When upgrading across a breaking change, review the diff between versions to find the migration steps. The source can be cloned from https://github.com/microsoft/amplifier-bundle-digital-twin-universe
 
 CLI: `amplifier-digital-twin`
 
@@ -761,3 +761,24 @@ Returns:
 `ownership_conflict` unless both metadata values match. Existing unqualified
 `destroy NAME` retains its manual behavior. Neither form discovers teardown
 authority for legacy instances. Preserve required artifacts before destruction.
+
+### Retaining exact offline images
+
+An offline launch using `local:<64-character fingerprint>` checks that exact image
+before recording admission or creating an instance. `approved_image_missing` and
+`approved_image_unavailable` are definite non-admission results: no active slot
+or unknown launch reservation was consumed. The image is never substituted.
+Existing recorded launches still reconcile first; removing an image does not
+reclassify or replay an earlier uncertain launch.
+
+Cached auto-updating distribution images are not durable pins. Operators should
+copy an approved fingerprint into their owned image project without `--auto-update`
+and verify `cached: false` and `auto_update: false`. Keep that owned image while
+work may still need it; do not change shared cache policy to retain it.
+
+If image deletion races the admission check, creation still has an uncertain
+outcome. The durable receipt includes a bounded `failure_cause` with stage `create`
+and a fixed category such as `image_not_found`, `permission_denied`, `storage_full`,
+`path_too_long`, `timeout`, or `backend_error`. It never includes raw backend stderr,
+configuration, credentials, or private paths. This evidence does not authorize
+replaying the uncertain request.
