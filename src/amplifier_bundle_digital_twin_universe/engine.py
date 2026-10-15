@@ -1209,6 +1209,8 @@ def launch(
                 if (
                     match
                     and match.get("config", {}).get("user.dtu.request-id") == request_id
+                    and match.get("config", {}).get("user.dtu.owner-root", "") == owner_root
+                    and match.get("config", {}).get("user.dtu.launch-state") == "ready"
                 ):
                     if match.get("status") == "Running":
                         return {**previous["result"], "reused": True}
@@ -1217,6 +1219,8 @@ def launch(
                         "The original environment is not running; it was not restarted",
                         {"request_id": request_id, "id": container_name},
                     )
+                if match is not None:
+                    raise admission.AdmissionError("ownership_conflict", "The current environment does not match its recorded ready ownership; nothing was changed", {"request_id": request_id, "id": container_name})
                 raise admission.AdmissionError(
                     "launch_removed",
                     "The original environment no longer exists; this request will not recreate it",

@@ -13,6 +13,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
+import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -95,14 +97,54 @@ def context() -> dict:
     return {"daemon": fingerprint, "project": project, "storage_pool": pools.pop()}
 
 
+def _private_file(info, maximum: int = 262144) -> None:
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_mode & 0o077
+        or info.st_nlink != 1
+        or info.st_size > maximum
+    ):
+        raise AdmissionError(
+            "state_unsafe",
+            "Admission files must be bounded private regular files owned by this user",
+        )
+
+
+def _private_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(descriptor)
+        if info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise AdmissionError(
+                "state_unsafe",
+                "Admission directories must be private and owned by this user",
+            )
+    finally:
+        os.close(descriptor)
+
+
 def state_directory(ctx: dict) -> Path:
     base = Path(
         os.environ.get("AMPLIFIER_DTU_ADMISSION_DIR")
         or Path.home() / ".local/state/amplifier-dtu/admission"
     )
+    if not base.is_absolute() or ".." in base.parts:
+        raise AdmissionError(
+            "state_unsafe", "Admission directory must be an absolute normalized path"
+        )
+    # Do not let a symlinked ancestor silently redirect the authoritative journal.
+    for parent in (base, *base.parents):
+        if parent.is_symlink():
+            raise AdmissionError(
+                "state_unsafe", "Admission directories cannot traverse symlinks"
+            )
+    base.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _private_directory(base)
     key = hashlib.sha256(f"{ctx['daemon']}\n{ctx['project']}".encode()).hexdigest()
     root = base / key
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    root.mkdir(exist_ok=True, mode=0o700)
+    _private_directory(root)
     return root
 
 
@@ -114,7 +156,13 @@ def locked(ctx: dict):
     root = state_directory(ctx)
     timeout = resolve_limit(None, "AMPLIFIER_DTU_ADMISSION_TIMEOUT_SECONDS", 30)
     deadline = time.monotonic() + timeout
-    with (root / "admission.lock").open("a") as handle:
+    descriptor = os.open(
+        root / "admission.lock",
+        os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+        0o600,
+    )
+    with os.fdopen(descriptor, "a") as handle:
+        _private_file(os.fstat(handle.fileno()), 1024)
         while True:
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -136,25 +184,56 @@ def receipt_path(root: Path, request_id: str) -> Path:
     return root / (hashlib.sha256(request_id.encode()).hexdigest() + ".json")
 
 
+def _read_receipt_file(path: Path) -> dict:
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor) as stream:
+        _private_file(os.fstat(stream.fileno()))
+        raw = stream.read(262145)
+        if len(raw) > 262144:
+            raise AdmissionError(
+                "state_unsafe", "Admission receipt exceeded its size bound"
+            )
+        value = json.loads(raw)
+    if (
+        not isinstance(value, dict)
+        or not isinstance(value.get("request_id"), str)
+        or receipt_path(path.parent, value["request_id"]) != path
+    ):
+        raise AdmissionError("state_unsafe", "Admission receipt identity is invalid")
+    return value
+
+
 def read_receipt(root: Path, request_id: str) -> dict | None:
-    path = receipt_path(root, request_id)
-    return json.loads(path.read_text()) if path.exists() else None
+    try:
+        return _read_receipt_file(receipt_path(root, request_id))
+    except FileNotFoundError:
+        return None
 
 
 def save_receipt(root: Path, receipt: dict) -> None:
+    _private_directory(root)
     path = receipt_path(root, receipt["request_id"])
-    tmp = path.with_suffix(".tmp")
-    with tmp.open("w") as handle:
-        os.chmod(tmp, 0o600)
-        json.dump(receipt, handle)
-        handle.flush()
-        os.fsync(handle.fileno())
-    tmp.replace(path)
-    directory_fd = os.open(root, os.O_RDONLY)
     try:
-        os.fsync(directory_fd)
+        _private_file(path.lstat())
+    except FileNotFoundError:
+        pass
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".receipt-", suffix=".tmp", dir=root
+    )
+    tmp = Path(temporary)
+    try:
+        with os.fdopen(descriptor, "w") as handle:
+            json.dump(receipt, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp.replace(path)
+        directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
-        os.close(directory_fd)
+        tmp.unlink(missing_ok=True)
 
 
 def snapshot(ctx: dict, limits: dict, root: Path) -> dict:
@@ -168,7 +247,7 @@ def snapshot(ctx: dict, limits: dict, root: Path) -> dict:
     )
     pending = sum(
         r.get("state") in {"launching", "unknown"} and r["name"] not in names
-        for r in (json.loads(p.read_text()) for p in root.glob("*.json"))
+        for r in (_read_receipt_file(p) for p in root.glob("*.json"))
     )
     active = len(instances) - retained + pending
     total = len(instances) + pending

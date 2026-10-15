@@ -334,3 +334,76 @@ def test_isolated_container_cli_has_no_inherited_profile(monkeypatch):
         "--storage",
         "pool",
     ]
+
+
+@pytest.mark.parametrize("kind", ["symlink", "public"])
+def test_admission_root_rejects_unsafe_directories(tmp_path, monkeypatch, kind):
+    base = tmp_path / "admission"
+    if kind == "symlink":
+        target = tmp_path / "target"
+        target.mkdir(mode=0o700)
+        base.symlink_to(target, target_is_directory=True)
+    else:
+        base.mkdir(mode=0o755)
+    monkeypatch.setenv("AMPLIFIER_DTU_ADMISSION_DIR", str(base))
+    with pytest.raises((admission.AdmissionError, OSError)):
+        admission.state_directory({"daemon": "d", "project": "p"})
+
+
+@pytest.mark.parametrize("kind", ["symlink", "public", "hardlink", "oversize"])
+def test_receipts_are_private_regular_bounded_files(tmp_path, admission_infra, kind):
+    ctx = admission.context()
+    root = admission.state_directory(ctx)
+    path = admission.receipt_path(root, "r")
+    target = tmp_path / "target"
+    target.write_text('{"request_id":"r"}')
+    target.chmod(0o600)
+    if kind == "symlink":
+        path.symlink_to(target)
+    elif kind == "hardlink":
+        import os
+
+        os.link(target, path)
+    else:
+        path.write_text("x" * 262145 if kind == "oversize" else '{"request_id":"r"}')
+        path.chmod(0o644 if kind == "public" else 0o600)
+    with pytest.raises((admission.AdmissionError, OSError)):
+        admission.read_receipt(root, "r")
+    assert target.read_text() == '{"request_id":"r"}'
+
+
+def test_lock_symlink_is_not_followed(tmp_path, admission_infra):
+    ctx = admission.context()
+    root = admission.state_directory(ctx)
+    target = tmp_path / "victim"
+    target.write_text("unchanged")
+    (root / "admission.lock").symlink_to(target)
+    with pytest.raises(OSError), admission.locked(ctx):
+        pass
+    assert target.read_text() == "unchanged"
+
+
+def test_receipt_write_does_not_follow_old_predictable_temp_name(
+    tmp_path, admission_infra
+):
+    root = admission.state_directory(admission.context())
+    target = tmp_path / "victim"
+    target.write_text("unchanged")
+    admission.receipt_path(root, "r").with_suffix(".tmp").symlink_to(target)
+    admission.save_receipt(root, {"request_id": "r", "state": "unknown"})
+    assert admission.read_receipt(root, "r")["state"] == "unknown"
+    assert target.read_text() == "unchanged"
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [("user.dtu.owner-root", "different"), ("user.dtu.launch-state", "provisioning")],
+)
+def test_ready_retry_rechecks_owner_and_ready_marker(launch_infra, key, value):
+    profile, observed, create = launch_infra
+    engine.launch(profile, {}, request_id="r", owner_root="o")
+    observed[0]["config"][key] = value
+    with pytest.raises(admission.AdmissionError) as raised:
+        engine.launch(profile, {}, request_id="r", owner_root="o")
+    assert raised.value.code == "ownership_conflict"
+    assert create.call_count == 1
