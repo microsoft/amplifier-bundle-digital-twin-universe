@@ -317,22 +317,20 @@ whether an instance is still needed, that uncertainty itself must be surfaced
 explicitly in your report (naming the `id`) rather than silently resolved by
 leaving the container running.
 
-### Count before you launch
+### Check capacity before you launch
 
-Before launching a new instance, run `amplifier-digital-twin list` and look
-at how many DTU environments already exist. If a substantial number are
-already running, reconsider whether you actually need another one --
-especially before a batch or loop that will launch more than one. A pile of
-existing instances is a signal that cleanup isn't keeping pace with launches,
-not a reason to add to the pile.
+Use `amplifier-digital-twin capacity` for separate execution, retained-instance,
+and storage observations. Stopped environments consume storage, not execution
+slots. Defaults are 15 active/starting, 256 total, and a 10 GiB free-space floor.
+Existing explicit `--max-instances` settings still apply to the total count.
+Never change operator limits or delete another owner's instance to obtain a slot.
 
-The CLI enforces a hard ceiling on top of this judgment call: `launch`
-refuses (non-zero exit) once live DTU instances reach `--max-instances`
-(default 15, override via `--max-instances` or `AMPLIFIER_DTU_MAX_INSTANCES`,
-`0` = unlimited). See [api-reference.md](../../docs/api-reference.md) for the
-full flag reference. Treat a refusal from this guard as a real signal to
-destroy unneeded instances or use an explicit override -- not as an obstacle
-to route around reflexively.
+For a managed task, supply a stable `--request-id` and `--owner-root`. A timeout
+is uncertain; query `launch-status REQUEST_ID` and keep that identity instead
+of blindly repeating provisioning. Use the host's durable queue when available;
+capacity messages to peers are not a substitute for scheduling. Continue useful
+independent work while testing waits. See [api-reference.md](../../docs/api-reference.md)
+for migration, ownership checks and the same-host/user lock boundary.
 
 ### No TTL, no reaper -- ever
 

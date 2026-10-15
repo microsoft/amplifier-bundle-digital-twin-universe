@@ -11,6 +11,8 @@ from __future__ import annotations
 import base64
 import glob
 import inspect
+import hashlib
+import json
 import os
 import re
 import shlex
@@ -24,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
-from amplifier_bundle_digital_twin_universe import incus
+from amplifier_bundle_digital_twin_universe import admission, incus
 from amplifier_bundle_digital_twin_universe.incus import IncusError
 from dataclasses import dataclass
 
@@ -1038,77 +1040,80 @@ def _run_provisioning(container_name: str, commands: list[str]) -> None:
 
 
 # ===================================================================
-# Instance cap enforcement
+# Admission and capacity
 # ===================================================================
-#
-# There is no reaper or TTL anywhere in this system -- an instance launched
-# and never destroyed sits there indefinitely.  Repeated or looped launches
-# (e.g. from an automated eval/pipeline, or many stateless agent delegations
-# each launching their own instance) can silently accumulate containers until
-# the host runs out of disk, memory, or CPU.  This guard is a hard backstop:
-# `launch` refuses outright once the number of live DTU instances meets a
-# configurable cap.  It does not destroy anything and is not a substitute for
-# callers actually tearing down instances they no longer need -- see
-# docs/profiles.md#instance-lifecycle.
 
-_DEFAULT_MAX_INSTANCES = 15
+_DEFAULT_MAX_INSTANCES = admission.DEFAULT_MAX_INSTANCES
 _MAX_INSTANCES_ENV_VAR = "AMPLIFIER_DTU_MAX_INSTANCES"
 
 
 def resolve_max_instances(cli_value: int | None) -> int:
-    """Resolve the effective ``--max-instances`` cap.
-
-    Resolution order (first one set wins):
-      1. ``cli_value`` -- the ``--max-instances`` CLI flag, if passed.
-      2. ``AMPLIFIER_DTU_MAX_INSTANCES`` environment variable, if set.
-      3. Default: ``15``.
-
-    A resolved value of ``0`` means unlimited (the guard is disabled).
-    """
-    if cli_value is not None:
-        return cli_value
-    env_value = os.environ.get(_MAX_INSTANCES_ENV_VAR)
-    if env_value is not None and env_value.strip() != "":
-        try:
-            return int(env_value.strip())
-        except ValueError as exc:
-            raise ValueError(
-                f"Invalid {_MAX_INSTANCES_ENV_VAR} value: {env_value!r}. "
-                "Must be an integer."
-            ) from exc
-    return _DEFAULT_MAX_INSTANCES
+    """Total retained+active ceiling. Explicit old settings keep their meaning."""
+    return admission.resolve_limit(
+        cli_value, _MAX_INSTANCES_ENV_VAR, _DEFAULT_MAX_INSTANCES
+    )
 
 
 def count_live_instances() -> int:
-    """Count live DTU-managed instances.
-
-    Reuses the exact same discovery mechanism as ``list`` / ``list_environments``
-    (``incus list <managed-by key>=<value> --format=json``), so this count always
-    matches what ``amplifier-digital-twin list`` reports.
-    """
+    """Legacy API: counts all existing DTUs, including stopped instances."""
     return len(incus.list_instances(_MANAGED_BY_KEY, _MANAGED_BY_VALUE))
 
 
 def _enforce_max_instances(max_instances: int) -> None:
-    """Raise if the live instance count already meets/exceeds *max_instances*.
-
-    ``max_instances == 0`` means unlimited -- the check is skipped entirely.
-    Must be called *before* any container is created so a refusal never
-    leaves a partially-provisioned instance behind.
-    """
-    if max_instances == 0:
-        return
     current = count_live_instances()
-    if current >= max_instances:
-        raise RuntimeError(
-            f"Refusing to launch: {current} DTU instance(s) already running, "
-            f"which meets or exceeds --max-instances={max_instances}. "
-            "Nothing here auto-deletes instances -- destroy ones you no "
-            "longer need (`amplifier-digital-twin list` / "
-            "`amplifier-digital-twin destroy <id>`), or raise the cap "
-            "explicitly with --max-instances N (0 = unlimited) or the "
-            f"{_MAX_INSTANCES_ENV_VAR} environment variable."
+    if max_instances and current >= max_instances:
+        raise admission.AdmissionError(
+            "retained_capacity",
+            f"Refusing to launch: {current} existing DTUs meet --max-instances={max_instances} "
+            f"({_MAX_INSTANCES_ENV_VAR}); stopped environments retain storage.",
         )
+
+
+def capacity(max_running=None, max_instances=None, min_free_bytes=None) -> dict:
+    """Read capacity; this is advisory until launch rechecks under its lock."""
+    limits = admission.policy(max_running, max_instances, min_free_bytes)
+    ctx = admission.context()
+    with admission.locked(ctx) as root:
+        return admission.snapshot(ctx, limits, root)
+
+
+def launch_status(request_id: str) -> dict:
+    """Observe a stable request without repeating any provisioning side effect.
+
+    Absence after an interrupted launch is unknown, not proof of cancellation:
+    the daemon operation may still be completing. No automatic replay occurs.
+    """
+    ctx = admission.context()
+    with admission.locked(ctx) as root:
+        receipt = admission.read_receipt(root, request_id)
+        if receipt is None:
+            return {
+                "schema_version": 1,
+                "request_id": request_id,
+                "state": "not_recorded",
+            }
+        instances = incus.list_instances(_MANAGED_BY_KEY, _MANAGED_BY_VALUE)
+        match = next((i for i in instances if i["name"] == receipt["name"]), None)
+        observed = dict(receipt)
+        observed.pop("intent_digest", None)
+        if match is not None:
+            config = match.get("config", {})
+            if (
+                config.get("user.dtu.request-id") != request_id
+                or config.get("user.dtu.owner-root", "") != receipt["owner_root"]
+            ):
+                observed["state"] = "conflict"
+            else:
+                observed["instance_status"] = match.get("status")
+                if config.get("user.dtu.launch-state") == "ready":
+                    observed["state"] = {"Running": "ready", "Stopped": "stopped"}.get(match.get("status"), "unknown")
+                elif receipt["state"] not in {"failed", "removed"}:
+                    observed["state"] = "unknown"
+        elif receipt["state"] == "ready":
+            observed["state"] = "removed"
+        elif receipt["state"] in {"launching", "unknown"}:
+            observed["state"] = "unknown"
+        return {"schema_version": 1, **observed}
 
 
 # ===================================================================
@@ -1122,23 +1127,59 @@ def launch(
     name: str | None = None,
     hostname: str | None = None,
     max_instances: int | None = None,
+    max_running: int | None = None,
+    min_free_bytes: int | None = None,
+    owner_root: str | None = None,
+    request_id: str | None = None,
+    offline: bool = False,
 ) -> dict:
     """Launch a Digital Twin Universe.  Returns the JSON status dict."""
     incus.check_incus()
 
-    # Enforce the instance cap before touching Incus at all -- a refusal here
-    # must never leave a partially-created container behind.
-    _enforce_max_instances(resolve_max_instances(max_instances))
-
     # Quick-load to get the base image.
     host_profile = load_profile(profile_arg, variables)
+    if offline and (
+        host_profile.url_rewrites
+        or host_profile.mock_services
+        or host_profile.pypi_overrides
+        or host_profile.access
+    ):
+        raise ValueError(
+            "Offline launch cannot configure proxies, mock services, package overrides or access ports"
+        )
 
-    container_name = name or f"dtu-{uuid.uuid4().hex[:8]}"
+    request_id = str(uuid.uuid4()) if request_id is None else request_id
+    if not request_id.strip() or len(request_id) > 256:
+        raise ValueError("request_id must contain 1 to 256 characters")
+    owner_root = owner_root or ""
+    if len(owner_root) > 256:
+        raise ValueError("owner_root must contain at most 256 characters")
+    container_name = (
+        name or f"dtu-{hashlib.sha256(request_id.encode()).hexdigest()[:16]}"
+    )
+    if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9-]{0,62}", container_name):
+        raise ValueError(
+            "name must be an Incus name of at most 63 alphanumeric or hyphen characters"
+        )
     image = _resolve_image(host_profile.base.image)
+    limits = admission.policy(max_running, max_instances, min_free_bytes)
+    ctx = admission.context()
+    intent_digest = hashlib.sha256(
+        json.dumps(
+            {
+                "profile": host_profile.path.read_text(),
+                "variables": variables,
+                "name": container_name,
+                "hostname": hostname,
+                "owner_root": owner_root,
+                "offline": offline,
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    print(f"Creating container {container_name} ({image})...", file=sys.stderr)
     # Default-on with override: always inject security.nesting=true unless the
     # profile explicitly sets it (including setting it to "false"). Nesting is
     # required for running Docker (and other container runtimes) inside Incus,
@@ -1147,8 +1188,92 @@ def launch(
     effective_config = {
         **DEFAULT_BASE_CONFIG,
         **(host_profile.base.config or {}),
+        "user.dtu.managed-by": _MANAGED_BY_VALUE,
+        "user.dtu.profile": host_profile.name,
+        "user.dtu.created-at": now,
+        "user.dtu.owner-root": owner_root,
+        "user.dtu.request-id": request_id,
+        "user.dtu.launch-state": "provisioning",
+        "user.dtu.offline": str(offline).lower(),
     }
-    incus.create_container(container_name, image, config=effective_config)
+    with admission.locked(ctx) as root:
+        previous = admission.read_receipt(root, request_id)
+        if previous is not None:
+            if previous["intent_digest"] != intent_digest:
+                raise admission.AdmissionError(
+                    "request_conflict", "This request ID belongs to a different launch"
+                )
+            if previous["state"] == "ready":
+                matches = incus.list_instances(_MANAGED_BY_KEY, _MANAGED_BY_VALUE)
+                match = next((i for i in matches if i["name"] == container_name), None)
+                if (
+                    match
+                    and match.get("config", {}).get("user.dtu.request-id") == request_id
+                    and match.get("config", {}).get("user.dtu.owner-root", "") == owner_root
+                    and match.get("config", {}).get("user.dtu.launch-state") == "ready"
+                ):
+                    if match.get("status") == "Running":
+                        return {**previous["result"], "reused": True}
+                    raise admission.AdmissionError(
+                        "launch_stopped" if match.get("status") == "Stopped" else "launch_unknown",
+                        "The original environment is not running; it was not restarted",
+                        {"request_id": request_id, "id": container_name},
+                    )
+                if match is not None:
+                    raise admission.AdmissionError("ownership_conflict", "The current environment does not match its recorded ready ownership; nothing was changed", {"request_id": request_id, "id": container_name})
+                raise admission.AdmissionError(
+                    "launch_removed",
+                    "The original environment no longer exists; this request will not recreate it",
+                    {"request_id": request_id, "id": container_name},
+                )
+            raise admission.AdmissionError(
+                "launch_unknown" if previous["state"] != "failed" else "launch_failed",
+                "A prior attempt is recorded; inspect launch-status before deciding next steps",
+                {"request_id": request_id, "id": container_name},
+            )
+        if incus.container_exists(container_name):
+            raise admission.AdmissionError(
+                "name_conflict",
+                "An environment with this name already exists; it was not changed",
+                {"id": container_name},
+            )
+        available = admission.snapshot(ctx, limits, root)
+        if not available["available"]:
+            raise admission.AdmissionError(
+                available["blockers"][0]["code"],
+                "Refusing to launch: capacity is unavailable",
+                {"capacity": available},
+            )
+        receipt = {
+            "request_id": request_id,
+            "name": container_name,
+            "owner_root": owner_root,
+            "intent_digest": intent_digest,
+            "state": "launching",
+            "created_at": now,
+        }
+        admission.save_receipt(root, receipt)
+        try:
+            print(f"Creating container {container_name} ({image})...", file=sys.stderr)
+            if offline:
+                incus.create_container(
+                    container_name,
+                    image,
+                    config=effective_config,
+                    isolated_pool=ctx["storage_pool"],
+                )
+            else:
+                incus.create_container(container_name, image, config=effective_config)
+        except Exception as exc:
+            # Timeout does not mean failure: the daemon may still create the
+            # instance. Retain the reservation and never replay this request.
+            receipt["state"] = "unknown"
+            admission.save_receipt(root, receipt)
+            raise admission.AdmissionError(
+                "launch_unknown",
+                "Container creation did not return a confirmed outcome; inspect launch-status",
+                {"request_id": request_id, "id": container_name},
+            ) from exc
 
     try:
         # Store metadata so `status` and `list` can discover this instance.
@@ -1171,7 +1296,7 @@ def launch(
         )
 
         # Detect host gateway IP (retries until networking is up).
-        host_ip = _wait_for_gateway(container_name)
+        host_ip = "127.0.0.1" if offline else _wait_for_gateway(container_name)
         print(f"  host gateway: {host_ip}", file=sys.stderr)
 
         # Rewrite localhost -> gateway IP and reload profile.
@@ -1236,7 +1361,7 @@ def launch(
         from amplifier_bundle_digital_twin_universe.hostname import HostnameManager
 
         hostname_mgr = HostnameManager(raw_hostname, container_name)
-        hostname_result = hostname_mgr.register()
+        hostname_result = None if offline else hostname_mgr.register()
         if hostname_result:
             resolved_hostname = hostname_result["hostname"]
             incus.set_config(container_name, "user.dtu.hostname", resolved_hostname)
@@ -1388,9 +1513,13 @@ def launch(
                 }
                 for svc in running_services
             ]
-        return result
+        result["request_id"] = request_id
+        result["owner_root"] = owner_root
+        result["offline"] = offline
+        incus.set_config(container_name, "user.dtu.launch-state", "ready")
     except Exception:
-        # Best-effort cleanup on failure.
+        # Best-effort cleanup on failure, only for this successfully-created
+        # instance. An uncertain creation above never enters this path.
         try:
             from amplifier_bundle_digital_twin_universe.hostname import (
                 HostnameManager as _HM,
@@ -1407,9 +1536,27 @@ def launch(
             pass
         try:
             incus.delete_container(container_name, force=True)
+            with admission.locked(ctx) as root:
+                receipt["state"] = "failed"
+                admission.save_receipt(root, receipt)
         except Exception:
-            pass
+            with admission.locked(ctx) as root:
+                receipt["state"] = "unknown"
+                admission.save_receipt(root, receipt)
         raise
+    # A lost acknowledgement must not tear down a successfully provisioned
+    # environment. launch-status can recover its ready marker from Incus.
+    try:
+        with admission.locked(ctx) as root:
+            receipt.update(state="ready", result=result)
+            admission.save_receipt(root, receipt)
+    except Exception as exc:
+        raise admission.AdmissionError(
+            "launch_unknown",
+            "Provisioning completed but its receipt could not be saved; inspect launch-status",
+            {"request_id": request_id, "id": container_name},
+        ) from exc
+    return result
 
 
 def _read_profile_snapshot(container_id: str) -> str | None:
@@ -1706,6 +1853,10 @@ def _instance_info(name: str) -> dict:
         "status": incus.get_instance_state(name),
         "created_at": incus.get_config(name, "user.dtu.created-at"),
     }
+    for field in ("owner-root", "request-id", "launch-state"):
+        value = incus.get_config(name, f"user.dtu.{field}")
+        if value:
+            info[field.replace("-", "_")] = value
     _hostname = incus.get_config(name, "user.dtu.hostname")
     if _hostname:
         info["hostname"] = _hostname
@@ -1848,10 +1999,23 @@ def check_readiness(
     return result
 
 
-def destroy(container_id: str) -> dict:
-    """Destroy the environment.  Returns ``{id, destroyed}``."""
+def destroy(
+    container_id: str, owner_root: str | None = None, request_id: str | None = None
+) -> dict:
+    """Destroy one environment, optionally requiring its exact owner/request."""
     if not incus.container_exists(container_id):
         raise RuntimeError(f"Environment not found: {container_id}")
+
+    actual_request = incus.get_config(container_id, "user.dtu.request-id")
+    actual_owner = incus.get_config(container_id, "user.dtu.owner-root")
+    if (request_id is not None and actual_request != request_id) or (
+        owner_root is not None and actual_owner != owner_root
+    ):
+        raise admission.AdmissionError(
+            "ownership_conflict",
+            "Environment ownership does not match; nothing was destroyed",
+            {"id": container_id},
+        )
 
     # Unregister hostname before destroying the container.
     try:
@@ -1870,4 +2034,15 @@ def destroy(container_id: str) -> dict:
 
     incus.stop_container(container_id)
     incus.delete_container(container_id)
+    if actual_request:
+        ctx = admission.context()
+        with admission.locked(ctx) as root:
+            receipt = admission.read_receipt(root, actual_request)
+            if (
+                receipt
+                and receipt["name"] == container_id
+                and receipt["owner_root"] == actual_owner
+            ):
+                receipt["state"] = "removed"
+                admission.save_receipt(root, receipt)
     return {"id": container_id, "destroyed": True}

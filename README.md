@@ -119,6 +119,9 @@ amplifier-digital-twin exec dtu-a1b2c3d4
 # Check environment status
 amplifier-digital-twin status dtu-a1b2c3d4
 
+# Observe execution slots, retained environments and actual storage pressure
+amplifier-digital-twin capacity
+
 # List all managed environments on this machine
 amplifier-digital-twin list
 

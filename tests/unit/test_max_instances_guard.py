@@ -8,7 +8,7 @@ test suite locks in the enforcement mechanism that prevents that from
 happening silently again:
 
   - ``resolve_max_instances()`` -- cap resolution precedence (CLI flag >
-    ``AMPLIFIER_DTU_MAX_INSTANCES`` env var > default 15).
+    ``AMPLIFIER_DTU_MAX_INSTANCES`` env var > default 256).
   - ``count_live_instances()`` -- reuses the same discovery mechanism as
     ``list``/``list_environments`` (``incus.list_instances``).
   - ``_enforce_max_instances()`` -- raises before any container is created
@@ -39,7 +39,7 @@ def test_resolve_default_when_flag_and_env_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv(engine_mod._MAX_INSTANCES_ENV_VAR, raising=False)
-    assert engine_mod.resolve_max_instances(None) == 15
+    assert engine_mod.resolve_max_instances(None) == 256
 
 
 def test_resolve_env_var_used_when_flag_absent(
@@ -65,7 +65,7 @@ def test_resolve_empty_env_var_falls_back_to_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(engine_mod._MAX_INSTANCES_ENV_VAR, "")
-    assert engine_mod.resolve_max_instances(None) == 15
+    assert engine_mod.resolve_max_instances(None) == 256
 
 
 def test_resolve_invalid_env_var_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -169,11 +169,12 @@ def _write_profile(tmp_path: Path) -> str:
 
 
 @pytest.fixture()
-def _patch_launch_infra(monkeypatch: pytest.MonkeyPatch):
+def _patch_launch_infra(monkeypatch: pytest.MonkeyPatch, admission_infra):
     """Patch all infrastructure calls in launch() so it can run without Incus."""
     import amplifier_bundle_digital_twin_universe.incus as incus_mod
 
     create_container_mock = MagicMock()
+    monkeypatch.setattr(incus_mod, "list_instances", MagicMock(return_value=[]))
 
     monkeypatch.setattr(incus_mod, "check_incus", MagicMock())
     monkeypatch.setattr(incus_mod, "create_container", create_container_mock)
@@ -201,7 +202,7 @@ def test_launch_refuses_before_creating_container_when_cap_hit(
     """launch() must raise -- and never call create_container -- when the
     live count already meets the cap."""
     monkeypatch.setattr(
-        engine_mod, "count_live_instances", MagicMock(return_value=15)
+        engine_mod.incus, "list_instances", MagicMock(return_value=[{"name": f"dtu-{n}", "status": "Running"} for n in range(15)])
     )
     profile_path = _write_profile(tmp_path)
 
@@ -253,7 +254,7 @@ def test_launch_default_cap_applies_when_flag_omitted(
     """When the CLI flag is not passed (None), the default cap of 15 applies."""
     monkeypatch.delenv(engine_mod._MAX_INSTANCES_ENV_VAR, raising=False)
     monkeypatch.setattr(
-        engine_mod, "count_live_instances", MagicMock(return_value=15)
+        engine_mod.incus, "list_instances", MagicMock(return_value=[{"name": f"dtu-{n}", "status": "Running"} for n in range(15)])
     )
     profile_path = _write_profile(tmp_path)
 

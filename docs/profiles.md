@@ -108,14 +108,15 @@ system ever automatically stops or deletes an instance based on age,
 idleness, or any other signal. Teardown (`amplifier-digital-twin destroy
 <id>`) is entirely the launching caller's responsibility, every time.
 
-The CLI provides one enforcement mechanism to keep unbounded launching from
-silently exhausting the host: `launch --max-instances N` (see
-[api-reference.md](api-reference.md#launch)) refuses to create a new
-instance once the number of live DTU-managed instances reaches `N`. This
-bounds *how many* orphans can accumulate before launches start failing; it
-does not destroy anything on your behalf. Combine it with the resource
-limits above to bound how much damage each individual instance can do while
-it's running.
+Launch admission separates execution capacity (15 active/starting by default),
+retained instances (256 total by default), and storage pressure (10 GiB of free
+space in the actual Incus storage pool by default). Stopped environments retain
+storage but do not occupy execution slots. Explicit older `--max-instances`
+settings retain their total-count meaning. See [the migration and coordination
+scope](api-reference.md#launch) before changing operator policy. No automatic
+reaper or teardown is added; root-owner metadata helps a managing application
+preserve evidence and clean up only environments it owns. Combine admission
+with per-instance resource limits above: admission is not a runtime quota.
 
 ## `url_rewrites`
 

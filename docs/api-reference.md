@@ -1,6 +1,6 @@
 # API Reference
 
-This reference documents v0.3.0. For previous versions, check out the corresponding git tag or commit (`git checkout v<version>`). When upgrading across a breaking change, review the diff between versions to find the migration steps. The source can be cloned from https://github.com/microsoft/amplifier-bundle-digital-twin-universe
+This reference documents v0.4.0. For previous versions, check out the corresponding git tag or commit (`git checkout v<version>`). When upgrading across a breaking change, review the diff between versions to find the migration steps. The source can be cloned from https://github.com/microsoft/amplifier-bundle-digital-twin-universe
 
 CLI: `amplifier-digital-twin`
 
@@ -28,7 +28,8 @@ amplifier-digital-twin launch <profile> \
   [--var KEY=VALUE ...] \
   [--name my-env] \
   [--hostname my-project] \
-  [--max-instances N]
+  [--max-running N] [--max-instances N] [--min-free-bytes N] \
+  [--request-id request-123] [--owner-root parent-task]
 ```
 
 `<profile>` (required)
@@ -42,7 +43,7 @@ amplifier-digital-twin launch <profile> \
   Example: `--var GITEA_URL=http://10.0.0.1:10110`
 
 `--name` (optional)
-  Human-readable name. Defaults to `dtu-<uuid8>`.
+  Human-readable name. Defaults to `dtu-<16-character request hash>`.
 
 `--hostname` (optional)
   Register a `.local` mDNS hostname via Avahi. The `.local` suffix is appended
@@ -52,37 +53,119 @@ amplifier-digital-twin launch <profile> \
   Requires `avahi-utils`. If unavailable, silently skipped.
   See [profiles.md](profiles.md#hostname-support) for platform details.
 
+`--max-running N` (optional)
+  Limit active, starting, frozen and unknown-state DTUs. Stopped, fully
+  provisioned environments do not consume execution slots. Default:
+  `AMPLIFIER_DTU_MAX_RUNNING`, otherwise `15`. `0` disables this count limit.
+
 `--max-instances N` (optional)
-  Refuse to launch if the number of currently live DTU-managed instances
-  (the same population `list` returns) is already `>= N`. On refusal, `launch`
-  exits non-zero *before* creating any Incus container, and prints an error
-  naming the current instance count, the cap that was hit, and how to
-  override it. `N = 0` means unlimited (the guard is disabled).
+  Limit **all existing DTUs**, including stopped environments and unresolved
+  launch reservations. Default: `AMPLIFIER_DTU_MAX_INSTANCES`, otherwise `256`.
+  This emergency backstop bounds retained instances, independently of execution
+  capacity. `0` disables this count limit only.
 
-  Cap resolution order (first one set wins):
-  1. `--max-instances` flag, if passed
-  2. `AMPLIFIER_DTU_MAX_INSTANCES` environment variable, if set
-  3. Default: `15`
+`--min-free-bytes N` (optional)
+  Refuse admission when the default profile's actual Incus root storage pool
+  has less free space than this floor. Default: `AMPLIFIER_DTU_MIN_FREE_BYTES`,
+  otherwise 10 GiB (`10737418240`). Missing storage measurements block admission
+  unless the operator explicitly disables the floor with `0`. This is an
+  admission measurement, not a disk reservation or prediction of job growth;
+  per-instance storage/memory/CPU limits remain important.
 
-  This exists because nothing else in the system ever destroys an instance
-  automatically -- see [profiles.md#instance-lifecycle](profiles.md#instance-lifecycle).
-  Without a cap, repeated or looped launches (e.g. from an automated
-  pipeline or a delegated agent that doesn't itself tear down after every
-  run) can silently accumulate containers until the host runs out of disk,
-  memory, or CPU. The cap is a backstop, not a substitute for destroying
-  instances you no longer need -- raising or disabling it does not make the
-  underlying resource pressure go away.
+Each option resolves CLI first, environment second, default last. Negative or
+invalid values are rejected. The library never raises limits or deletes old
+instances to make room.
 
-  ```bash
-  # Use a higher cap for a workload that legitimately needs more instances
-  amplifier-digital-twin launch my-profile --max-instances 30
+**Migration from 0.3.x:** the old implicit 15-total ceiling becomes a 15-active
+ceiling plus the 256-total and 10-GiB-storage backstops. An **explicit** existing
+`--max-instances 15` / `AMPLIFIER_DTU_MAX_INSTANCES=15` retains its original
+**total-instance** meaning. To adopt execution-only 15, remove that total-count
+setting and set `--max-running 15`; do not silently rewrite operator policy.
+Likewise `--max-instances 0` does not disable the new independent guards.
 
-  # Disable the guard entirely
-  amplifier-digital-twin launch my-profile --max-instances 0
+`--offline` (optional)
+  Launch with `--no-profiles --storage <root-pool>`: no inherited NICs, host
+  mounts or profile configuration. Network/proxy/access profile features are
+  rejected, gateway detection and hostname advertisement are skipped. Only
+  the explicit `base.config` and DTU defaults apply; callers should set
+  `security.privileged: "false"`, `security.nesting: "false"` and resource limits
+  for managed test jobs. This mode does not provision dependencies from the
+  network; prepare a suitable cached image first.
 
-  # Same override via environment variable (useful for CI/pipelines)
-  AMPLIFIER_DTU_MAX_INSTANCES=0 amplifier-digital-twin launch my-profile
-  ```
+`--request-id ID` / `--owner-root ID` (optional)
+  Record a stable request and root-task ownership. Repeating the same request,
+  profile contents, variables, name, hostname and owner returns the prior ready
+  result without provisioning twice. A changed request intent is rejected.
+  Stopped or removed environments are not restarted or recreated by a retry.
+  When request ID is omitted, a new ID is generated. Owner metadata is descriptive,
+  not an authorization boundary or automatic cleanup permission.
+
+**Timeouts:** an interrupted `incus launch` may still complete on the daemon.
+Its name/request reservation remains counted. `launch-status REQUEST_ID` reads
+current evidence without replaying creation or provisioning. `unknown` is not
+failure, success or cancellation. Keep the original identity and reconcile it;
+never issue another name to work around an uncertain outcome. The library does
+not automatically resume partial provisioning. A failed provisioning attempt
+cleans up only the instance it successfully created, and records failure only
+when deletion succeeded. Explicit owner-checked destruction retires its receipt.
+
+**Coordination scope:** clients on the same OS host and user share a durable
+admission directory (`~/.local/state/amplifier-dtu/admission` by default,
+`AMPLIFIER_DTU_ADMISSION_DIR` override). Lock identity uses the actual daemon
+certificate fingerprint and project, so aliases do not create separate pools.
+The capacity check, durable reservation and container creation are serialized;
+provisioning then proceeds concurrently. A caller waiting longer than
+`AMPLIFIER_DTU_ADMISSION_TIMEOUT_SECONDS` (default 30) receives `admission_busy`
+and can retry the same request. Different state directories, users, hosts,
+older DTU clients and direct Incus calls are **not** serialized by this lock.
+The lock requires a POSIX caller (Linux, WSL or macOS). Native Windows callers
+must run this CLI in WSL. No distributed or daemon-wide guarantee is implied.
+
+Use a private, stable `INCUS_CONF` when managing a remote explicitly, and
+`AMPLIFIER_DTU_INCUS_PROJECT` to pass `--project` to every Incus command. Incus
+itself does not honor `INCUS_PROJECT`. The capacity response identifies the
+actual daemon and project for callers to verify.
+
+### `capacity`
+
+Read-only preflight; `launch` always rechecks under its admission lock. Supports
+`--max-running`, `--max-instances` and `--min-free-bytes`. A normal observation
+exits 0 even when capacity is unavailable. Backend-query errors exit nonzero.
+
+```json
+{
+  "schema_version": 1,
+  "scope": {"daemon": "<certificate-fingerprint>", "project": "default", "storage_pool": "default"},
+  "coordination": "same_host_user_state_directory",
+  "counts": {"active": 4, "stopped_retained": 11, "pending_unobserved": 0, "total": 15},
+  "limits": {"max_running": 15, "max_instances": 256, "min_free_bytes": 10737418240},
+  "storage": {"pool": "default", "free_bytes": 53687091200, "min_free_bytes": 10737418240},
+  "blockers": [],
+  "available": true
+}
+```
+
+Blocker codes are `execution_capacity`, `retained_capacity`, `storage_pressure`
+and `storage_unknown`; all applicable blockers are returned. Unrecognized
+instance states count as active. Incus storage usage includes retained volumes,
+images and other users of that pool; no container is deleted during observation.
+
+### `launch-status REQUEST_ID`
+
+Returns `{schema_version, request_id, name, owner_root, state, created_at}` plus
+`instance_status` when observed and the saved `result` when available. States:
+`not_recorded`, `unknown`, `ready`, `stopped`, `removed`, `failed`, `conflict`.
+Absent after an interrupted launch remains unknown: absence does not establish
+that a remote operation was cancelled. Ready markers come from provisioning,
+not merely from an Incus Running status. Receipts are private, durable and are
+not removed automatically, preventing completed request IDs from being replayed.
+
+Admission/identity errors exit nonzero and return JSON on stdout:
+`{schema_version:1, error:"execution_capacity", message:"...", capacity:{...}}`.
+Other codes include `admission_busy`, `request_conflict`, `name_conflict`,
+`launch_unknown`, `launch_failed`, `launch_stopped` and `launch_removed`.
+
+### Successful launch response
 
 Returns (example):
 
@@ -671,3 +754,10 @@ Returns:
   "destroyed": true
 }
 ```
+
+### Ownership checks on destruction
+
+`destroy NAME --owner-root ROOT --request-id REQUEST` refuses with
+`ownership_conflict` unless both metadata values match. Existing unqualified
+`destroy NAME` retains its manual behavior. Neither form discovers teardown
+authority for legacy instances. Preserve required artifacts before destruction.
