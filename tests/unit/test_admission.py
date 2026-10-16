@@ -489,3 +489,159 @@ def test_prior_unknown_launch_is_not_reclassified_when_image_disappears(monkeypa
         engine.launch(profile, {}, name='uncertain-pinned', request_id='uncertain-pinned', offline=True)
     assert error.value.code == 'launch_unknown' and create.call_count == 1
     assert engine.launch_status('uncertain-pinned')['state'] == 'unknown'
+
+
+# DTU-001 preparation: exercise the existing public boundary before adding any
+# settlement API. These tests are not a substitute for real Incus fault tests.
+@pytest.fixture
+def recovery_infra(monkeypatch, launch_infra):
+    """Keep every new recovery case off a real daemon, even if mocks drift."""
+    def unexpected_command(*args, **kwargs):
+        raise AssertionError("Recovery unit case attempted an external command")
+
+    monkeypatch.setattr(incus, "_run", unexpected_command)
+    return launch_infra
+
+
+def _record_uncertain_attempt(recovery_infra, *, state="unknown"):
+    profile, _observed, create = recovery_infra
+    create.side_effect = subprocess.TimeoutExpired(["incus", "launch"], 120)
+    with pytest.raises(admission.AdmissionError, match="confirmed outcome"):
+        engine.launch(
+            profile, {}, name="recovery-case", request_id="recovery-request",
+            owner_root="recovery-owner",
+        )
+    with admission.locked(admission.context()) as root:
+        receipt = admission.read_receipt(root, "recovery-request")
+        receipt["state"] = state
+        # Synthetic old date: age must never be a cancellation certificate.
+        receipt["created_at"] = "2000-01-01T00:00:00Z"
+        admission.save_receipt(root, receipt)
+        path = admission.receipt_path(root, "recovery-request")
+    return path, path.read_bytes()
+
+
+@pytest.mark.parametrize("state", ["launching", "unknown"])
+def test_recovery_observation_preserves_legacy_bytes_and_reservation(
+    recovery_infra, state
+):
+    profile, _observed, create = recovery_infra
+    path, original = _record_uncertain_attempt(recovery_infra, state=state)
+    for _ in range(3):
+        assert engine.launch_status("recovery-request")["state"] == "unknown"
+        assert engine.capacity(max_running=1)["counts"]["pending_unobserved"] == 1
+        assert path.read_bytes() == original
+    with pytest.raises(admission.AdmissionError):
+        engine.launch(
+            profile, {}, name="recovery-case", request_id="recovery-request",
+            owner_root="recovery-owner",
+        )
+    assert create.call_count == 1
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("change", [
+    {"owner_root": "other-owner"},
+    {"name": "other-name"},
+    {"variables": {"changed": "intent"}},
+])
+def test_recovery_retry_conflicts_do_not_rewrite_or_recreate(recovery_infra, change):
+    profile, _observed, create = recovery_infra
+    path, original = _record_uncertain_attempt(recovery_infra)
+    args = {
+        "profile_arg": profile, "variables": {}, "name": "recovery-case",
+        "request_id": "recovery-request", "owner_root": "recovery-owner",
+        **change,
+    }
+    with pytest.raises(admission.AdmissionError) as error:
+        engine.launch(**args)
+    assert error.value.code == "request_conflict"
+    assert create.call_count == 1
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("partial", [
+    '{"operation": "/1.0/operations/incomplete',
+    b'{"operation":"/1.0/operations/00000000-0000-4000-8000-000000000000"}',
+])
+def test_recovery_partial_timeout_output_is_not_terminal_evidence(
+    recovery_infra, partial
+):
+    profile, _observed, create = recovery_infra
+    create.side_effect = subprocess.TimeoutExpired(
+        ["incus", "launch"], 120, output=partial,
+        stderr=b"synthetic token=DO_NOT_PERSIST /private/example",
+    )
+    with pytest.raises(admission.AdmissionError):
+        engine.launch(
+            profile, {}, name="partial", request_id="partial", owner_root="owner"
+        )
+    status = engine.launch_status("partial")
+    assert status["state"] == "unknown"
+    assert status["failure_cause"] == {"stage": "create", "code": "timeout"}
+    with admission.locked(admission.context()) as root:
+        raw = admission.receipt_path(root, "partial").read_text()
+    assert "DO_NOT_PERSIST" not in raw and "/private/example" not in raw
+    assert engine.capacity()["counts"]["pending_unobserved"] == 1
+    assert create.call_count == 1
+
+
+@pytest.mark.parametrize("instance_status", ["Running", "Stopped"])
+@pytest.mark.parametrize("ownership", ["matching", "wrong-owner", "wrong-request"])
+def test_recovery_residual_identity_controls_pending_accounting(
+    recovery_infra, instance_status, ownership
+):
+    _profile, observed, create = recovery_infra
+    path, original = _record_uncertain_attempt(recovery_infra)
+    observed.append({
+        "name": "recovery-case",
+        "status": instance_status,
+        "config": {
+            "user.dtu.managed-by": admission.MANAGED_VALUE,
+            "user.dtu.owner-root": (
+                "other" if ownership == "wrong-owner" else "recovery-owner"
+            ),
+            "user.dtu.request-id": (
+                "other" if ownership == "wrong-request" else "recovery-request"
+            ),
+            "user.dtu.launch-state": "provisioning",
+        },
+    })
+    status = engine.launch_status("recovery-request")
+    counts = engine.capacity()["counts"]
+    matched = ownership == "matching"
+    assert status["state"] == ("unknown" if matched else "conflict")
+    # An unrelated same-name instance cannot stand in for the unresolved
+    # attempt. Count the observed resource AND the unmatched reservation.
+    assert counts["pending_unobserved"] == (0 if matched else 1)
+    assert counts["active"] == (1 if matched else 2)
+    assert counts["total"] == (1 if matched else 2)
+    assert path.read_bytes() == original
+    assert create.call_count == 1
+
+
+def test_recovery_concurrent_reads_keep_unknown_history(recovery_infra):
+    _profile, _observed, create = recovery_infra
+    path, original = _record_uncertain_attempt(recovery_infra)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(
+            lambda _: engine.launch_status("recovery-request"), range(4)
+        ))
+    assert all(result["state"] == "unknown" for result in results)
+    assert path.read_bytes() == original
+    assert create.call_count == 1
+
+
+@pytest.mark.parametrize("state", ["unknown", "failed", "removed"])
+def test_recovery_future_receipt_schema_fails_closed(recovery_infra, state):
+    path, _original = _record_uncertain_attempt(recovery_infra, state=state)
+    with admission.locked(admission.context()) as root:
+        receipt = admission.read_receipt(root, "recovery-request")
+        receipt["schema_version"] = 999
+        admission.save_receipt(root, receipt)
+    original = path.read_bytes()
+    # Unsupported accounting semantics must not silently free an unknown
+    # reservation. Legacy receipts WITHOUT schema_version remain readable.
+    with pytest.raises(admission.AdmissionError):
+        engine.capacity()
+    assert path.read_bytes() == original
