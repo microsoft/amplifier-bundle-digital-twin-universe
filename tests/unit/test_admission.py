@@ -3,6 +3,7 @@
 """Admission regressions: retained storage, races, lost replies and safe retries."""
 
 import json
+import hashlib
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -495,12 +496,53 @@ def test_prior_unknown_launch_is_not_reclassified_when_image_disappears(monkeypa
 # settlement API. These tests are not a substitute for real Incus fault tests.
 @pytest.fixture
 def recovery_infra(monkeypatch, launch_infra):
-    """Keep every new recovery case off a real daemon, even if mocks drift."""
+    """Trip on unexpected Incus-wrapper use, even if its error is swallowed."""
+    unexpected = []
+
     def unexpected_command(*args, **kwargs):
+        unexpected.append("Incus wrapper invoked")
         raise AssertionError("Recovery unit case attempted an external command")
 
     monkeypatch.setattr(incus, "_run", unexpected_command)
-    return launch_infra
+    yield launch_infra
+    assert unexpected == [], "Production caught an unexpected Incus-wrapper call"
+
+
+def _seed_legacy_receipt(recovery_infra, *, state="unknown", schema_version=None):
+    """Write frozen 0.4.1 fields without calling the evolving receipt writer."""
+    from pathlib import Path
+
+    profile, _observed, _create = recovery_infra
+    intent = {
+        "profile": Path(profile).read_text(),
+        "variables": {},
+        "name": "recovery-case",
+        "hostname": None,
+        "owner_root": "recovery-owner",
+        "offline": False,
+    }
+    receipt = {
+        "request_id": "recovery-request",
+        "name": "recovery-case",
+        "owner_root": "recovery-owner",
+        "intent_digest": hashlib.sha256(
+            json.dumps(intent, sort_keys=True).encode()
+        ).hexdigest(),
+        "state": state,
+        "created_at": "2000-01-01T00:00:00Z",
+        "failure_cause": {"stage": "create", "code": "timeout"},
+    }
+    if schema_version is not None:
+        receipt["schema_version"] = schema_version
+    with admission.locked(admission.context()) as root:
+        path = root / (
+            hashlib.sha256(b"recovery-request").hexdigest() + ".json"
+        )
+        # Test-only seeding of absent private files; no production migration.
+        with path.open("xb") as stream:
+            path.chmod(0o600)
+            stream.write(json.dumps(receipt).encode())
+    return path, path.read_bytes()
 
 
 def _record_uncertain_attempt(recovery_infra, *, state="unknown"):
@@ -526,7 +568,7 @@ def test_recovery_observation_preserves_legacy_bytes_and_reservation(
     recovery_infra, state
 ):
     profile, _observed, create = recovery_infra
-    path, original = _record_uncertain_attempt(recovery_infra, state=state)
+    path, original = _seed_legacy_receipt(recovery_infra, state=state)
     for _ in range(3):
         assert engine.launch_status("recovery-request")["state"] == "unknown"
         assert engine.capacity(max_running=1)["counts"]["pending_unobserved"] == 1
@@ -536,7 +578,7 @@ def test_recovery_observation_preserves_legacy_bytes_and_reservation(
             profile, {}, name="recovery-case", request_id="recovery-request",
             owner_root="recovery-owner",
         )
-    assert create.call_count == 1
+    create.assert_not_called()
     assert path.read_bytes() == original
 
 
@@ -634,14 +676,12 @@ def test_recovery_concurrent_reads_keep_unknown_history(recovery_infra):
 
 @pytest.mark.parametrize("state", ["unknown", "failed", "removed"])
 def test_recovery_future_receipt_schema_fails_closed(recovery_infra, state):
-    path, _original = _record_uncertain_attempt(recovery_infra, state=state)
-    with admission.locked(admission.context()) as root:
-        receipt = admission.read_receipt(root, "recovery-request")
-        receipt["schema_version"] = 999
-        admission.save_receipt(root, receipt)
-    original = path.read_bytes()
+    path, original = _seed_legacy_receipt(
+        recovery_infra, state=state, schema_version=999
+    )
     # Unsupported accounting semantics must not silently free an unknown
     # reservation. Legacy receipts WITHOUT schema_version remain readable.
-    with pytest.raises(admission.AdmissionError):
+    with pytest.raises(admission.AdmissionError) as error:
         engine.capacity()
+    assert error.value.code == "state_unsupported"
     assert path.read_bytes() == original
