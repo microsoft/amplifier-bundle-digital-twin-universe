@@ -685,3 +685,41 @@ def test_recovery_future_receipt_schema_fails_closed(recovery_infra, state):
         engine.capacity()
     assert error.value.code == "state_unsupported"
     assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("ownership", ["wrong-owner", "wrong-request"])
+def test_recovery_ready_stopped_foreign_instance_cannot_hide_reservation(
+    recovery_infra, ownership
+):
+    """The old name-only reader can otherwise report a free execution slot."""
+    _profile, observed, create = recovery_infra
+    path, original = _record_uncertain_attempt(recovery_infra)
+    observed.append({
+        "name": "recovery-case",
+        "status": "Stopped",
+        "config": {
+            "user.dtu.managed-by": admission.MANAGED_VALUE,
+            "user.dtu.owner-root": (
+                "other" if ownership == "wrong-owner" else "recovery-owner"
+            ),
+            "user.dtu.request-id": (
+                "other" if ownership == "wrong-request" else "recovery-request"
+            ),
+            "user.dtu.launch-state": "ready",
+        },
+    })
+    assert engine.launch_status("recovery-request")["state"] == "conflict"
+    capacity = engine.capacity(max_running=1)
+    assert capacity["counts"] == {
+        "active": 1,
+        "stopped_retained": 1,
+        "pending_unobserved": 1,
+        "total": 2,
+    }
+    assert capacity["available"] is False
+    assert any(
+        blocker["code"] == "execution_capacity"
+        for blocker in capacity["blockers"]
+    )
+    assert path.read_bytes() == original
+    assert create.call_count == 1
