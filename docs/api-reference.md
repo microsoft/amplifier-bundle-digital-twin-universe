@@ -166,8 +166,11 @@ not removed automatically, preventing completed request IDs from being replayed.
 For `--offline` launches using an exact `local:<64-character fingerprint>` on the
 current local Unix-socket daemon, DTU records the Incus asynchronous creation
 operation before waiting. This requires the daemon's `instance_create_start`
-extension. The operation is bound to the daemon, project, instance name, request
-and owner. The POST is sent once; lost responses are never retried. Explicit
+extension. Version 0.4.3 recognizes both the current single-address `Addrs`
+format and legacy `Addr` metadata. Conflicting fields, multiple addresses and
+remote endpoints do not select the direct transport. The selected socket must
+still prove the exact daemon and project. The operation is bound to the daemon,
+project, instance name, request and owner. The POST is sent once; lost responses are never retried. Explicit
 synchronous client rejection or failure before submission records failure without
 retaining a reservation. An uncertain submission still reserves capacity.
 

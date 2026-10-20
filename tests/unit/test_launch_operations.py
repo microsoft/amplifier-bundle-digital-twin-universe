@@ -366,3 +366,62 @@ def test_older_daemon_stays_on_legacy_cli_route(monkeypatch):
     monkeypatch.setattr(incus, "_run", cli)
     assert operations.local_endpoint(ENDPOINT) is None
     cli.assert_not_called()
+
+
+@pytest.mark.parametrize("remote", [
+    {"Addr": "unix://"},
+    {"Addrs": ["unix://"]},
+    {"Addr": "unix://", "Addrs": ["unix://"]},
+    {"Addrs": ["unix:///fixture/incus.sock"]},
+])
+def test_endpoint_accepts_one_current_or_legacy_unix_address(monkeypatch, remote):
+    monkeypatch.setattr(incus, "query", lambda _: {"api_extensions": ["instance_create_start"]})
+    monkeypatch.setattr(incus, "_run", MagicMock(side_effect=[
+        MagicMock(returncode=0, stdout="selected\n"),
+        MagicMock(returncode=0, stdout=json.dumps({"selected": remote})),
+    ]))
+    verify = MagicMock(return_value={"api_extensions": ["instance_create_start"]})
+    monkeypatch.setattr(operations, "_verify_endpoint", verify)
+    monkeypatch.setenv("INCUS_SOCKET", "/fixture/incus.sock")
+    result = operations.local_endpoint(ENDPOINT)
+    assert result == ENDPOINT
+    verify.assert_called_once_with(ENDPOINT)
+
+
+@pytest.mark.parametrize("remote", [
+    {"Addrs": ["/unsupported"]}, {"Addrs": []}, {"Addrs": ["unix://", "unix://"]},
+    {"Addrs": ["unix://", "https://remote.example:8443"]},
+    {"Addrs": "unix://"}, {"Addrs": None}, {"Addrs": [None]},
+    {"Addrs": [42]}, {"Addrs": [""]}, {"Addrs": ["https://remote.example:8443"]},
+    {"Addr": "unix://", "Addrs": ["unix:///other.sock"]},
+    {"Addr": "unix://", "Addrs": []},
+    {"Addr": "https://remote.example:8443", "Addrs": ["unix://"]},
+    {"Addr": None, "Addrs": ["unix://"]}, {"Addr": 42}, {}, None,
+])
+def test_endpoint_declines_ambiguous_or_nonlocal_metadata(monkeypatch, remote):
+    monkeypatch.setattr(incus, "query", lambda _: {"api_extensions": ["instance_create_start"]})
+    monkeypatch.setattr(incus, "_run", MagicMock(side_effect=[
+        MagicMock(returncode=0, stdout="selected\n"),
+        MagicMock(returncode=0, stdout=json.dumps({"selected": remote})),
+    ]))
+    verify = MagicMock()
+    monkeypatch.setattr(operations, "_verify_endpoint", verify)
+    assert operations.local_endpoint(ENDPOINT) is None
+    verify.assert_not_called()
+
+
+@pytest.mark.parametrize("field", ["certificate_fingerprint", "project"])
+def test_current_address_still_requires_exact_daemon_and_project(monkeypatch, field):
+    monkeypatch.setattr(incus, "query", lambda _: {"api_extensions": ["instance_create_start"]})
+    monkeypatch.setattr(incus, "_run", MagicMock(side_effect=[
+        MagicMock(returncode=0, stdout="selected\n"),
+        MagicMock(returncode=0, stdout=json.dumps({"selected": {"Addrs": ["unix://"]}})),
+    ]))
+    environment = {"certificate_fingerprint": ENDPOINT["daemon"], "project": ENDPOINT["project"]}
+    environment[field] = "different"
+    api = MagicMock(return_value=(200, {"type": "sync", "metadata": {"environment": environment}}))
+    monkeypatch.setattr(operations, "_request", api)
+    monkeypatch.setenv("INCUS_SOCKET", "/fixture/incus.sock")
+    with pytest.raises(operations.OperationUnknown):
+        operations.local_endpoint(ENDPOINT)
+    assert [call.args[1] for call in api.call_args_list] == ["GET"]

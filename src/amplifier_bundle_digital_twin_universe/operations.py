@@ -104,8 +104,21 @@ def local_endpoint(ctx: dict) -> dict | None:
     if selected.returncode or remotes.returncode:
         raise OperationUnknown("The current Incus endpoint could not be inspected")
     remote = json.loads(remotes.stdout).get(selected.stdout.strip(), {})
-    address = remote.get("Addr", "")
-    if not address.startswith("unix://"):
+    if not isinstance(remote, dict):
+        return None
+    # Current Incus emits Addrs; older clients emitted Addr. Only one
+    # unambiguous address may select the direct transport. Never choose the
+    # first of several endpoints or ignore contradictory legacy metadata.
+    if "Addrs" in remote:
+        addresses = remote["Addrs"]
+        if not isinstance(addresses, list) or len(addresses) != 1:
+            return None
+        address = addresses[0]
+        if "Addr" in remote and remote["Addr"] != address:
+            return None
+    else:
+        address = remote.get("Addr")
+    if not isinstance(address, str) or not address.startswith("unix://"):
         return None
     path = address.removeprefix("unix://") or os.environ.get("INCUS_SOCKET")
     if not path:
