@@ -113,8 +113,10 @@ when deletion succeeded. Explicit owner-checked destruction retires its receipt.
 admission directory (`~/.local/state/amplifier-dtu/admission` by default,
 `AMPLIFIER_DTU_ADMISSION_DIR` override). Lock identity uses the actual daemon
 certificate fingerprint and project, so aliases do not create separate pools.
-The capacity check, durable reservation and container creation are serialized;
-provisioning then proceeds concurrently. A caller waiting longer than
+The capacity check, durable reservation and creation submission are serialized.
+For tracked local operations (below), the operation wait and provisioning proceed
+outside the admission lock. Legacy CLI launches hold the lock through creation.
+A caller waiting longer than
 `AMPLIFIER_DTU_ADMISSION_TIMEOUT_SECONDS` (default 30) receives `admission_busy`
 and can retry the same request. Different state directories, users, hosts,
 older DTU clients and direct Incus calls are **not** serialized by this lock.
@@ -128,7 +130,8 @@ actual daemon and project for callers to verify.
 
 ### `capacity`
 
-Read-only preflight; `launch` always rechecks under its admission lock. Supports
+Observational preflight; it may update local receipts from terminal operation
+evidence, but never changes daemon resources. `launch` always rechecks under its admission lock. Supports
 `--max-running`, `--max-instances` and `--min-free-bytes`. A normal observation
 exits 0 even when capacity is unavailable. Backend-query errors exit nonzero.
 
@@ -159,6 +162,32 @@ Absent after an interrupted launch remains unknown: absence does not establish
 that a remote operation was cancelled. Ready markers come from provisioning,
 not merely from an Incus Running status. Receipts are private, durable and are
 not removed automatically, preventing completed request IDs from being replayed.
+
+For `--offline` launches using an exact `local:<64-character fingerprint>` on the
+current local Unix-socket daemon, DTU records the Incus asynchronous creation
+operation before waiting. This requires the daemon's `instance_create_start`
+extension. The operation is bound to the daemon, project, instance name, request
+and owner. The POST is sent once; lost responses are never retried. Explicit
+synchronous client rejection or failure before submission records failure without
+retaining a reservation. An uncertain submission still reserves capacity.
+
+`capacity`, `launch` and `launch-status` can settle a recorded operation after
+the initiating process exits. Authoritative failure/cancellation releases an
+absent reservation; any existing instance still counts. Creation success is
+not provisioning success: a partly provisioned instance remains unknown, and
+no provisioning is replayed. An absent instance after terminal creation success
+is removed. Background observation is limited to four operations and a shared
+two-second network budget per call; unresolved receipts rotate fairly and remain
+counted. An exact `launch-status` lookup observes its own request directly.
+
+Remote daemons, other image references and older daemons retain the CLI path.
+Older receipts without an operation identity cannot be retrospectively settled
+from absence or elapsed time. A lost POST response, missing/expired operation
+record, daemon restart, or changed identity remains unknown unless later exact
+evidence establishes an outcome. These cases require reconciliation, not a new
+request that could duplicate creation. Incus can expire completed operation
+records within seconds: persist observed terminal results promptly; operation
+IDs are not a durable server-side completion archive.
 
 Admission/identity errors exit nonzero and return JSON on stdout:
 `{schema_version:1, error:"execution_capacity", message:"...", capacity:{...}}`.
@@ -776,7 +805,8 @@ copy an approved fingerprint into their owned image project without `--auto-upda
 and verify `cached: false` and `auto_update: false`. Keep that owned image while
 work may still need it; do not change shared cache policy to retain it.
 
-If image deletion races the admission check, creation still has an uncertain
+If image deletion races the admission check, the tracked operation can establish
+a definitive rejection or failure. The legacy CLI path retains an uncertain
 outcome. The durable receipt includes a bounded `failure_cause` with stage `create`
 and a fixed category such as `image_not_found`, `permission_denied`, `storage_full`,
 `path_too_long`, `timeout`, or `backend_error`. It never includes raw backend stderr,
