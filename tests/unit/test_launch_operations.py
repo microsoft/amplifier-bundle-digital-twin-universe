@@ -16,7 +16,7 @@ ENDPOINT = {"daemon": "test-daemon", "project": "default", "socket": "/fixture/i
 
 
 @pytest.fixture
-def tracked(monkeypatch, launch_infra):
+def tracked(monkeypatch, launch_infra):  # noqa: F811 - imported pytest fixture registration
     profile, observed, legacy = launch_infra
     Path(profile).write_text("name: minimal\nbase:\n  image: local:" + "a" * 64 + "\n")
     monkeypatch.setattr(incus, "local_image_available", lambda _: True)
