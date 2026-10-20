@@ -12,6 +12,7 @@ import base64
 import glob
 import inspect
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -26,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
-from amplifier_bundle_digital_twin_universe import admission, incus
+from amplifier_bundle_digital_twin_universe import admission, incus, operations
 from amplifier_bundle_digital_twin_universe.incus import IncusError
 from dataclasses import dataclass
 
@@ -1069,10 +1070,69 @@ def _enforce_max_instances(max_instances: int) -> None:
         )
 
 
+def _reconcile_creations(ctx: dict, request_id: str | None = None) -> None:
+    """Bound passive observation; never replay creation or provisioning.
+
+    Rotate unresolved receipts so a missing old operation cannot starve newer
+    ones. Unobserved reservations continue to count. A direct status lookup
+    targets its own request rather than waiting for the background rotation.
+    """
+    deadline = time.monotonic() + 2.0
+    observations = 0
+    with admission.locked(ctx) as root:
+        receipts = ([admission.read_receipt(root, request_id)] if request_id is not None
+                    else [admission._read_receipt_file(path) for path in root.glob("*.json")])
+    receipts.sort(key=lambda row: (row or {}).get("operation_observed_at", 0))
+    for receipt in receipts:
+        if (not receipt or receipt.get("state") not in {"launching", "unknown"}
+                or not receipt.get("create_operation")):
+            continue
+        result = None
+        try:
+            operations.validate_binding(receipt["create_operation"], ctx, receipt)
+            if receipt.get("creation_status") in {200, 400, 401}:
+                result = {"status_code": receipt["creation_status"]}
+            else:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or observations >= 4:
+                    continue
+                observations += 1
+                result = operations.observe(receipt["create_operation"], ctx, receipt, timeout=remaining)
+        except (OSError, ValueError, KeyError, TypeError, incus.IncusError, http.client.HTTPException):
+            pass  # Missing, expired or unreachable operations remain unknown.
+        with admission.locked(ctx) as root:
+            current = admission.read_receipt(root, receipt["request_id"])
+            if (current and current.get("state") in {"launching", "unknown"}
+                    and current.get("create_operation") == receipt["create_operation"]):
+                current["operation_observed_at"] = time.time()
+                if result and result["status_code"] in {200, 400, 401}:
+                    current["creation_status"] = result["status_code"]
+                    # Creation success alone is not completed provisioning.
+                    # Existing instances still count after terminal creation.
+                    current["state"] = "created" if result["status_code"] == 200 else "failed"
+                admission.save_receipt(root, current)
+
+
+def _wait_for_creation(ctx: dict, request_id: str) -> None:
+    deadline = time.monotonic() + incus._get_launch_timeout_seconds()
+    while True:
+        _reconcile_creations(ctx, request_id)
+        with admission.locked(ctx) as root:
+            current = admission.read_receipt(root, request_id)
+        if current and current.get("creation_status") == 200:
+            return
+        if current and current.get("creation_status") in {400, 401}:
+            raise operations.CreationRejected("Incus creation ended unsuccessfully")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("The creation operation is still unresolved")
+        time.sleep(min(0.5, max(0, deadline - time.monotonic())))
+
+
 def capacity(max_running=None, max_instances=None, min_free_bytes=None) -> dict:
     """Read capacity; this is advisory until launch rechecks under its lock."""
     limits = admission.policy(max_running, max_instances, min_free_bytes)
     ctx = admission.context()
+    _reconcile_creations(ctx)
     with admission.locked(ctx) as root:
         return admission.snapshot(ctx, limits, root)
 
@@ -1084,6 +1144,7 @@ def launch_status(request_id: str) -> dict:
     the daemon operation may still be completing. No automatic replay occurs.
     """
     ctx = admission.context()
+    _reconcile_creations(ctx, request_id)
     with admission.locked(ctx) as root:
         receipt = admission.read_receipt(root, request_id)
         if receipt is None:
@@ -1109,7 +1170,7 @@ def launch_status(request_id: str) -> dict:
                     observed["state"] = {"Running": "ready", "Stopped": "stopped"}.get(match.get("status"), "unknown")
                 elif receipt["state"] not in {"failed", "removed"}:
                     observed["state"] = "unknown"
-        elif receipt["state"] == "ready":
+        elif receipt["state"] in {"ready", "created"}:
             observed["state"] = "removed"
         elif receipt["state"] in {"launching", "unknown"}:
             observed["state"] = "unknown"
@@ -1179,6 +1240,7 @@ def launch(
     image = _resolve_image(host_profile.base.image)
     limits = admission.policy(max_running, max_instances, min_free_bytes)
     ctx = admission.context()
+    _reconcile_creations(ctx)
     intent_digest = hashlib.sha256(
         json.dumps(
             {
@@ -1269,6 +1331,8 @@ def launch(
                     "The approved local image is missing; retain that exact image before testing. No launch was admitted",
                     {"image": image, "admitted": False},
                 )
+        endpoint = (operations.local_endpoint(ctx)
+                    if offline and re.fullmatch(r"local:[a-f0-9]{64}", image) else None)
         available = admission.snapshot(ctx, limits, root)
         if not available["available"]:
             raise admission.AdmissionError(
@@ -1287,26 +1351,52 @@ def launch(
         admission.save_receipt(root, receipt)
         try:
             print(f"Creating container {container_name} ({image})...", file=sys.stderr)
-            if offline:
-                incus.create_container(
-                    container_name,
-                    image,
-                    config=effective_config,
-                    isolated_pool=ctx["storage_pool"],
-                )
+            if endpoint:
+                receipt["create_operation"] = operations.submit(
+                    endpoint, container_name, image, effective_config, ctx["storage_pool"])
+                code = receipt["create_operation"]["status_code"]
+                if code in {200, 400, 401}:
+                    receipt.update(creation_status=code, state="created" if code == 200 else "failed")
+                admission.save_receipt(root, receipt)
             else:
-                incus.create_container(container_name, image, config=effective_config)
+                try:
+                    if offline:
+                        incus.create_container(
+                            container_name, image, config=effective_config,
+                            isolated_pool=ctx["storage_pool"],
+                        )
+                    else:
+                        incus.create_container(container_name, image, config=effective_config)
+                except (FileNotFoundError, PermissionError) as exc:
+                    raise operations.CreationRejected("Could not execute the Incus CLI") from exc
         except Exception as exc:
             # Timeout does not mean failure: the daemon may still create the
             # instance. Retain the reservation and never replay this request.
-            receipt["state"] = "unknown"
+            receipt["state"] = "failed" if isinstance(exc, operations.CreationRejected) else "unknown"
             receipt["failure_cause"] = _creation_failure_cause(exc)
             admission.save_receipt(root, receipt)
             raise admission.AdmissionError(
-                "launch_unknown",
+                "launch_failed" if receipt["state"] == "failed" else "launch_unknown",
                 "Container creation did not return a confirmed outcome; inspect launch-status",
                 {"request_id": request_id, "id": container_name, "failure_cause": receipt["failure_cause"]},
             ) from exc
+
+    if receipt.get("create_operation"):
+        try:
+            _wait_for_creation(ctx, request_id)
+        except Exception as exc:
+            with admission.locked(ctx) as root:
+                current = admission.read_receipt(root, request_id)
+                if current and current.get("state") in {"launching", "unknown"}:
+                    current.update(state="unknown", failure_cause=_creation_failure_cause(exc))
+                    admission.save_receipt(root, current)
+            raise admission.AdmissionError(
+                "launch_failed" if current and current.get("state") == "failed" else "launch_unknown",
+                "Creation is not confirmed ready for provisioning; inspect launch-status",
+                {"request_id": request_id, "id": container_name},
+            ) from exc
+        with admission.locked(ctx) as root:
+            receipt = admission.read_receipt(root, request_id)
 
     try:
         # Store metadata so `status` and `list` can discover this instance.
