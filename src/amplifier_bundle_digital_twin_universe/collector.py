@@ -221,6 +221,48 @@ class AttemptStore:
             self._advance(current, "fenced")
 
     @contextmanager
+    def owned_worker(self, generation):
+        """Full native engine adapter; consume under its existing admission lock.
+
+        Caller already holds canonical-name custody. The yielded hook may run
+        exactly once, immediately after reservation and before creation.
+        """
+        with self._lifecycle():
+            with self._admission():
+                current = self._current(generation, {"dispatched"})
+                current = self._advance(current, "accepted")
+            consumed = [False]
+
+            def submit(ctx, root, receipt):
+                nonlocal current
+                if (consumed[0] or Path(root) != self.root
+                        or any(ctx.get(k) != self.binding[k] for k in ("daemon", "project", "storage_pool"))
+                        or any(receipt.get(k) != self.binding[k] for k in ("request_id", "name", "owner_root", "intent_digest"))
+                        or self._receipt()["state"] != "launching"):
+                    raise _conflict()
+                from .collected_launch import check_cancel
+                check_cancel()
+                current = self._advance(current, "submitting")
+                consumed[0] = True
+
+            try:
+                yield submit
+            except Exception:
+                with self._admission():
+                    self._advance(current, "unknown")
+                raise
+            else:
+                with self._admission():
+                    receipt = self._receipt()
+                    result = receipt.get("result")
+                    if (not consumed[0] or receipt["state"] != "ready" or not isinstance(result, dict)
+                            or result.get("id") != self.binding["name"]
+                            or any(result.get(k) != receipt.get(k) for k in ("name", "request_id", "owner_root", "created_at"))
+                            or result.get("status") != "running"):
+                        raise _conflict()
+                    self._advance(current, "completed", _digest(result))
+
+    @contextmanager
     def mutation_guard(self, generation):
         """Cooperating lifecycle entry point; no automatic uncertain takeover."""
         with self._lifecycle():

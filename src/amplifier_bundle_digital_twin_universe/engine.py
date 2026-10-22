@@ -27,8 +27,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
-from amplifier_bundle_digital_twin_universe import admission, incus, operations
+from amplifier_bundle_digital_twin_universe import admission, incus, operations, lifecycle
 from amplifier_bundle_digital_twin_universe.incus import IncusError
+from amplifier_bundle_digital_twin_universe.bound_backend import BackendFence
 from dataclasses import dataclass
 
 import yaml as _yaml
@@ -1284,6 +1285,29 @@ def _creation_failure_cause(exc: Exception) -> dict:
 
 
 def launch(
+    profile_arg: str, variables: dict[str, str], name: str | None = None,
+    hostname: str | None = None, max_instances: int | None = None,
+    max_running: int | None = None, min_free_bytes: int | None = None,
+    owner_root: str | None = None, request_id: str | None = None, offline: bool = False,
+    *, collect: bool = False, wait_seconds: float = 600,
+) -> dict:
+    """Launch synchronously by default, or explicitly collect a bounded attempt."""
+    options = dict(name=name, hostname=hostname, max_instances=max_instances,
+                   max_running=max_running, min_free_bytes=min_free_bytes,
+                   owner_root=owner_root, request_id=request_id, offline=offline)
+    if collect:
+        from .collected_launch import launch as collected
+        return collected(profile_arg, variables, wait_seconds=wait_seconds, **options)
+    request_id = str(uuid.uuid4()) if request_id is None else request_id
+    name = name or f"dtu-{hashlib.sha256(request_id.encode()).hexdigest()[:16]}"
+    ctx = admission.context()
+    with lifecycle.custody(ctx, name) as root:
+        if lifecycle.read_marker(root, name) is not None:
+            raise admission.AdmissionError("launch_unknown", "This name belongs to a collected attempt; use its original request")
+        return _launch_impl(profile_arg, variables, **{**options, "request_id": request_id, "name": name})
+
+
+def _launch_impl(
     profile_arg: str,
     variables: dict[str, str],
     name: str | None = None,
@@ -1294,12 +1318,14 @@ def launch(
     owner_root: str | None = None,
     request_id: str | None = None,
     offline: bool = False,
+    *, _frozen_profile: str | None = None, _submission_hook=None,
 ) -> dict:
     """Launch a Digital Twin Universe.  Returns the JSON status dict."""
     incus.check_incus()
 
     # Quick-load to get the base image.
-    host_profile = load_profile(profile_arg, variables)
+    host_profile = (load_profile(profile_arg, variables) if _frozen_profile is None else
+                    load_profile_from_content(_frozen_profile, variables, path=Path(profile_arg)))
     if offline and (
         host_profile.url_rewrites
         or host_profile.mock_services
@@ -1326,11 +1352,11 @@ def launch(
     image = _resolve_image(host_profile.base.image)
     limits = admission.policy(max_running, max_instances, min_free_bytes)
     ctx = admission.context()
-    _reconcile_creations(ctx)
+    _reconcile_creations(ctx, request_id) if _submission_hook is not None else _reconcile_creations(ctx)
     intent_digest = hashlib.sha256(
         json.dumps(
             {
-                "profile": host_profile.path.read_text(),
+                "profile": host_profile.path.read_text() if _frozen_profile is None else _frozen_profile,
                 "variables": variables,
                 "name": container_name,
                 "hostname": hostname,
@@ -1435,6 +1461,8 @@ def launch(
             "created_at": now,
         }
         admission.save_receipt(root, receipt)
+        if _submission_hook is not None:
+            _submission_hook(ctx, root, receipt)
         try:
             print(f"Creating container {container_name} ({image})...", file=sys.stderr)
             if endpoint:
@@ -1497,12 +1525,13 @@ def launch(
         # still having the original file at the same location.  We push the
         # raw pre-substitution YAML so `--var` values supplied at update time
         # are re-applied freshly (matching launch-time semantics).
-        incus.file_push(
-            container_name,
-            [str(host_profile.path)],
-            _PROFILE_SNAPSHOT_PATH,
-            create_dirs=True,
-        )
+        if _frozen_profile is None:
+            incus.file_push(container_name, [str(host_profile.path)], _PROFILE_SNAPSHOT_PATH, create_dirs=True)
+        else:
+            with tempfile.NamedTemporaryFile("w", suffix=".yaml") as snapshot:
+                snapshot.write(_frozen_profile)
+                snapshot.flush()
+                incus.file_push(container_name, [snapshot.name], _PROFILE_SNAPSHOT_PATH, create_dirs=True)
 
         # Detect host gateway IP (retries until networking is up).
         host_ip = "127.0.0.1" if offline else _wait_for_gateway(container_name)
@@ -1512,7 +1541,8 @@ def launch(
         # validate=False: validation already ran on the host_profile parse
         # above; re-emitting warnings here would produce duplicates.
         rewritten_vars = _rewrite_localhost(variables, host_ip)
-        profile = load_profile(profile_arg, rewritten_vars, validate=False)
+        profile = (load_profile(profile_arg, rewritten_vars, validate=False) if _frozen_profile is None else
+                   load_profile_from_content(_frozen_profile, rewritten_vars, path=Path(profile_arg), validate=False))
 
         # Mock services -- resolve, build, and start Docker sidecars.
         running_services: list[RunningService] = []
@@ -1724,6 +1754,8 @@ def launch(
         result["request_id"] = request_id
         result["owner_root"] = owner_root
         result["offline"] = offline
+    except BackendFence:
+        raise
     except Exception:
         # Best-effort cleanup on failure, only for this successfully-created
         # instance. An uncertain creation above never enters this path.
@@ -1786,6 +1818,7 @@ def _read_profile_snapshot(container_id: str) -> str | None:
             Path(tmp_path).unlink(missing_ok=True)
 
 
+@lifecycle.guarded
 def update(
     container_id: str,
     variables: dict[str, str],
@@ -1898,6 +1931,7 @@ def update(
     return result
 
 
+@lifecycle.guarded
 def exec_command(
     container_id: str,
     command: list[str],
@@ -1926,6 +1960,7 @@ def exec_command(
     }
 
 
+@lifecycle.guarded
 def exec_stream(
     container_id: str,
     command: list[str],
@@ -1968,6 +2003,7 @@ def sanitize_visual_id(value: str) -> str:
     return value
 
 
+@lifecycle.guarded
 def exec_interactive(container_id: str, *, visual_id: str | None = None) -> int:
     """Attach an interactive shell to the environment.
 
@@ -1989,6 +2025,7 @@ def exec_interactive(container_id: str, *, visual_id: str | None = None) -> int:
     return incus.exec_interactive(container_id, env=env)
 
 
+@lifecycle.guarded
 def file_push(
     container_id: str,
     local_paths: list[str],
@@ -2017,6 +2054,7 @@ def file_push(
     )
 
 
+@lifecycle.guarded
 def file_pull(
     container_id: str,
     container_paths: list[str],
@@ -2100,6 +2138,7 @@ def list_environments() -> list[dict]:
     return [_instance_info(inst["name"]) for inst in instances]
 
 
+@lifecycle.guarded
 def check_readiness(
     container_id: str,
     skip_access_check: bool = False,
@@ -2205,6 +2244,7 @@ def check_readiness(
     return result
 
 
+@lifecycle.guarded
 def destroy(
     container_id: str, owner_root: str | None = None, request_id: str | None = None
 ) -> dict:

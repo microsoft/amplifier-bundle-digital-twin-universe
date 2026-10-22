@@ -59,6 +59,16 @@ class _UnixConnection(http.client.HTTPConnection):
 
 
 def _request(endpoint: dict, method: str, path: str, data=None, *, timeout=10):
+    from .bound_backend import current, BackendFence
+    bound = current()
+    if bound is not None:
+        from .collected_launch import check_cancel
+        check_cancel()
+        expected = bound.as_dict()
+        if (endpoint.get("socket") != expected["socket"]
+                or any(endpoint.get(k) != bound.scope[k] for k in ("daemon", "project"))):
+            raise BackendFence("Direct transport differs from the bound backend")
+        bound.verify()
     separator = "&" if "?" in path else "?"
     path += separator + "project=" + quote(endpoint["project"], safe="")
     connection = _UnixConnection(endpoint["socket"], timeout)
