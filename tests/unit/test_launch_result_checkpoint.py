@@ -334,10 +334,10 @@ def test_result_receipt_size_bound_preserves_previous_bytes(result_launch, size)
     assert len(json.dumps(record).encode("utf-8")) == size
     if size > 262144:
         with pytest.raises(admission.AdmissionError):
-            engine._save_result_receipt(root, record)
+            admission.save_receipt(root, record)
         assert path.read_bytes() == before
     else:
-        engine._save_result_receipt(root, record)
+        admission.save_receipt(root, record)
         assert path.stat().st_size == size
         assert admission.read_receipt(root, "bounded") == record
 
@@ -359,7 +359,7 @@ def test_oversize_checkpoint_does_not_mark_ready_or_delete(result_launch, monkey
     result_launch[4].assert_not_called()
 
 
-@pytest.mark.parametrize("stage", ["marker", "final-fsync"])
+@pytest.mark.parametrize("stage", ["marker", "final-fsync", "final-file-fsync"])
 def test_lost_publication_acknowledgement_recovers_without_reprovisioning(result_launch, monkeypatch, stage):
     set_config, save = incus.set_config, admission.save_receipt
 
@@ -369,15 +369,15 @@ def test_lost_publication_acknowledgement_recovers_without_reprovisioning(result
             raise OSError("reply lost after marker")
 
     def write(root, value):
-        if stage != "final-fsync" or value["state"] != "ready":
+        if stage not in {"final-fsync", "final-file-fsync"} or value["state"] != "ready":
             return save(root, value)
         fsync = admission.os.fsync
         calls = []
 
         def sync(fd):
             calls.append(fd)
-            if len(calls) == 2:
-                raise OSError("directory fsync failed after replace")
+            if len(calls) == (1 if stage == "final-file-fsync" else 2):
+                raise OSError("synthetic final receipt fsync failure")
             return fsync(fd)
 
         with monkeypatch.context() as patch:
@@ -392,7 +392,7 @@ def test_lost_publication_acknowledgement_recovers_without_reprovisioning(result
     before = saved()[1].read_bytes()
     status = engine.launch_status("result-request")
     assert status["state"] == "ready" and status["result"]["id"] == "result-case"
-    assert status.get("result_recovered", False) == (stage == "marker")
+    assert status.get("result_recovered", False) == (stage != "final-fsync")
     if stage == "final-fsync":
         assert launch(result_launch)["reused"] is True
     else:
@@ -427,4 +427,41 @@ def test_tracked_creation_reconciliation_preserves_prepared_result(result_launch
     observe.assert_called_once()
     with pytest.raises(admission.AdmissionError):
         launch(result_launch)
+    assert result_launch[2].call_count == 1
+
+
+def test_reconciliation_cannot_replace_checkpoint_with_oversize_receipt(result_launch, monkeypatch):
+    from amplifier_bundle_digital_twin_universe import operations
+
+    root, path, record = interrupt_final(result_launch, monkeypatch)
+    record["create_operation"] = {
+        **admission.context(), "socket": "/synthetic/never-contacted.sock",
+        "id": "12345678-1234-1234-1234-123456789abc",
+        **{key: record[key] for key in ("name", "request_id", "owner_root")},
+    }
+    record["prepared_result"]["result"]["info"] = [""]
+    overhead = len(json.dumps(record).encode("utf-8"))
+    record["prepared_result"]["result"]["info"] = ["x" * (262144 - overhead)]
+    admission.save_receipt(root, record)
+    before = path.read_bytes()
+    assert len(before) == 262144
+    monkeypatch.setattr(operations, "observe", MagicMock(return_value={"status_code": 200}))
+    with pytest.raises(admission.AdmissionError) as error:
+        engine.launch_status("result-request")
+    assert error.value.code == "state_unsafe"
+    assert path.read_bytes() == before
+    assert admission.read_receipt(root, "result-request") == record
+    result_launch[3].assert_not_called()
+
+
+@pytest.mark.parametrize("state", ["failed", "removed"])
+def test_published_result_does_not_promote_newer_terminal_state(result_launch, state):
+    launch(result_launch)
+    root, path, record = saved()
+    assert "prepared_result" not in record
+    record["state"] = state
+    admission.save_receipt(root, record)
+    before = path.read_bytes()
+    assert engine.launch_status("result-request")["state"] == state
+    assert path.read_bytes() == before
     assert result_launch[2].call_count == 1

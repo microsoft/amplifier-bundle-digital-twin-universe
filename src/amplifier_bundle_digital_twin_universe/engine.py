@@ -1216,10 +1216,10 @@ def launch_status(request_id: str) -> dict:
             observed["state"] = "removed"
         elif receipt["state"] in {"launching", "unknown"}:
             observed["state"] = "unknown"
+        # A newer terminal record must not be promoted by an older marker.
+        if receipt["state"] in {"failed", "removed"} and observed["state"] != "conflict":
+            observed["state"] = receipt["state"]
         if "prepared_result" in receipt:
-            # A newer terminal record must not be promoted by an older marker.
-            if receipt["state"] in {"failed", "removed"}:
-                observed["state"] = receipt["state"]
             result = _prepared_launch_result(receipt, ctx, match)
             if result is not None:
                 observed.update(result=result, result_recovered=True)
@@ -1241,14 +1241,6 @@ def _result_publication_receipt(root: Path, expected: dict) -> dict:
     return current
 
 
-def _save_result_receipt(root: Path, receipt: dict) -> None:
-    # Do not replace a readable reservation with evidence its bounded reader
-    # cannot load. json.dump in save_receipt uses these same encoding defaults.
-    if len(json.dumps(receipt).encode("utf-8")) > 262144:
-        raise admission.AdmissionError("state_unsafe", "Launch result exceeded its receipt bound")
-    admission.save_receipt(root, receipt)
-
-
 def _publish_launch_result(ctx: dict, receipt: dict, result: dict) -> None:
     checkpoint = {
         "daemon": ctx["daemon"], "project": ctx["project"],
@@ -1261,14 +1253,14 @@ def _publish_launch_result(ctx: dict, receipt: dict, result: dict) -> None:
         if "prepared_result" in current and current["prepared_result"] != checkpoint:
             raise admission.AdmissionError("request_conflict", "A different launch result was recorded")
         current["prepared_result"] = checkpoint
-        _save_result_receipt(root, current)
+        admission.save_receipt(root, current)
         incus.set_config(receipt["name"], "user.dtu.launch-state", "ready")
         current = _result_publication_receipt(root, receipt)
         if current.get("prepared_result") != checkpoint:
             raise admission.AdmissionError("request_conflict", "The prepared launch result changed")
         current.pop("prepared_result")
         current.update(state="ready", result=result)
-        _save_result_receipt(root, current)
+        admission.save_receipt(root, current)
 
 
 # ===================================================================

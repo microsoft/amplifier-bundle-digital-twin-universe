@@ -6,16 +6,16 @@
   "casePredictionScope": "The retained per-case predictions describe only the original 4a87b61 baseline, never the corrected candidate's required outcomes.",
   "sourceFiles": {
     "src/amplifier_bundle_digital_twin_universe/__init__.py": "0ed64f778922c80b3724d4e06891bf13238c12fb226440023168e47ac3c22042",
-    "src/amplifier_bundle_digital_twin_universe/admission.py": "ac8a25c073f03bd3b5fafcae2c486baaecb23a13135be6cac3490799e661abe0",
+    "src/amplifier_bundle_digital_twin_universe/admission.py": "b7e50ad974d5f8817479c0a7c81883840c2c3422fd497a43426e35fd31e1c283",
     "src/amplifier_bundle_digital_twin_universe/cli.py": "e01fa80a4ef499a4aab0a052a4acd3a216f821204590b2d3eecd26b93e4515b1",
-    "src/amplifier_bundle_digital_twin_universe/engine.py": "3edaa31a299d08ca88fbd0af458e0338efca570d7edd608687b1884f60274798",
+    "src/amplifier_bundle_digital_twin_universe/engine.py": "e5affbc8335a2a7fefd4d2ff763e44ffdb743c046585727d2484b385a353e8f0",
     "src/amplifier_bundle_digital_twin_universe/hostname.py": "55a8042d3adaf73d0fe6b3f5576f699c796144c36759e05cc30dafac3c65c62b",
     "src/amplifier_bundle_digital_twin_universe/incus.py": "a16af4b7e3a781419de659f6648df837952c2e96f6657b246df233b2f76037ec",
     "src/amplifier_bundle_digital_twin_universe/operations.py": "959c20490b4bc01c02874acef9bfe494096ae4bcbce1b89a6a8963628980fe4b",
     "src/amplifier_bundle_digital_twin_universe/profile.py": "e160dbc181b8a3dcbbec942c97f53ec81a871e636bb411fa5cbfe605f3085d2d",
     "src/amplifier_bundle_digital_twin_universe/readiness.py": "9a8a95fb7fea28a4cd95c528e0bd391af75ec98af831233a49ac096e5110b035",
     "tests/unit/test_admission.py": "1560b1bfb8bd992762cc3756d7eab1fea3a5260536e4ff647f3ab909a341b3ef",
-    "tests/unit/test_launch_result_checkpoint.py": "2caa8de7e7da25be1e642f85e97bc14662d918e7393c4b58584e11e7596befb1",
+    "tests/unit/test_launch_result_checkpoint.py": "21c33ca251917ba96b4c2773840a11a4ba5dbabe954a58d0c6e1a6478b08366a",
     "tests/unit/conftest.py": "c05e47b7202ee154141eb1ceb1f78041db21d508970cc4da44477011b331173f",
     "tests/conftest.py": "d5b2c6f378bf2c3e51da16fc6c08a5a8e0e744eb57c57db6faa1c3e5e1a1eba6",
     "tests/helpers.py": "a3d4492788cdd6e6d5cb9a50722680e5040b1c19138629b9c300ff88396a9bb5",
@@ -24,7 +24,7 @@
     "tests/inputs/run_dtu001.py": "b1cfa76169776a76ad599cf79df10a8a23daa5832e945540832c13db6a7ebb93"
   },
   "unitSuite": {
-    "sourceSha256": "6c6496cdd95ccda0f7d16d29289624501f70756aceb05c54afc3a77fb746c6a2",
+    "sourceSha256": "1c2880814945553aa832c3a52e9d7fda16fe4dde75bbef017e1849e739610ba3",
     "testFiles": [
       "tests/unit/profile/test_addon_matcher_parity.py",
       "tests/unit/profile/test_resolution.py",
