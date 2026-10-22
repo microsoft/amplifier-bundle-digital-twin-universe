@@ -153,6 +153,21 @@ and `storage_unknown`; all applicable blockers are returned. Unrecognized
 instance states count as active. Incus storage usage includes retained volumes,
 images and other users of that pool; no container is deleted during observation.
 
+Pending reservations are deduplicated against observed instances only when the
+name, request ID and owner root are all nonblank strings and match exactly within
+the selected daemon/project. A foreign same-name instance does not hide a
+reservation. An unresolved ownerless attempt remains counted separately even if
+a same-name instance is present; missing metadata is not proof of identity.
+This is accounting, not authentication or permission to retire an attempt.
+
+Persisted admission receipts use the existing **unversioned** format. The
+`schema_version: 1` in API responses does not designate an on-disk format.
+Explicit receipt versions or unsupported states fail closed with
+`state_unsupported`; malformed request-ID/path identity or a missing/non-string
+state fails with `state_unsafe`. Incomplete name/owner metadata does not establish
+a deduplication match.
+Supported legacy receipts are read without migration or rewriting.
+
 ### `launch-status REQUEST_ID`
 
 Returns `{schema_version, request_id, name, owner_root, state, created_at}` plus
@@ -162,6 +177,25 @@ Absent after an interrupted launch remains unknown: absence does not establish
 that a remote operation was cancelled. Ready markers come from provisioning,
 not merely from an Incus Running status. Receipts are private, durable and are
 not removed automatically, preventing completed request IDs from being replayed.
+
+New launches checkpoint their completed provisioning result before writing the
+ready marker. If final receipt publication is interrupted, `launch-status` can
+return that exact saved `result` with `result_recovered: true`, but only when a
+currently Running, ready-marked instance has complete matching name/request/owner
+identity and the checkpoint matches the receipt intent and daemon/project.
+The prepared checkpoint is not exposed as a completed result on missing,
+conflicting, stopped or not-ready observations. A newer failed/removed receipt
+is not promoted by an older ready marker.
+
+This recovery projection does not rewrite the receipt or resume provisioning;
+existing creation-operation reconciliation can still persist its own evidence.
+An unresolved original `launch` retry remains refused even when status recovers
+its result. Checkpoint/marker/final-publication failures leave the successfully
+provisioned environment intact and report `launch_unknown`. They do not prove
+failure or authorize cleanup. The checkpoint uses the existing private atomic
+receipt writer and its size bound; it is not a background collector or a
+guarantee across unobserved host/process-group loss. Older clients do not honor
+these publication guards; mixed-version lifecycle safety is not established.
 
 For `--offline` launches using an exact `local:<64-character fingerprint>` on the
 current local Unix-socket daemon, DTU records the Incus asynchronous creation

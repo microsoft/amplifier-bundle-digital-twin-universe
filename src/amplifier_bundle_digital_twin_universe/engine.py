@@ -1137,6 +1137,47 @@ def capacity(max_running=None, max_instances=None, min_free_bytes=None) -> dict:
         return admission.snapshot(ctx, limits, root)
 
 
+def _prepared_launch_result(receipt: dict, ctx: dict, instance: dict | None):
+    """Recover only a saved result with current exact ready-instance evidence."""
+    checkpoint = receipt.get("prepared_result")
+    if (
+        receipt["state"] not in {"launching", "unknown", "created"}
+        or not isinstance(checkpoint, dict)
+        or instance is None
+        or instance.get("status") != "Running"
+    ):
+        return None
+    config = instance.get("config", {})
+    identity = admission._reservation_identity(
+        receipt.get("name"), receipt.get("request_id"), receipt.get("owner_root")
+    )
+    if (
+        identity is None
+        or identity != admission._reservation_identity(
+            instance.get("name"), config.get("user.dtu.request-id"),
+            config.get("user.dtu.owner-root"),
+        )
+        or config.get("user.dtu.launch-state") != "ready"
+        or any(checkpoint.get(key) != ctx[key] for key in ("daemon", "project"))
+        or any(
+            not isinstance(receipt.get(key), str) or not receipt[key].strip()
+            for key in ("intent_digest", "created_at")
+        )
+        or checkpoint.get("intent_digest") != receipt["intent_digest"]
+    ):
+        return None
+    result = checkpoint.get("result")
+    if (
+        not isinstance(result, dict) or result.get("id") != receipt["name"]
+        or result.get("status") != "running"
+        or any(result.get(key) != receipt.get(key) for key in (
+            "name", "request_id", "owner_root", "created_at",
+        ))
+    ):
+        return None
+    return result
+
+
 def launch_status(request_id: str) -> dict:
     """Observe a stable request without repeating any provisioning side effect.
 
@@ -1157,6 +1198,7 @@ def launch_status(request_id: str) -> dict:
         match = next((i for i in instances if i["name"] == receipt["name"]), None)
         observed = dict(receipt)
         observed.pop("intent_digest", None)
+        observed.pop("prepared_result", None)
         if match is not None:
             config = match.get("config", {})
             if (
@@ -1174,7 +1216,51 @@ def launch_status(request_id: str) -> dict:
             observed["state"] = "removed"
         elif receipt["state"] in {"launching", "unknown"}:
             observed["state"] = "unknown"
+        # A newer terminal record must not be promoted by an older marker.
+        if receipt["state"] in {"failed", "removed"} and observed["state"] != "conflict":
+            observed["state"] = receipt["state"]
+        if "prepared_result" in receipt:
+            result = _prepared_launch_result(receipt, ctx, match)
+            if result is not None:
+                observed.update(result=result, result_recovered=True)
         return {"schema_version": 1, **observed}
+
+
+def _result_publication_receipt(root: Path, expected: dict) -> dict:
+    current = admission.read_receipt(root, expected["request_id"])
+    if (
+        current is None
+        or current["state"] not in {"launching", "unknown", "created"}
+        or any(key not in current or key not in expected or current[key] != expected[key] for key in (
+            "name", "request_id", "owner_root", "intent_digest", "created_at",
+        ))
+    ):
+        raise admission.AdmissionError(
+            "request_conflict", "Launch result publication no longer matches its receipt"
+        )
+    return current
+
+
+def _publish_launch_result(ctx: dict, receipt: dict, result: dict) -> None:
+    checkpoint = {
+        "daemon": ctx["daemon"], "project": ctx["project"],
+        "intent_digest": receipt["intent_digest"], "result": result,
+    }
+    # Serialize only this short publication stage, not provisioning. This is
+    # a receipt fence, not full lifecycle custody against external writers.
+    with admission.locked(ctx) as root:
+        current = _result_publication_receipt(root, receipt)
+        if "prepared_result" in current and current["prepared_result"] != checkpoint:
+            raise admission.AdmissionError("request_conflict", "A different launch result was recorded")
+        current["prepared_result"] = checkpoint
+        admission.save_receipt(root, current)
+        incus.set_config(receipt["name"], "user.dtu.launch-state", "ready")
+        current = _result_publication_receipt(root, receipt)
+        if current.get("prepared_result") != checkpoint:
+            raise admission.AdmissionError("request_conflict", "The prepared launch result changed")
+        current.pop("prepared_result")
+        current.update(state="ready", result=result)
+        admission.save_receipt(root, current)
 
 
 # ===================================================================
@@ -1611,7 +1697,6 @@ def launch(
                 f"amplifier-digital-twin check-readiness {container_name}"
             )
 
-        print(f"DTU {container_name} ready.", file=sys.stderr)
         result: dict = {
             "id": container_name,
             "name": container_name,
@@ -1639,7 +1724,6 @@ def launch(
         result["request_id"] = request_id
         result["owner_root"] = owner_root
         result["offline"] = offline
-        incus.set_config(container_name, "user.dtu.launch-state", "ready")
     except Exception:
         # Best-effort cleanup on failure, only for this successfully-created
         # instance. An uncertain creation above never enters this path.
@@ -1667,18 +1751,17 @@ def launch(
                 receipt["state"] = "unknown"
                 admission.save_receipt(root, receipt)
         raise
-    # A lost acknowledgement must not tear down a successfully provisioned
-    # environment. launch-status can recover its ready marker from Incus.
+    # Evidence/ready-marker publication failures must not delete a successfully
+    # provisioned environment. Checkpoint the original result before readiness.
     try:
-        with admission.locked(ctx) as root:
-            receipt.update(state="ready", result=result)
-            admission.save_receipt(root, receipt)
+        _publish_launch_result(ctx, receipt, result)
     except Exception as exc:
         raise admission.AdmissionError(
             "launch_unknown",
             "Provisioning completed but its receipt could not be saved; inspect launch-status",
             {"request_id": request_id, "id": container_name},
         ) from exc
+    print(f"DTU {container_name} ready.", file=sys.stderr)
     return result
 
 

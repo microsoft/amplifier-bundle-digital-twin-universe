@@ -36,5 +36,4 @@ logs/
 *.sqlite
 *.sqlite3
 
-# uv
-uv.lock
+# Keep uv.lock tracked for exact managed Python test preparation.
