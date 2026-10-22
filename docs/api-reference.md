@@ -163,7 +163,9 @@ This is accounting, not authentication or permission to retire an attempt.
 Persisted admission receipts use the existing **unversioned** format. The
 `schema_version: 1` in API responses does not designate an on-disk format.
 Explicit receipt versions or unsupported states fail closed with
-`state_unsupported`; malformed identity/state data fails with `state_unsafe`.
+`state_unsupported`; malformed request-ID/path identity or a missing/non-string
+state fails with `state_unsafe`. Incomplete name/owner metadata does not establish
+a deduplication match.
 Supported legacy receipts are read without migration or rewriting.
 
 ### `launch-status REQUEST_ID`

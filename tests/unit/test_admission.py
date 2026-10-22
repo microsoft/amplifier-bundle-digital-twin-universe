@@ -743,6 +743,7 @@ def test_receipt_writer_rejects_unsupported_input_before_replace(recovery_infra,
 
 @pytest.mark.parametrize("case", [
     "missing-owner", "null-owner", "empty-owner", "list-owner", "blank-owner",
+    "trailing-owner",
     "missing-request", "null-request", "empty-request", "number-request",
     "missing-name", "null-name", "empty-name", "wrong-name",
     "both-missing-owner", "both-empty-owner", "both-list-owner",
@@ -767,7 +768,7 @@ def test_incomplete_identity_cannot_hide_pending_receipt(recovery_infra, case):
     else:
         target[key] = {
             "null": None, "empty": "", "list": [], "blank": " ",
-            "number": 7, "wrong": "other-name",
+            "number": 7, "wrong": "other-name", "trailing": "recovery-owner ",
         }[defect]
     if both:
         receipt_key = "owner_root" if field == "owner" else "name"

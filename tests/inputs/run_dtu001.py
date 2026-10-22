@@ -51,6 +51,9 @@ def case_key(function, parameters):
 
 
 def main():
+    if sys.argv[1:] not in ([], ["--unit-suite"]):
+        raise RuntimeError("Only the frozen selection or --unit-suite is supported")
+    full_suite = sys.argv[1:] == ["--unit-suite"]
     # A mounted path alone is not isolation; the caller must also verify the
     # managed resource receipt. This check prevents accidental host execution.
     if ROOT != Path("/workspace") or Path.cwd().resolve() != ROOT:
@@ -67,6 +70,13 @@ def main():
     for relative, expected in manifest["sourceFiles"].items():
         if digest(ROOT / relative) != expected:
             raise RuntimeError("Frozen source/input hash mismatch: " + relative)
+    unit_files = {
+        str(path.relative_to(ROOT)): digest(path)
+        for path in sorted((ROOT / "tests/unit").rglob("*.py"))
+    }
+    unit_tree = hashlib.sha256(json.dumps(unit_files, sort_keys=True).encode()).hexdigest()
+    if full_suite and unit_tree != manifest["unitSuite"]["sourceSha256"]:
+        raise RuntimeError("Unit-suite source tree does not match the frozen input")
     locks = {row["path"]: row["sha256"] for row in inventory["lockfiles"]}
     if any(locks.get(name) != digest(ROOT / name) for name in ("uv.lock", "pyproject.toml")):
         raise RuntimeError("Prepared lockfiles do not match the source")
@@ -111,7 +121,9 @@ def main():
         "python": sys.version, "executable": sys.executable,
         "collected": [], "reports": [], "blockedEvents": blocked,
         "startedAt": time.time(), "testExecutionStarted": False,
-        "faultAcceptance": False,
+        "faultAcceptance": False, "fullUnitSuite": full_suite,
+        "unitSuiteSourceSha256": unit_tree, "collectionVerified": False,
+        "collectionErrors": [], "deselectedNodeIds": [],
     }
     code = 2
     try:
@@ -145,16 +157,46 @@ def main():
             def pytest_collection_finish(self, session):
                 actual = []
                 for item in session.items:
-                    params = encoded(getattr(getattr(item, "callspec", None), "params", {}))
+                    required = (
+                        item.nodeid.split("::")[0] == "tests/unit/test_admission.py"
+                        and item.originalname in manifest["functions"]
+                    )
+                    params = (
+                        encoded(getattr(getattr(item, "callspec", None), "params", {}))
+                        if required else None
+                    )
                     actual.append({
                         "nodeid": item.nodeid, "function": item.originalname,
                         "parameters": params,
                     })
                 result["collected"] = actual
+                selected_actual = [
+                    item for item in actual
+                    if item["nodeid"].split("::")[0] == "tests/unit/test_admission.py"
+                    and item["function"] in manifest["functions"]
+                ]
                 if collections.Counter(
                     case_key(item["function"], item["parameters"]) for item in actual
-                ) != expected_cases:
+                ) != expected_cases and not full_suite:
                     pytest.exit("Exact selected case set changed", returncode=4)
+                if full_suite:
+                    if collections.Counter(
+                        case_key(item["function"], item["parameters"]) for item in selected_actual
+                    ) != expected_cases:
+                        pytest.exit("Required regression selection changed", returncode=4)
+                    collected_files = {item["nodeid"].split("::")[0] for item in actual}
+                    if collected_files != set(manifest["unitSuite"]["testFiles"]):
+                        pytest.exit("Default unit-suite file selection changed", returncode=4)
+                result["collectionVerified"] = True
+
+            def pytest_collectreport(self, report):
+                if report.failed:
+                    result["collectionErrors"].append({
+                        "nodeid": report.nodeid, "longrepr": str(report.longrepr)[:16000],
+                    })
+
+            def pytest_deselected(self, items):
+                result["deselectedNodeIds"].extend(item.nodeid for item in items)
 
             def pytest_runtest_logstart(self, nodeid, location):
                 result["testExecutionStarted"] = True
@@ -166,7 +208,10 @@ def main():
                     "longrepr": str(report.longrepr)[:16000] if report.failed or report.skipped else None,
                 })
 
-        selectors = ["tests/unit/test_admission.py::" + name for name in manifest["functions"]]
+        selectors = (
+            ["tests/unit/"] if full_suite else
+            ["tests/unit/test_admission.py::" + name for name in manifest["functions"]]
+        )
         code = int(pytest.main([
             "-q", "--tb=short", "-ra", "-p", "no:cacheprovider",
             "--basetemp", str(OUTPUT / "pytest-tmp"),
@@ -188,6 +233,13 @@ def main():
             except OSError:
                 changed.append(name)
         result["changedSourceFiles"] = changed
+        if full_suite:
+            for name, expected in unit_files.items():
+                try:
+                    if digest(ROOT / name) != expected:
+                        changed.append(name)
+                except OSError:
+                    changed.append(name)
         result["finishedAt"] = time.time()
         result["counts"] = {
             outcome: sum(r["when"] == "call" and r["outcome"] == outcome for r in result["reports"])
@@ -203,10 +255,14 @@ def main():
         collected = [r["nodeid"] for r in result["collected"]]
         result["missingCallNodeIds"] = sorted(set(collected) - set(called))
         result["selectionComplete"] = (
-            len(collected) == len(manifest["cases"])
+            result["collectionVerified"]
+            and bool(collected)
+            and (full_suite or len(collected) == len(manifest["cases"]))
             and collections.Counter(called) == collections.Counter(collected)
             and not result["skippedNodeIds"]
             and not result["setupOrTeardownFailures"]
+            and not result["collectionErrors"]
+            and not result["deselectedNodeIds"]
         )
         if not result["selectionComplete"]:
             result["status"] = "incomplete"

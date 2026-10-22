@@ -1,8 +1,9 @@
 {
   "schemaVersion": 1,
   "sourceBase": "4a87b61df0a1138e1e0dcfeef8c3fbffea36febd",
-  "scope": "Original 26 cases plus 46 identity/format cases and 4 adjacent compatibility controls; not real Incus acceptance",
+  "scope": "Original 26 cases plus 47 identity/format cases and 4 adjacent compatibility controls; optional full default unit suite, never real Incus acceptance",
   "baselineObserved": {"commit": "4a87b61df0a1138e1e0dcfeef8c3fbffea36febd", "passed": 17, "failed": 9, "skipped": 0},
+  "casePredictionScope": "The retained per-case predictions describe only the original 4a87b61 baseline, never the corrected candidate's required outcomes.",
   "sourceFiles": {
     "src/amplifier_bundle_digital_twin_universe/__init__.py": "0ed64f778922c80b3724d4e06891bf13238c12fb226440023168e47ac3c22042",
     "src/amplifier_bundle_digital_twin_universe/admission.py": "ac8a25c073f03bd3b5fafcae2c486baaecb23a13135be6cac3490799e661abe0",
@@ -13,12 +14,39 @@
     "src/amplifier_bundle_digital_twin_universe/operations.py": "959c20490b4bc01c02874acef9bfe494096ae4bcbce1b89a6a8963628980fe4b",
     "src/amplifier_bundle_digital_twin_universe/profile.py": "e160dbc181b8a3dcbbec942c97f53ec81a871e636bb411fa5cbfe605f3085d2d",
     "src/amplifier_bundle_digital_twin_universe/readiness.py": "9a8a95fb7fea28a4cd95c528e0bd391af75ec98af831233a49ac096e5110b035",
-    "tests/unit/test_admission.py": "caa63212c974c9be233e7432af4304a8f77284082089ec80dc0985b8d50c1502",
+    "tests/unit/test_admission.py": "1560b1bfb8bd992762cc3756d7eab1fea3a5260536e4ff647f3ab909a341b3ef",
     "tests/unit/conftest.py": "c05e47b7202ee154141eb1ceb1f78041db21d508970cc4da44477011b331173f",
     "tests/conftest.py": "d5b2c6f378bf2c3e51da16fc6c08a5a8e0e744eb57c57db6faa1c3e5e1a1eba6",
     "pyproject.toml": "c1cf4a09148bacafdb42c836d6b3ffd96d79433617540c1c13a327174b2d5fb3",
     "uv.lock": "6a7c424e26a53152a16af0911dd3e511631f5d9ba222756fc0fede7042b0494f",
-    "tests/inputs/run_dtu001.py": "0b9158193c178ef4035e455e26558608867b3e2286a8e665b1e2d9d55c52373b"
+    "tests/inputs/run_dtu001.py": "9eda0280f89d42c8609dc3f8f6ad667dbbfc40ac12015c3944228b8f655fa386"
+  },
+  "unitSuite": {
+    "sourceSha256": "d61e0efa6f971b5a70eca2b90b5b3cf58a9ee5e0976535eda615cc4e5a3b275a",
+    "testFiles": [
+      "tests/unit/profile/test_addon_matcher_parity.py",
+      "tests/unit/profile/test_resolution.py",
+      "tests/unit/profile/test_smoke.py",
+      "tests/unit/profile/test_url_rewrite_addon_emit.py",
+      "tests/unit/profile/test_url_rewrite_auth_safety.py",
+      "tests/unit/profile/test_url_rewrite_matching.py",
+      "tests/unit/profile/test_url_rewrite_target_validation.py",
+      "tests/unit/profile/test_validation_schema_sync.py",
+      "tests/unit/profile/test_validation_warnings.py",
+      "tests/unit/test_admission.py",
+      "tests/unit/test_default_base_config.py",
+      "tests/unit/test_file_pull_directory_recursion.py",
+      "tests/unit/test_file_push_directory_recursion.py",
+      "tests/unit/test_hostname.py",
+      "tests/unit/test_incus_launch_timeout.py",
+      "tests/unit/test_launch_operations.py",
+      "tests/unit/test_lean_head_guardrail.py",
+      "tests/unit/test_max_instances_guard.py",
+      "tests/unit/test_nested_incus.py",
+      "tests/unit/test_proxy_env.py",
+      "tests/unit/test_readiness_access.py",
+      "tests/unit/test_visual_id.py"
+    ]
   },
   "functions": [
     "test_recovery_observation_preserves_legacy_bytes_and_reservation",
@@ -105,6 +133,7 @@
     {"function":"test_incomplete_identity_cannot_hide_pending_receipt","parameters":{"case":"empty-owner"}},
     {"function":"test_incomplete_identity_cannot_hide_pending_receipt","parameters":{"case":"list-owner"}},
     {"function":"test_incomplete_identity_cannot_hide_pending_receipt","parameters":{"case":"blank-owner"}},
+    {"function":"test_incomplete_identity_cannot_hide_pending_receipt","parameters":{"case":"trailing-owner"}},
     {"function":"test_incomplete_identity_cannot_hide_pending_receipt","parameters":{"case":"missing-request"}},
     {"function":"test_incomplete_identity_cannot_hide_pending_receipt","parameters":{"case":"null-request"}},
     {"function":"test_incomplete_identity_cannot_hide_pending_receipt","parameters":{"case":"empty-request"}},
