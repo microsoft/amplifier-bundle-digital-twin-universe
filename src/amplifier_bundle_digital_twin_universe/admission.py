@@ -184,6 +184,23 @@ def receipt_path(root: Path, request_id: str) -> Path:
     return root / (hashlib.sha256(request_id.encode()).hexdigest() + ".json")
 
 
+def _validate_receipt(receipt: dict) -> None:
+    if not isinstance(receipt, dict):
+        raise AdmissionError("state_unsafe", "Admission receipt must be an object")
+    # Persisted receipts are unversioned. schema_version=1 belongs to API
+    # responses, not a supported disk format; do not guess future semantics.
+    if "schema_version" in receipt:
+        raise AdmissionError("state_unsupported", "Unsupported admission receipt format")
+    request_id = receipt.get("request_id")
+    if not isinstance(request_id, str) or not request_id.strip():
+        raise AdmissionError("state_unsafe", "Admission receipt identity is invalid")
+    state = receipt.get("state")
+    if not isinstance(state, str):
+        raise AdmissionError("state_unsafe", "Admission receipt state is invalid")
+    if state not in {"launching", "unknown", "created", "ready", "failed", "removed"}:
+        raise AdmissionError("state_unsupported", "Unsupported admission receipt state")
+
+
 def _read_receipt_file(path: Path) -> dict:
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor) as stream:
@@ -193,12 +210,12 @@ def _read_receipt_file(path: Path) -> dict:
             raise AdmissionError(
                 "state_unsafe", "Admission receipt exceeded its size bound"
             )
-        value = json.loads(raw)
-    if (
-        not isinstance(value, dict)
-        or not isinstance(value.get("request_id"), str)
-        or receipt_path(path.parent, value["request_id"]) != path
-    ):
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            raise AdmissionError("state_unsafe", "Admission receipt is not valid JSON") from None
+    _validate_receipt(value)
+    if receipt_path(path.parent, value["request_id"]) != path:
         raise AdmissionError("state_unsafe", "Admission receipt identity is invalid")
     return value
 
@@ -211,6 +228,7 @@ def read_receipt(root: Path, request_id: str) -> dict | None:
 
 
 def save_receipt(root: Path, receipt: dict) -> None:
+    _validate_receipt(receipt)
     _private_directory(root)
     path = receipt_path(root, receipt["request_id"])
     try:
@@ -236,9 +254,26 @@ def save_receipt(root: Path, receipt: dict) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _reservation_identity(name, request_id, owner_root) -> tuple[str, str, str] | None:
+    """Only complete, exact identities can represent a pending reservation."""
+    values = (name, request_id, owner_root)
+    if all(isinstance(value, str) and value.strip() for value in values):
+        return values
+    return None
+
+
 def snapshot(ctx: dict, limits: dict, root: Path) -> dict:
     instances = incus.list_instances(MANAGED_KEY, MANAGED_VALUE)
-    names = {i["name"] for i in instances}
+    identities = set()
+    for instance in instances:
+        config = instance.get("config", {})
+        identity = _reservation_identity(
+            instance.get("name"),
+            config.get("user.dtu.request-id"),
+            config.get("user.dtu.owner-root"),
+        )
+        if identity is not None:
+            identities.add(identity)
     # Unknown states and still-provisioning stopped instances remain active.
     retained = sum(
         i.get("status", "").lower() == "stopped"
@@ -246,7 +281,9 @@ def snapshot(ctx: dict, limits: dict, root: Path) -> dict:
         for i in instances
     )
     pending = sum(
-        r.get("state") in {"launching", "unknown"} and r["name"] not in names
+        r["state"] in {"launching", "unknown"}
+        and _reservation_identity(r.get("name"), r["request_id"], r.get("owner_root"))
+        not in identities
         for r in (_read_receipt_file(p) for p in root.glob("*.json"))
     )
     active = len(instances) - retained + pending
