@@ -261,6 +261,24 @@ def test_collector_result_json_identity_not_python_numeric_equality(attempt):
     assert "result" not in store.observe()
 
 
+@pytest.mark.parametrize("field", ["name", "request_id", "owner_root", "created_at", "status"])
+def test_collector_completion_requires_full_result_identity(attempt, field):
+    _, store, _, _, reserve, execute = attempt
+    ref = store.prepare()
+    store.dispatch_once(ref, lambda _: None)
+
+    def changed():
+        result = {**execute(), field: "different"}
+        receipt = admission.read_receipt(store.root, "collector-request")
+        receipt["result"] = result
+        admission.save_receipt(store.root, receipt)
+        return result
+
+    with pytest.raises(admission.AdmissionError):
+        store.run_once(ref, reserve, changed)
+    assert "result" not in store.observe()
+
+
 def test_collector_parent_directory_sync_precedes_dispatch(attempt, monkeypatch):
     import os
     _, store, _, _, _, _ = attempt

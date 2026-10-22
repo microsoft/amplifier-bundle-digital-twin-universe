@@ -197,7 +197,13 @@ class AttemptStore:
                 receipt = self._receipt()
                 if (receipt["state"] != "ready" or _digest(receipt.get("result")) != _digest(result)
                         or not isinstance(result, dict)
-                        or result.get("id") != self.binding["name"]):
+                        or result.get("id") != self.binding["name"]
+                        or result.get("status") != "running"
+                        or any(result.get(key) != self.binding[key] for key in
+                               ("name", "request_id", "owner_root"))
+                        or not isinstance(receipt.get("created_at"), str)
+                        or not receipt["created_at"].strip()
+                        or result.get("created_at") != receipt["created_at"]):
                     raise _conflict()
                 self._advance(current, "completed", _digest(receipt["result"]))
             return result
