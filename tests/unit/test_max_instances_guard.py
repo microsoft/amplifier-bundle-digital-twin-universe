@@ -172,7 +172,10 @@ def _write_profile(tmp_path: Path) -> str:
 def _patch_launch_infra(monkeypatch: pytest.MonkeyPatch, admission_infra):
     """Patch all infrastructure calls in launch() so it can run without Incus."""
     import amplifier_bundle_digital_twin_universe.incus as incus_mod
+    from amplifier_bundle_digital_twin_universe.hostname import HostnameManager
 
+    # Synthetic launches must not spawn host Avahi processes or write PID files.
+    monkeypatch.setattr(HostnameManager, "register", MagicMock(return_value=None))
     create_container_mock = MagicMock()
     monkeypatch.setattr(incus_mod, "list_instances", MagicMock(return_value=[]))
 
