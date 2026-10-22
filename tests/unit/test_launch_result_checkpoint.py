@@ -23,6 +23,8 @@ def result_launch(monkeypatch, launch_infra):  # noqa: F811
     mocks_stopped = MagicMock()
     monkeypatch.setattr(incus, "delete_container", deleted)
     monkeypatch.setattr(engine, "_stop_mock_containers", mocks_stopped)
+    monkeypatch.setattr(incus, "exec_command", MagicMock(return_value=(0, "", "")))
+    monkeypatch.setattr(engine, "_write_env", MagicMock())
     return profile, observed, create, deleted, mocks_stopped
 
 
@@ -167,7 +169,7 @@ def test_checkpoint_fsync_failure_does_not_publish_ready(result_launch, monkeypa
     assert ("prepared_result" in saved()[2]) == (fsync_number == 2)
 
 
-@pytest.mark.parametrize("field", ["daemon", "project", "intent_digest", "request_id", "owner_root", "name", "created_at"])
+@pytest.mark.parametrize("field", ["daemon", "project", "intent_digest", "request_id", "owner_root", "name", "created_at", "id"])
 def test_result_recovery_rejects_changed_checkpoint_binding(result_launch, monkeypatch, field):
     root, path, record = interrupt_final(result_launch, monkeypatch)
     assert "prepared_result" in record
@@ -245,6 +247,184 @@ def test_legacy_unknown_without_checkpoint_is_not_rewritten(result_launch, monke
     assert status["state"] == "ready" and "result" not in status
     assert "result_recovered" not in status
     assert path.read_bytes() == original
+    with pytest.raises(admission.AdmissionError):
+        launch(result_launch)
+    assert result_launch[2].call_count == 1
+
+
+@pytest.mark.parametrize("case", ["null", "list", "missing-result", "missing-scope", "result-list", "missing-created"])
+def test_malformed_result_checkpoint_is_never_promoted(result_launch, monkeypatch, case):
+    root, path, record = interrupt_final(result_launch, monkeypatch)
+    checkpoint = record["prepared_result"]
+    if case in {"null", "list"}:
+        record["prepared_result"] = None if case == "null" else []
+    elif case == "missing-result":
+        checkpoint.pop("result")
+    elif case == "missing-scope":
+        checkpoint.pop("daemon")
+    elif case == "result-list":
+        checkpoint["result"] = []
+    else:
+        record.pop("created_at")
+        checkpoint["result"].pop("created_at")
+    admission.save_receipt(root, record)
+    original = path.read_bytes()
+    status = engine.launch_status("result-request")
+    assert "result" not in status and "result_recovered" not in status
+    assert "prepared_result" not in status
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("stage", ["checkpoint", "final"])
+@pytest.mark.parametrize("change", ["missing", "binding", "checkpoint", "removed"])
+def test_result_publisher_refuses_intervening_receipt(result_launch, monkeypatch, stage, change):
+    publish, set_config = engine._publish_launch_result, incus.set_config
+    intervening = []
+    markers = []
+
+    def change_receipt():
+        root, path, current = saved()
+        if change == "missing":
+            path.unlink()
+            intervening.append(None)
+            return
+        if change == "binding":
+            current["intent_digest"] = "foreign-intent"
+        elif change == "checkpoint":
+            current["prepared_result"] = {"result": "different"}
+        else:
+            current["state"] = "removed"
+        admission.save_receipt(root, current)
+        intervening.append(path.read_bytes())
+
+    def begin(ctx, record, result):
+        if stage == "checkpoint":
+            change_receipt()
+        publish(ctx, record, result)
+
+    def mark(name, key, value):
+        set_config(name, key, value)
+        if key == "user.dtu.launch-state" and value == "ready":
+            markers.append(True)
+            if stage == "final":
+                change_receipt()
+
+    monkeypatch.setattr(engine, "_publish_launch_result", begin)
+    monkeypatch.setattr(incus, "set_config", mark)
+    with pytest.raises(admission.AdmissionError) as error:
+        launch(result_launch)
+    assert error.value.code == "launch_unknown"
+    path = saved()[1]
+    assert (path.read_bytes() if path.exists() else None) == intervening[0]
+    assert bool(markers) == (stage == "final")
+    result_launch[3].assert_not_called()
+    result_launch[4].assert_not_called()
+
+
+@pytest.mark.parametrize("size", [262144, 262145])
+def test_result_receipt_size_bound_preserves_previous_bytes(result_launch, size):
+    root = admission.state_directory(admission.context())
+    record = {"request_id": "bounded", "state": "unknown"}
+    admission.save_receipt(root, record)
+    path = admission.receipt_path(root, "bounded")
+    before = path.read_bytes()
+    record["prepared_result"] = {"result": {"info": [""]}}
+    overhead = len(json.dumps(record).encode("utf-8"))
+    record["prepared_result"]["result"]["info"] = ["x" * (size - overhead)]
+    assert len(json.dumps(record).encode("utf-8")) == size
+    if size > 262144:
+        with pytest.raises(admission.AdmissionError):
+            engine._save_result_receipt(root, record)
+        assert path.read_bytes() == before
+    else:
+        engine._save_result_receipt(root, record)
+        assert path.stat().st_size == size
+        assert admission.read_receipt(root, "bounded") == record
+
+
+def test_oversize_checkpoint_does_not_mark_ready_or_delete(result_launch, monkeypatch):
+    publish = engine._publish_launch_result
+    before = []
+
+    def oversized(ctx, record, result):
+        before.append(saved()[1].read_bytes())
+        publish(ctx, record, {**result, "info": ["x" * 262144]})
+
+    monkeypatch.setattr(engine, "_publish_launch_result", oversized)
+    with pytest.raises(admission.AdmissionError):
+        launch(result_launch)
+    assert saved()[1].read_bytes() == before[0]
+    assert result_launch[1][0]["config"]["user.dtu.launch-state"] == "provisioning"
+    result_launch[3].assert_not_called()
+    result_launch[4].assert_not_called()
+
+
+@pytest.mark.parametrize("stage", ["marker", "final-fsync"])
+def test_lost_publication_acknowledgement_recovers_without_reprovisioning(result_launch, monkeypatch, stage):
+    set_config, save = incus.set_config, admission.save_receipt
+
+    def mark(name, key, value):
+        set_config(name, key, value)
+        if stage == "marker" and key == "user.dtu.launch-state" and value == "ready":
+            raise OSError("reply lost after marker")
+
+    def write(root, value):
+        if stage != "final-fsync" or value["state"] != "ready":
+            return save(root, value)
+        fsync = admission.os.fsync
+        calls = []
+
+        def sync(fd):
+            calls.append(fd)
+            if len(calls) == 2:
+                raise OSError("directory fsync failed after replace")
+            return fsync(fd)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(admission.os, "fsync", sync)
+            save(root, value)
+
+    monkeypatch.setattr(incus, "set_config", mark)
+    monkeypatch.setattr(admission, "save_receipt", write)
+    with pytest.raises(admission.AdmissionError):
+        launch(result_launch)
+    counts = (result_launch[2].call_count, incus.exec_command.call_count, engine._write_env.call_count)
+    before = saved()[1].read_bytes()
+    status = engine.launch_status("result-request")
+    assert status["state"] == "ready" and status["result"]["id"] == "result-case"
+    assert status.get("result_recovered", False) == (stage == "marker")
+    if stage == "final-fsync":
+        assert launch(result_launch)["reused"] is True
+    else:
+        with pytest.raises(admission.AdmissionError):
+            launch(result_launch)
+    assert counts == (result_launch[2].call_count, incus.exec_command.call_count, engine._write_env.call_count)
+    assert saved()[1].read_bytes() == before
+    result_launch[3].assert_not_called()
+    result_launch[4].assert_not_called()
+
+
+def test_tracked_creation_reconciliation_preserves_prepared_result(result_launch, monkeypatch):
+    from amplifier_bundle_digital_twin_universe import operations
+
+    root, _path, record = interrupt_final(result_launch, monkeypatch)
+    record["create_operation"] = {
+        **admission.context(), "socket": "/synthetic/never-contacted.sock",
+        "id": "12345678-1234-1234-1234-123456789abc",
+        **{key: record[key] for key in ("name", "request_id", "owner_root")},
+    }
+    checkpoint = record["prepared_result"]
+    admission.save_receipt(root, record)
+    observe = MagicMock(return_value={"status_code": 200})
+    monkeypatch.setattr(operations, "observe", observe)
+    status = engine.launch_status("result-request")
+    assert status["result"] == checkpoint["result"] and status["result_recovered"]
+    current = saved()[2]
+    assert current["state"] == "created"
+    assert current["creation_status"] == 200
+    assert current["prepared_result"] == checkpoint
+    assert "result" not in current
+    observe.assert_called_once()
     with pytest.raises(admission.AdmissionError):
         launch(result_launch)
     assert result_launch[2].call_count == 1

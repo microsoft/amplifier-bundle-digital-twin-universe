@@ -178,6 +178,25 @@ that a remote operation was cancelled. Ready markers come from provisioning,
 not merely from an Incus Running status. Receipts are private, durable and are
 not removed automatically, preventing completed request IDs from being replayed.
 
+New launches checkpoint their completed provisioning result before writing the
+ready marker. If final receipt publication is interrupted, `launch-status` can
+return that exact saved `result` with `result_recovered: true`, but only when a
+currently Running, ready-marked instance has complete matching name/request/owner
+identity and the checkpoint matches the receipt intent and daemon/project.
+The prepared checkpoint is not exposed as a completed result on missing,
+conflicting, stopped or not-ready observations. A newer failed/removed receipt
+is not promoted by an older ready marker.
+
+This recovery projection does not rewrite the receipt or resume provisioning;
+existing creation-operation reconciliation can still persist its own evidence.
+An unresolved original `launch` retry remains refused even when status recovers
+its result. Checkpoint/marker/final-publication failures leave the successfully
+provisioned environment intact and report `launch_unknown`. They do not prove
+failure or authorize cleanup. The checkpoint uses the existing private atomic
+receipt writer and its size bound; it is not a background collector or a
+guarantee across unobserved host/process-group loss. Older clients do not honor
+these publication guards; mixed-version lifecycle safety is not established.
+
 For `--offline` launches using an exact `local:<64-character fingerprint>` on the
 current local Unix-socket daemon, DTU records the Incus asynchronous creation
 operation before waiting. This requires the daemon's `instance_create_start`
