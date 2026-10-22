@@ -229,3 +229,119 @@ def test_collector_private_records_fail_closed(attempt, tmp_path, damage):
         store.path.write_text(json.dumps(record))
     with pytest.raises((admission.AdmissionError, OSError)):
         store.observe()
+
+
+def test_collector_duplicate_phase_keys_never_enable_worker(attempt):
+    _, store, _, calls, reserve, execute = attempt
+    ref = store.prepare()
+    store.path.write_text(store.path.read_text().replace(
+        '"phase": "prepared"', '"phase": "fenced", "phase": "dispatched"'
+    ))
+    before = store.path.read_bytes()
+    with pytest.raises(admission.AdmissionError):
+        store.run_once(ref, reserve, execute)
+    assert not calls and store.path.read_bytes() == before
+
+
+def test_collector_result_json_identity_not_python_numeric_equality(attempt):
+    _, store, _, _, reserve, execute = attempt
+    ref = store.prepare()
+    store.dispatch_once(ref, lambda _: None)
+
+    def wrong():
+        result = execute()
+        receipt = admission.read_receipt(store.root, "collector-request")
+        receipt["result"]["extra"] = 1
+        admission.save_receipt(store.root, receipt)
+        return {**result, "extra": True}
+
+    with pytest.raises(admission.AdmissionError):
+        store.run_once(ref, reserve, wrong)
+    assert store.observe()["phase"] == "submitting"
+    assert "result" not in store.observe()
+
+
+def test_collector_parent_directory_sync_precedes_dispatch(attempt, monkeypatch):
+    import os
+    _, store, _, _, _, _ = attempt
+    ref = store.prepare()
+    dispatched = []
+    sync = admission.os.fsync
+
+    def fail_root(fd):
+        info = os.fstat(fd)
+        if (info.st_dev, info.st_ino) == (store.root.stat().st_dev, store.root.stat().st_ino):
+            raise OSError("parent directory sync refused")
+        sync(fd)
+
+    monkeypatch.setattr(admission.os, "fsync", fail_root)
+    with pytest.raises(OSError):
+        store.dispatch_once(ref, dispatched.append)
+    assert not dispatched and store.observe()["phase"] == "prepared"
+
+
+@pytest.mark.parametrize("phase", ["dispatched", "accepted", "submitting"])
+@pytest.mark.parametrize("sync_number", [1, 2])
+def test_collector_real_fsync_failure_prevents_next_callback(attempt, monkeypatch, phase, sync_number):
+    _, store, _, calls, reserve, execute = attempt
+    ref = store.prepare()
+    if phase != "dispatched":
+        store.dispatch_once(ref, lambda _: None)
+    save = store._save
+
+    def fail(value):
+        if value["phase"] != phase:
+            return save(value)
+        fsync = admission.os.fsync
+        count = []
+
+        def sync(fd):
+            count.append(fd)
+            if len(count) == sync_number:
+                raise OSError("synthetic fsync failure")
+            fsync(fd)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(admission.os, "fsync", sync)
+            save(value)
+
+    monkeypatch.setattr(store, "_save", fail)
+    with pytest.raises(OSError):
+        if phase == "dispatched":
+            store.dispatch_once(ref, lambda _: calls.append("dispatch"))
+        else:
+            store.run_once(ref, reserve, execute)
+    assert "execute" not in calls and "dispatch" not in calls
+    assert calls == (["reserve"] if phase == "submitting" else [])
+    expected = phase if sync_number == 2 else {
+        "dispatched": "prepared", "accepted": "dispatched", "submitting": "accepted",
+    }[phase]
+    assert store.observe()["phase"] == expected
+
+
+def test_collector_lock_scope_and_competing_worker(attempt):
+    _, store, _, calls, reserve, execute = attempt
+    ref = store.prepare()
+
+    def dispatch(_):
+        with admission._locked_file(store.lock_path, timeout=0):
+            with admission._locked_file(store.root / "admission.lock", timeout=0):
+                calls.append("dispatch-unlocked")
+
+    store.dispatch_once(ref, dispatch)
+
+    def held_reserve():
+        with pytest.raises(admission.AdmissionError):
+            with admission._locked_file(store.root / "admission.lock", timeout=0):
+                pytest.fail("reservation did not hold admission")
+        reserve()
+
+    def held_execute():
+        with admission._locked_file(store.root / "admission.lock", timeout=0):
+            calls.append("execution-admission-unlocked")
+        with pytest.raises(admission.AdmissionError):
+            store.run_once(ref, reserve, execute)
+        return execute()
+
+    store.run_once(ref, held_reserve, held_execute)
+    assert calls == ["dispatch-unlocked", "reserve", "execution-admission-unlocked", "execute"]

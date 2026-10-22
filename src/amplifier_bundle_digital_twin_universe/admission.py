@@ -209,7 +209,7 @@ def _validate_receipt(receipt: dict) -> None:
         raise AdmissionError("state_unsupported", "Unsupported admission receipt state")
 
 
-def _read_private_json(path: Path) -> dict:
+def _read_private_json(path: Path, **json_options) -> dict:
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor) as stream:
         _private_file(os.fstat(stream.fileno()))
@@ -219,7 +219,7 @@ def _read_private_json(path: Path) -> dict:
                 "state_unsafe", "Admission receipt exceeded its size bound"
             )
         try:
-            value = json.loads(raw)
+            value = json.loads(raw, **json_options)
         except ValueError:
             raise AdmissionError("state_unsafe", "Admission receipt is not valid JSON") from None
     return value

@@ -11,6 +11,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 from types import MappingProxyType
@@ -29,7 +30,16 @@ def _conflict():
 
 
 def _digest(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
+
+
+def _unique_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("Duplicate collector key")
+        value[key] = item
+    return value
 
 
 class AttemptStore:
@@ -62,13 +72,20 @@ class AttemptStore:
         admission._private_directory(self.root)
         if create:
             self.directory.mkdir(mode=0o700, exist_ok=True)
+            # Also repeat after a prior uncertain mkdir/fsync: syncing only the
+            # child does not commit its link in the already-provisioned root.
+            descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
         if self.directory.exists():
             admission._private_directory(self.directory)
 
     def _read(self):
         self._directories()
         try:
-            value = admission._read_private_json(self.path)
+            value = admission._read_private_json(self.path, object_pairs_hook=_unique_object)
         except FileNotFoundError:
             return None
         if not isinstance(value, dict) or set(value) != _KEYS:
@@ -178,11 +195,11 @@ class AttemptStore:
                 raise
             with self._admission():
                 receipt = self._receipt()
-                if (receipt["state"] != "ready" or receipt.get("result") != result
+                if (receipt["state"] != "ready" or _digest(receipt.get("result")) != _digest(result)
                         or not isinstance(result, dict)
                         or result.get("id") != self.binding["name"]):
                     raise _conflict()
-                self._advance(current, "completed", _digest(result))
+                self._advance(current, "completed", _digest(receipt["result"]))
             return result
 
     def fence_pending(self, generation):

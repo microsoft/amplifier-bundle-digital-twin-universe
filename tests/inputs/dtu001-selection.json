@@ -6,8 +6,8 @@
   "casePredictionScope": "The retained per-case predictions describe only the original 4a87b61 baseline, never the corrected candidate's required outcomes.",
   "sourceFiles": {
     "src/amplifier_bundle_digital_twin_universe/__init__.py": "0ed64f778922c80b3724d4e06891bf13238c12fb226440023168e47ac3c22042",
-    "src/amplifier_bundle_digital_twin_universe/admission.py": "499e0a030288a2274f28ea0db42f0a3f4a6ab7d1343b52e953f364a444712c8d",
-    "src/amplifier_bundle_digital_twin_universe/collector.py": "df8eb9d547474e291bacbaa5ccf0e03120890aad5f9c8266aa4d8c9129f54a3d",
+    "src/amplifier_bundle_digital_twin_universe/admission.py": "dbd40bed4aa7e223fd4661eac0ff9fbf4e03b8f014fede96697e9ff8b8299c10",
+    "src/amplifier_bundle_digital_twin_universe/collector.py": "09dd95fe54d0b2d58f915a7a165e38a69b6c4273f777f9b9bf283a3d77572bcc",
     "src/amplifier_bundle_digital_twin_universe/cli.py": "e01fa80a4ef499a4aab0a052a4acd3a216f821204590b2d3eecd26b93e4515b1",
     "src/amplifier_bundle_digital_twin_universe/engine.py": "e5affbc8335a2a7fefd4d2ff763e44ffdb743c046585727d2484b385a353e8f0",
     "src/amplifier_bundle_digital_twin_universe/hostname.py": "55a8042d3adaf73d0fe6b3f5576f699c796144c36759e05cc30dafac3c65c62b",
@@ -17,16 +17,17 @@
     "src/amplifier_bundle_digital_twin_universe/readiness.py": "9a8a95fb7fea28a4cd95c528e0bd391af75ec98af831233a49ac096e5110b035",
     "tests/unit/test_admission.py": "1560b1bfb8bd992762cc3756d7eab1fea3a5260536e4ff647f3ab909a341b3ef",
     "tests/unit/test_launch_result_checkpoint.py": "21c33ca251917ba96b4c2773840a11a4ba5dbabe954a58d0c6e1a6478b08366a",
-    "tests/unit/test_collector_custody.py": "21a66e4dfa424c3ec6b7ca1ecc7ae1995b9e2e2d92340d3e31e5f4af577af7aa",
+    "tests/unit/test_collector_custody.py": "76520fda5f79b3d4da90f8d3d1761ceb1f301aafaba28fc1fe40e3db20fe2bf4",
     "tests/unit/conftest.py": "c05e47b7202ee154141eb1ceb1f78041db21d508970cc4da44477011b331173f",
     "tests/conftest.py": "d5b2c6f378bf2c3e51da16fc6c08a5a8e0e744eb57c57db6faa1c3e5e1a1eba6",
     "tests/helpers.py": "a3d4492788cdd6e6d5cb9a50722680e5040b1c19138629b9c300ff88396a9bb5",
     "pyproject.toml": "c1cf4a09148bacafdb42c836d6b3ffd96d79433617540c1c13a327174b2d5fb3",
     "uv.lock": "6a7c424e26a53152a16af0911dd3e511631f5d9ba222756fc0fede7042b0494f",
-    "tests/inputs/run_dtu001.py": "b1cfa76169776a76ad599cf79df10a8a23daa5832e945540832c13db6a7ebb93"
+    "tests/inputs/run_dtu001.py": "b1cfa76169776a76ad599cf79df10a8a23daa5832e945540832c13db6a7ebb93",
+    "tests/inputs/run_collector_process.py": "a76d8620b70f519e5f6d768187720df927286c09e70f87f61dc1ebc70fc085f6"
   },
   "unitSuite": {
-    "sourceSha256": "6d7bb2dc761666f89ed04dd29f76564ce97add1888caacaf90cc55f45b34a113",
+    "sourceSha256": "8a0cb804b2b4dcd074d2296cebcd3878c777e7be825dfb07a8ee82fdec18a16b",
     "testFiles": [
       "tests/unit/profile/test_addon_matcher_parity.py",
       "tests/unit/profile/test_resolution.py",
