@@ -6,7 +6,8 @@
   "casePredictionScope": "The retained per-case predictions describe only the original 4a87b61 baseline, never the corrected candidate's required outcomes.",
   "sourceFiles": {
     "src/amplifier_bundle_digital_twin_universe/__init__.py": "0ed64f778922c80b3724d4e06891bf13238c12fb226440023168e47ac3c22042",
-    "src/amplifier_bundle_digital_twin_universe/admission.py": "b7e50ad974d5f8817479c0a7c81883840c2c3422fd497a43426e35fd31e1c283",
+    "src/amplifier_bundle_digital_twin_universe/admission.py": "499e0a030288a2274f28ea0db42f0a3f4a6ab7d1343b52e953f364a444712c8d",
+    "src/amplifier_bundle_digital_twin_universe/collector.py": "df8eb9d547474e291bacbaa5ccf0e03120890aad5f9c8266aa4d8c9129f54a3d",
     "src/amplifier_bundle_digital_twin_universe/cli.py": "e01fa80a4ef499a4aab0a052a4acd3a216f821204590b2d3eecd26b93e4515b1",
     "src/amplifier_bundle_digital_twin_universe/engine.py": "e5affbc8335a2a7fefd4d2ff763e44ffdb743c046585727d2484b385a353e8f0",
     "src/amplifier_bundle_digital_twin_universe/hostname.py": "55a8042d3adaf73d0fe6b3f5576f699c796144c36759e05cc30dafac3c65c62b",

@@ -151,13 +151,21 @@ def state_directory(ctx: dict) -> Path:
 @contextmanager
 def locked(ctx: dict):
     """Bounded process lock. A waiting caller gets a retryable reason."""
-    import fcntl
-
     root = state_directory(ctx)
     timeout = resolve_limit(None, "AMPLIFIER_DTU_ADMISSION_TIMEOUT_SECONDS", 30)
+    with _locked_file(root / "admission.lock", timeout):
+        yield root
+
+
+@contextmanager
+def _locked_file(path: Path, timeout: int = 30):
+    """Shared private lock primitive; callers define the enclosing lock order."""
+    import fcntl
+
+    _private_directory(path.parent)
     deadline = time.monotonic() + timeout
     descriptor = os.open(
-        root / "admission.lock",
+        path,
         os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
         0o600,
     )
@@ -175,7 +183,7 @@ def locked(ctx: dict):
                     )
                 time.sleep(0.05)
         try:
-            yield root
+            yield
         finally:
             fcntl.flock(handle, fcntl.LOCK_UN)
 
@@ -201,7 +209,7 @@ def _validate_receipt(receipt: dict) -> None:
         raise AdmissionError("state_unsupported", "Unsupported admission receipt state")
 
 
-def _read_receipt_file(path: Path) -> dict:
+def _read_private_json(path: Path) -> dict:
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor) as stream:
         _private_file(os.fstat(stream.fileno()))
@@ -214,6 +222,11 @@ def _read_receipt_file(path: Path) -> dict:
             value = json.loads(raw)
         except ValueError:
             raise AdmissionError("state_unsafe", "Admission receipt is not valid JSON") from None
+    return value
+
+
+def _read_receipt_file(path: Path) -> dict:
+    value = _read_private_json(path)
     _validate_receipt(value)
     if receipt_path(path.parent, value["request_id"]) != path:
         raise AdmissionError("state_unsafe", "Admission receipt identity is invalid")
@@ -229,13 +242,18 @@ def read_receipt(root: Path, request_id: str) -> dict | None:
 
 def save_receipt(root: Path, receipt: dict) -> None:
     _validate_receipt(receipt)
+    _save_private_json(receipt_path(root, receipt["request_id"]), receipt)
+
+
+def _save_private_json(path: Path, value: dict) -> None:
+    """Bounded atomic storage, independent of the admission receipt schema."""
     # Bound the replacement, not only the old file. Reconciliation can grow a
     # checkpoint too; every writer must leave a receipt the reader can load.
-    serialized = json.dumps(receipt)
+    serialized = json.dumps(value)
     if len(serialized.encode("utf-8")) > 262144:
         raise AdmissionError("state_unsafe", "Admission receipt exceeded its size bound")
+    root = path.parent
     _private_directory(root)
-    path = receipt_path(root, receipt["request_id"])
     try:
         _private_file(path.lstat())
     except FileNotFoundError:
