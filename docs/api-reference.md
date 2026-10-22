@@ -153,6 +153,19 @@ and `storage_unknown`; all applicable blockers are returned. Unrecognized
 instance states count as active. Incus storage usage includes retained volumes,
 images and other users of that pool; no container is deleted during observation.
 
+Pending reservations are deduplicated against observed instances only when the
+name, request ID and owner root are all nonblank strings and match exactly within
+the selected daemon/project. A foreign same-name instance does not hide a
+reservation. An unresolved ownerless attempt remains counted separately even if
+a same-name instance is present; missing metadata is not proof of identity.
+This is accounting, not authentication or permission to retire an attempt.
+
+Persisted admission receipts use the existing **unversioned** format. The
+`schema_version: 1` in API responses does not designate an on-disk format.
+Explicit receipt versions or unsupported states fail closed with
+`state_unsupported`; malformed identity/state data fails with `state_unsafe`.
+Supported legacy receipts are read without migration or rewriting.
+
 ### `launch-status REQUEST_ID`
 
 Returns `{schema_version, request_id, name, owner_root, state, created_at}` plus

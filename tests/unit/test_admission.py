@@ -662,6 +662,153 @@ def test_recovery_residual_identity_controls_pending_accounting(
     assert create.call_count == 1
 
 
+@pytest.mark.parametrize("version", [None, False, 0, 1, "1", {}, []])
+def test_receipt_explicit_version_is_not_legacy(recovery_infra, version):
+    path, original = _seed_legacy_receipt(recovery_infra)
+    receipt = json.loads(original)
+    receipt["schema_version"] = version
+    path.write_text(json.dumps(receipt))
+    unsupported = path.read_bytes()
+    with pytest.raises(admission.AdmissionError) as error:
+        engine.capacity()
+    assert error.value.code == "state_unsupported"
+    assert path.read_bytes() == unsupported
+
+
+@pytest.mark.parametrize("case", [
+    "non-object", "missing-request", "blank-request", "request-type", "wrong-path",
+    "missing-state", "null-state", "state-list", "unknown-state", "broken-json",
+])
+def test_receipt_invalid_structure_fails_closed(recovery_infra, case):
+    path, original = _seed_legacy_receipt(recovery_infra)
+    receipt = json.loads(original)
+    if case == "non-object":
+        receipt = []
+    elif case == "missing-request":
+        receipt.pop("request_id")
+    elif case == "blank-request":
+        receipt["request_id"] = ""
+    elif case == "request-type":
+        receipt["request_id"] = 1
+    elif case == "wrong-path":
+        receipt["request_id"] = "another-request"
+    elif case == "missing-state":
+        receipt.pop("state")
+    else:
+        receipt["state"] = {
+            "null-state": None, "state-list": [], "unknown-state": "future",
+            "broken-json": "unknown",
+        }[case]
+    path.write_text("not JSON" if case == "broken-json" else json.dumps(receipt))
+    invalid = path.read_bytes()
+    with pytest.raises(admission.AdmissionError) as error:
+        engine.capacity()
+    assert error.value.code == (
+        "state_unsupported" if case == "unknown-state" else "state_unsafe"
+    )
+    assert path.read_bytes() == invalid
+
+
+@pytest.mark.parametrize("state", [
+    "launching", "unknown", "created", "ready", "failed", "removed",
+])
+def test_receipt_supported_states_preserve_unversioned_bytes(recovery_infra, state):
+    path, original = _seed_legacy_receipt(recovery_infra, state=state)
+    with admission.locked(admission.context()) as root:
+        assert admission.read_receipt(root, "recovery-request") == json.loads(original)
+    counts = engine.capacity()["counts"]
+    assert counts["pending_unobserved"] == (1 if state in {"launching", "unknown"} else 0)
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("case", ["version", "state", "request", "non-object"])
+def test_receipt_writer_rejects_unsupported_input_before_replace(recovery_infra, case):
+    path, original = _seed_legacy_receipt(recovery_infra)
+    receipt = json.loads(original)
+    if case == "version":
+        receipt["schema_version"] = 1
+    elif case == "state":
+        receipt["state"] = "future"
+    elif case == "request":
+        receipt["request_id"] = ""
+    else:
+        receipt = []
+    with admission.locked(admission.context()) as root:
+        before = set(root.iterdir())
+        with pytest.raises(admission.AdmissionError):
+            admission.save_receipt(root, receipt)
+        assert set(root.iterdir()) == before
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("case", [
+    "missing-owner", "null-owner", "empty-owner", "list-owner", "blank-owner",
+    "missing-request", "null-request", "empty-request", "number-request",
+    "missing-name", "null-name", "empty-name", "wrong-name",
+    "both-missing-owner", "both-empty-owner", "both-list-owner",
+    "both-null-name",
+])
+def test_incomplete_identity_cannot_hide_pending_receipt(recovery_infra, case):
+    _profile, observed, create = recovery_infra
+    path, original = _seed_legacy_receipt(recovery_infra)
+    receipt = json.loads(original)
+    config = {
+        "user.dtu.owner-root": "recovery-owner",
+        "user.dtu.request-id": "recovery-request",
+        "user.dtu.launch-state": "ready",
+    }
+    instance = {"name": "recovery-case", "status": "Stopped", "config": config}
+    both = case.startswith("both-")
+    defect, field = case.removeprefix("both-").split("-", 1)
+    key = {"owner": "user.dtu.owner-root", "request": "user.dtu.request-id"}.get(field, "name")
+    target = instance if field == "name" else config
+    if defect == "missing":
+        target.pop(key)
+    else:
+        target[key] = {
+            "null": None, "empty": "", "list": [], "blank": " ",
+            "number": 7, "wrong": "other-name",
+        }[defect]
+    if both:
+        receipt_key = "owner_root" if field == "owner" else "name"
+        if defect == "missing":
+            receipt.pop(receipt_key)
+        else:
+            receipt[receipt_key] = target[key]
+        path.write_text(json.dumps(receipt))
+    before = path.read_bytes()
+    observed.append(instance)
+    result = engine.capacity(max_running=1)
+    assert result["counts"] == {
+        "active": 1, "stopped_retained": 1, "pending_unobserved": 1, "total": 2,
+    }
+    assert not result["available"]
+    assert path.read_bytes() == before
+    create.assert_not_called()
+
+
+@pytest.mark.parametrize("status", ["Running", "Stopped"])
+def test_complete_identity_counts_ready_instance_once(recovery_infra, status):
+    _profile, observed, create = recovery_infra
+    path, original = _seed_legacy_receipt(recovery_infra)
+    observed.append({
+        "name": "recovery-case", "status": status,
+        "config": {
+            "user.dtu.owner-root": "recovery-owner",
+            "user.dtu.request-id": "recovery-request",
+            "user.dtu.launch-state": "ready",
+        },
+    })
+    result = engine.capacity()
+    assert result["counts"] == {
+        "active": 1 if status == "Running" else 0,
+        "stopped_retained": 1 if status == "Stopped" else 0,
+        "pending_unobserved": 0, "total": 1,
+    }
+    assert path.read_bytes() == original
+    create.assert_not_called()
+
+
 def test_recovery_concurrent_reads_keep_unknown_history(recovery_infra):
     _profile, _observed, create = recovery_infra
     path, original = _record_uncertain_attempt(recovery_infra)

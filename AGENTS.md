@@ -50,6 +50,11 @@ Run these before opening a PR. The reviewer expects evidence in the PR body, not
 
 ## Common pitfalls (from session experience)
 
+- **Admission receipt identity**: unresolved reservations match instances only
+  by complete, exact name/request/owner identity in the same daemon/project.
+  Missing or empty owner metadata must not suppress a reservation. Disk receipts
+  remain unversioned; API `schema_version: 1` is not a supported disk version.
+  Preserve legacy bytes and reject unsupported formats instead of migrating on read.
 - **Hardcoded subprocess timeouts**: `subprocess.run(..., timeout=N)` values that look reasonable on a quiet laptop are too short on loaded systems. Prefer environment-variable overrides like `AMPLIFIER_DTU_INCUS_LAUNCH_TIMEOUT_SECONDS` where they exist; add one where they don't, rather than picking a new fixed number.
 - **Directory recursion in file-push / file-pull**: both code paths now handle directories recursively. Older code assumed file-only and silently no-op'd on directories. If you find a "file not transferred" bug, check whether the caller is passing a directory through a path that still assumes a single file.
 - **`mirror-from-github` fragility on ARM64**: the `amplifier-bundle-gitea` mirror-from-github path has known ARM64 reliability issues. When reliability matters (e.g., in test setup), prefer direct Gitea API calls over mirror-from-github.
