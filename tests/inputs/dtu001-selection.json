@@ -16,6 +16,7 @@
     "src/amplifier_bundle_digital_twin_universe/readiness.py": "9a8a95fb7fea28a4cd95c528e0bd391af75ec98af831233a49ac096e5110b035",
     "tests/unit/test_admission.py": "1560b1bfb8bd992762cc3756d7eab1fea3a5260536e4ff647f3ab909a341b3ef",
     "tests/unit/test_launch_result_checkpoint.py": "21c33ca251917ba96b4c2773840a11a4ba5dbabe954a58d0c6e1a6478b08366a",
+    "tests/unit/test_collector_custody.py": "21a66e4dfa424c3ec6b7ca1ecc7ae1995b9e2e2d92340d3e31e5f4af577af7aa",
     "tests/unit/conftest.py": "c05e47b7202ee154141eb1ceb1f78041db21d508970cc4da44477011b331173f",
     "tests/conftest.py": "d5b2c6f378bf2c3e51da16fc6c08a5a8e0e744eb57c57db6faa1c3e5e1a1eba6",
     "tests/helpers.py": "a3d4492788cdd6e6d5cb9a50722680e5040b1c19138629b9c300ff88396a9bb5",
@@ -24,7 +25,7 @@
     "tests/inputs/run_dtu001.py": "b1cfa76169776a76ad599cf79df10a8a23daa5832e945540832c13db6a7ebb93"
   },
   "unitSuite": {
-    "sourceSha256": "1c2880814945553aa832c3a52e9d7fda16fe4dde75bbef017e1849e739610ba3",
+    "sourceSha256": "6d7bb2dc761666f89ed04dd29f76564ce97add1888caacaf90cc55f45b34a113",
     "testFiles": [
       "tests/unit/profile/test_addon_matcher_parity.py",
       "tests/unit/profile/test_resolution.py",
@@ -36,6 +37,7 @@
       "tests/unit/profile/test_validation_schema_sync.py",
       "tests/unit/profile/test_validation_warnings.py",
       "tests/unit/test_admission.py",
+      "tests/unit/test_collector_custody.py",
       "tests/unit/test_default_base_config.py",
       "tests/unit/test_file_pull_directory_recursion.py",
       "tests/unit/test_file_push_directory_recursion.py",
