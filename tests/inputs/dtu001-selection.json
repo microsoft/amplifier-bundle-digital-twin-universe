@@ -20,7 +20,7 @@
     "src/amplifier_bundle_digital_twin_universe/profile.py": "e160dbc181b8a3dcbbec942c97f53ec81a871e636bb411fa5cbfe605f3085d2d",
     "src/amplifier_bundle_digital_twin_universe/readiness.py": "804950cb3d4b2803ae99b21a7564260d3f39e7eb753fbcdfd8844bf5fe61204b",
     "tests/unit/test_bound_backend.py": "cc38e586bcb9f6875dcdd8ae11609a6c421475a45f7d7572af0763427553d022",
-    "tests/unit/test_collected_launch.py": "b75785067cb40a03c67cf10cf7a4d0cee047da16973c75d7259c8b75b359beb8",
+    "tests/unit/test_collected_launch.py": "8c632625ae186c985a6d1fe22162fcb655b64330155f61afa89e7c883e7e2c79",
     "tests/unit/test_admission.py": "1560b1bfb8bd992762cc3756d7eab1fea3a5260536e4ff647f3ab909a341b3ef",
     "tests/unit/test_launch_result_checkpoint.py": "21c33ca251917ba96b4c2773840a11a4ba5dbabe954a58d0c6e1a6478b08366a",
     "tests/unit/test_collector_custody.py": "dbfa7a7049994f4f3ff71e2d8a483594512470d1b8047c102088c37957888b71",
@@ -33,7 +33,7 @@
     "tests/inputs/run_collector_process.py": "95a8d84498a41152f2e2c61d0c917ad64c8887e5dce8e2af130b2c6f855a195e"
   },
   "unitSuite": {
-    "sourceSha256": "96f36c8ff02329c092c906362033151f9c63e3ef462a4fbecda93d74ae0279ac",
+    "sourceSha256": "26f89b159dd05ec3c0707224d2efba485566328d1723f6012453a14f199d6328",
     "testFiles": [
       "tests/unit/profile/test_addon_matcher_parity.py",
       "tests/unit/profile/test_resolution.py",

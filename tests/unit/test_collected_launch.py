@@ -8,7 +8,7 @@ from threading import Event
 import pytest
 
 from amplifier_bundle_digital_twin_universe import admission, engine, incus
-from test_admission import launch_infra  # noqa: F401
+from .test_admission import launch_infra  # noqa: F401
 
 
 @pytest.fixture
