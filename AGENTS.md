@@ -50,6 +50,53 @@ Run these before opening a PR. The reviewer expects evidence in the PR body, not
 
 ## Common pitfalls (from session experience)
 
+- **Admission receipt identity**: unresolved reservations match instances only
+  by complete, exact name/request/owner identity in the same daemon/project.
+  Missing or empty owner metadata must not suppress a reservation. Disk receipts
+  remain unversioned; API `schema_version: 1` is not a supported disk version.
+  Preserve legacy bytes and reject unsupported formats instead of migrating on read.
+- **Launch result publication**: persist the bounded prepared result before the
+  ready marker, outside provisioning-failure cleanup. Re-read the bound receipt
+  before checkpoint/final writes; never overwrite a newer terminal outcome.
+  Checkpoint recovery is an observation, not provisioning replay or a collector.
+- **Explicit collected rollout**: `launch --collect` / `collect=True` is opt-in,
+  currently limited to bounded offline exact-local profiles with no host files,
+  package overrides, mocks, access or passthrough. It requires existing private
+  explicit local-Unix client configuration and verifies executable/config/scope
+  before calls. Name custody precedes request/admission custody. No accepted
+  generation resumes; observation timeout never cancels the worker. Public
+  mutation paths must retain the same custody/binding. Older/direct writers,
+  host-loss durability and human legacy adjudication remain outside this claim.
+- **Collected acknowledgment evidence**: future attempts retain a separate
+  bounded `.observations` record. Its ordered acknowledgments are not current
+  readiness, collector completion or replay/settlement authority. Missing
+  historical records are never backfilled. Observation writes stay outside
+  provisioning-failure cleanup; a lost write must not delete a created guest.
+- **Future failure evidence**: `.evidence` is separate from both strict v1
+  collector/acknowledgment formats. Only fresh attempts capture initial receipt
+  bytes privately. Public facts distinguish CLI outcomes from tracked terminal
+  observations and delete-call results from subsequent receipt-write failures.
+  Error-path recorder failures preserve the primary error, not retry a write or
+  grant cleanup/settlement. Missing facts/records never establish absence.
+- **Identity-query capture**: bound backend identity queries drain both pipes
+  under one absolute deadline and a 1-MiB combined raw-byte cap before decoding.
+  Overflow, truncation and timeout fence before the requested operation. Cleanup
+  targets only the owned query client, never the daemon/guest/collector.
+  Operational command capture is a separate, still-unbounded path.
+- **Post-completion capture faults**: exec spool seek/read I/O or decoding
+  errors retain the observed client return code and original cause in
+  `OutputCaptureError`. They are observation failures, not provisioning cleanup
+  authority, including when the code is nonzero. Complete nonzero provisioning
+  results still use normal cleanup. Never retry a capture error as missing
+  networking/profile data; retain an established command failure if optional
+  diagnostics fail afterward. Public evidence uses existing `observation_error`;
+  it does not gain a per-command exit history or an output-size limit.
+- **Committed publication repair**: only future successful collected attempts
+  can commit the exact ready-receipt and collector-completion pair. Repair
+  requires that immutable commit, matching before/after bytes and existing
+  name/request/admission custody. Never infer repair from a ready marker, PID,
+  elapsed time or free lock. Status/retry never applies repair. No failed/removed
+  action, capacity release or legacy approval authority is provided.
 - **Hardcoded subprocess timeouts**: `subprocess.run(..., timeout=N)` values that look reasonable on a quiet laptop are too short on loaded systems. Prefer environment-variable overrides like `AMPLIFIER_DTU_INCUS_LAUNCH_TIMEOUT_SECONDS` where they exist; add one where they don't, rather than picking a new fixed number.
 - **Directory recursion in file-push / file-pull**: both code paths now handle directories recursively. Older code assumed file-only and silently no-op'd on directories. If you find a "file not transferred" bug, check whether the caller is passing a directory through a path that still assumes a single file.
 - **`mirror-from-github` fragility on ARM64**: the `amplifier-bundle-gitea` mirror-from-github path has known ARM64 reliability issues. When reliability matters (e.g., in test setup), prefer direct Gitea API calls over mirror-from-github.

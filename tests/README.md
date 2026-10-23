@@ -14,6 +14,28 @@ tests/
 Opt in with `--run-integration` and `--run-e2e` respectively. See
 [../docs/development.md](../docs/development.md) for the full command list.
 
+### Deferred output-memory contract oracle (explicit opt-in)
+
+`tests/deferred/operational_capture_contract.py` preserves
+`test_successful_provisioning_avoids_unsized_output_reads` unchanged from the
+retained red runs at `c0d0fe2` and `25cc61a`. It describes the **deferred**
+output-memory contract, not acceptance of the capture-error/no-delete fix.
+Its filename deliberately does not match pytest's default `test_*.py` or
+`*_test.py` discovery patterns, and it is outside `tests/unit/`.
+
+Run it explicitly when working on that contract:
+
+```bash
+uv run pytest tests/deferred/operational_capture_contract.py -q
+```
+
+The current expected observation is **a real failure** at the unsized-read
+sentinel, not an `xfail`, skip or pass. The finite fixture does not allocate
+large output; avoiding this sentinel alone would not prove bounded memory.
+No output cap or replacement result API is selected by moving this test.
+All 35 capture-fault safety cases remain normally collected in
+`tests/unit/test_operational_capture_contract.py`.
+
 
 ## Layout
 
