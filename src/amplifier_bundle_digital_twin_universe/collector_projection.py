@@ -251,9 +251,15 @@ class Publication:
             after_collector = _encode({**current, 'revision': current['revision'] + 1,
                                       'phase': 'completed', 'result_digest': collector._digest(result)})
             bootstrap, marker = _bootstrap_paths(self.store)
+            bootstrap_raw, marker_raw = _read_bytes(bootstrap), _read_bytes(marker)
+            _require(_json(bootstrap_raw) == self.payload)
+            _require(_json(marker_raw) == {'request_id': self.store.binding['request_id'],
+                                          'name': self.store.binding['name'],
+                                          'generation': self.payload['generation'],
+                                          'input_digest': collector._digest(self.payload)})
             value = {'version': 1, 'state': 'COMMITTED', 'binding': dict(self.store.binding),
-                     'generation': self.payload['generation'], 'bootstrap_digest': _hash(_read_bytes(bootstrap)),
-                     'marker_digest': _hash(_read_bytes(marker)),
+                     'generation': self.payload['generation'], 'bootstrap_digest': _hash(bootstrap_raw),
+                     'marker_digest': _hash(marker_raw),
                      'sources': {k: _pack(_read_bytes(self.store.path.with_suffix(suffix), 32768))
                                  for k, suffix in [('observations', '.observations'), ('evidence', '.evidence')]},
                      'actions': []}

@@ -446,3 +446,32 @@ def test_commit_must_resync_before_explicit_projection(collected, monkeypatch):
                                                      status['commit_digest'])['outcome'] == 'applied'
     assert calls[:3] == ['sync', 'sync', 'project']
     assert admission.receipt_path(path.parent.parent, cp_payload['binding']['request_id']).read_bytes() != before
+
+
+@pytest.mark.parametrize('target', ['bootstrap', 'marker'])
+def test_commit_rechecks_original_worker_bootstrap_binding(collected, monkeypatch, target):
+    from amplifier_bundle_digital_twin_universe import collector_projection as cp
+    from amplifier_bundle_digital_twin_universe.bound_backend import BackendFence
+    commit = cp.Publication.commit
+    observed = []
+    def drift(self, *args):
+        bootstrap, marker = cp._bootstrap_paths(self.store)
+        path = bootstrap if target == 'bootstrap' else marker
+        value = json.loads(path.read_bytes())
+        if target == 'bootstrap':
+            value['variables']['drift'] = 'different'
+        else:
+            value['generation'] = '0' * 32
+        path.write_text(json.dumps(value))
+        observed.append(path.read_bytes())
+        return commit(self, *args)
+    monkeypatch.setattr(cp.Publication, 'commit', drift)
+    with pytest.raises((admission.AdmissionError, BackendFence)):
+        launch(collected)
+    root, payload = collected[4][0]['root'], collected[4][0]
+    from pathlib import Path
+    store = cp.collector.AttemptStore(Path(root), payload['binding'])
+    assert not store.path.with_suffix('.publication').exists()
+    assert admission.read_receipt(Path(root), payload['binding']['request_id'])['state'] == 'launching'
+    assert store._read()['phase'] == 'submitting'
+    assert observed and collected[3].call_count == 1
