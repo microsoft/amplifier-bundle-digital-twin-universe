@@ -25,6 +25,7 @@
     "src/amplifier_bundle_digital_twin_universe/readiness.py": "804950cb3d4b2803ae99b21a7564260d3f39e7eb753fbcdfd8844bf5fe61204b",
     "tests/unit/test_bound_backend.py": "451fb48364b126e5dab41f364dfec08b7e6a1efc76b0a3dafd9e8a6181fed52a",
     "tests/unit/test_identity_query_capture.py": "b402f3f57539445e822df32cd4178cd84ca1ca540fa4d70586d206451994090f",
+    "tests/unit/test_operational_capture_contract.py": "e0a6a000475e3881385fa17126741c8aeddce434b09e4efa2c67ddb8aaa244f9",
     "tests/unit/test_collected_launch.py": "3e497b8ce9766e0961d8b5e7dc632ce4b5a285d22c5e94807107e2de13b3f4f4",
     "tests/unit/test_collector_observations.py": "269aead4f71544401eafd39e68b36b6f03277d52e726e6c9d6279d35c1944097",
     "tests/unit/test_collector_evidence.py": "11398fdc47efd3b40a751c1d210fbb90ad3455cbcdf734bc7e26b643200f2a64",
@@ -39,11 +40,11 @@
     "tests/helpers.py": "a3d4492788cdd6e6d5cb9a50722680e5040b1c19138629b9c300ff88396a9bb5",
     "pyproject.toml": "c1cf4a09148bacafdb42c836d6b3ffd96d79433617540c1c13a327174b2d5fb3",
     "uv.lock": "6a7c424e26a53152a16af0911dd3e511631f5d9ba222756fc0fede7042b0494f",
-    "tests/inputs/run_dtu001.py": "3486cb90d59c765d362401569902c2a307c3300b82fb9f5be3a1bea51f15c75a",
+    "tests/inputs/run_dtu001.py": "3dd31f08f2c8100f9f8011649e6a7549615b826ec4762b84b53b7ca5ed347663",
     "tests/inputs/run_collector_process.py": "95a8d84498a41152f2e2c61d0c917ad64c8887e5dce8e2af130b2c6f855a195e"
   },
   "unitSuite": {
-    "sourceSha256": "3dae09b661f5e958369f126c190fa66f4b86510b705c3e9012ab5f615073a0db",
+    "sourceSha256": "90c97d4732cccd63c0504d9ce7e4ed53df2daaf605d216bb47828e834ccfe518",
     "testFiles": [
       "tests/unit/profile/test_addon_matcher_parity.py",
       "tests/unit/profile/test_resolution.py",
@@ -72,6 +73,7 @@
       "tests/unit/test_lean_head_guardrail.py",
       "tests/unit/test_max_instances_guard.py",
       "tests/unit/test_nested_incus.py",
+      "tests/unit/test_operational_capture_contract.py",
       "tests/unit/test_proxy_env.py",
       "tests/unit/test_readiness_access.py",
       "tests/unit/test_visual_id.py"
