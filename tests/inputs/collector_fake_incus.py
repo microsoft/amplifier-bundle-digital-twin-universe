@@ -253,7 +253,11 @@ def main():
             require(a and len(a) <= 256 and sum(len(s.encode()) for s in a) <= 65536)
             kind = ".".join(a[:2]) if a[:2] in (
                 ["file", "push"], ["config", "set"], ["config", "get"], ["image", "list"]) else a[0]
-            trace(kind if kind in {"query", "version", "info", "list", "launch", "stop",
+            if kind == "query" and len(a) == 2:
+                kind = {"/1.0": "query.identity", "/1.0/profiles/default": "query.profile",
+                        "/1.0/storage-pools/pool/resources": "query.capacity"}.get(
+                            a[1].removesuffix("?project=default"), "query.unlisted")
+            trace(kind if kind in {"query.identity", "query.profile", "query.capacity", "version", "info", "list", "launch", "stop",
                                   "delete", "exec", "file.push", "config.set", "config.get", "image.list"} else "unlisted")
             path = ROOT / "state.json"
             owned(path)

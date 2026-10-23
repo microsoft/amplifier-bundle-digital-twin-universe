@@ -297,7 +297,7 @@ def main():
                      if sys.argv[1:] == ["--identity-capture"] else [
                          "tests/unit/test_collector_projection.py", "tests/unit/test_launch_result_checkpoint.py",
                          "tests/unit/test_collector_custody.py", "tests/unit/test_collector_observations.py",
-                         "tests/unit/test_collector_evidence.py"])
+                         "tests/unit/test_collector_evidence.py", "tests/unit/test_admission.py"])
     # A mounted path alone is not isolation; the caller must also verify the
     # managed resource receipt. This check prevents accidental host execution.
     if ROOT != Path("/workspace") or Path.cwd().resolve() != ROOT:

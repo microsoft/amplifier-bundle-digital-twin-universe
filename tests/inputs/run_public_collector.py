@@ -408,7 +408,8 @@ def one_case(label, package, engine, collected):
             require(collected.repair_record_projection(request, second['action_id'], repair['commit_digest'])['outcome'] == 'already_applied')
             trace_after = (case/'trace.jsonl').read_text().splitlines()
             repair_queries = [json.loads(x)['kind'] for x in trace_after[len(trace_before):]]
-            require(repair_queries == ['query'] * 6, 'Repair performed non-identity backend calls')
+            require(repair_queries == ['query.identity', 'query.profile'] * 3,
+                    'Repair performed non-identity backend calls')
             require(all(collected._input_path(root, request).with_suffix(s).read_bytes() == raw for s, raw in original.items()))
             repaired = engine.launch_status(request)
             require(repaired['collector_phase'] == 'completed' and repaired['result'] == status['result'])

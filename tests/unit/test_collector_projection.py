@@ -374,3 +374,75 @@ def test_restored_backend_drift_refuses_repair_without_writes(collected, monkeyp
     with pytest.raises(BackendFence):
         runtime.repair_record_projection('observation-request', status['actions'][0]['action_id'], status['commit_digest'])
     assert {p: p.read_bytes() for p in before} == before
+
+
+def test_commit_snapshot_overflow_does_not_truncate_or_delete(collected, monkeypatch):
+    from amplifier_bundle_digital_twin_universe import collector_projection as cp
+    monkeypatch.setattr(cp, '_ADMISSION_LIMIT', 128)
+    deleted = MagicMock()
+    monkeypatch.setattr(incus, 'delete_container', deleted)
+    with pytest.raises(admission.AdmissionError):
+        launch(collected)
+    path, payload = record(collected)
+    assert not path.with_suffix('.publication').exists()
+    receipt = admission.read_receipt(path.parent.parent, payload['binding']['request_id'])
+    assert receipt['state'] == 'launching' and receipt['prepared_result']['result']['name'] == 'observation-case'
+    assert json.loads(path.with_suffix('.json').read_bytes())['phase'] == 'submitting'
+    deleted.assert_not_called()
+
+
+def test_unacknowledged_ready_marker_never_constructs_commit(collected, monkeypatch):
+    marker = incus.set_config
+    def lost_ack(name, key, value):
+        marker(name, key, value)
+        if key == 'user.dtu.launch-state' and value == 'ready':
+            raise OSError('marker applied but call acknowledgment lost')
+    monkeypatch.setattr(incus, 'set_config', lost_ack)
+    with pytest.raises(admission.AdmissionError):
+        launch(collected)
+    path, _ = record(collected)
+    status = engine.launch_status('observation-request')
+    assert status['result_recovered'] is True
+    assert status['publication_repair'] == {'available': False}
+    before = {p: p.read_bytes() for p in path.parent.iterdir() if p.is_file()}
+    with pytest.raises(admission.AdmissionError):
+        collected[0].repair_record_projection('observation-request', '0' * 64, '0' * 64)
+    assert {p: p.read_bytes() for p in before} == before
+
+
+def test_commit_must_resync_before_explicit_projection(collected, monkeypatch):
+    import os
+    from amplifier_bundle_digital_twin_universe import collector_projection as cp
+    path, _, status = interrupt_final(collected, monkeypatch)
+    before = admission.receipt_path(path.parent.parent, 'observation-request').read_bytes()
+    real = os.fsync
+    calls = []
+    write = admission._save_private_bytes
+    synchronize = cp._sync_commit
+    active = [False]
+    done = [False]
+    def sync_commit(*args):
+        active[0] = True
+        try:
+            synchronize(*args)
+            done[0] = True
+        finally:
+            active[0] = False
+    def sync(fd):
+        if active[0]:
+            calls.append('sync')
+        return real(fd)
+    def save(p, raw):
+        if p.suffix == '.json':
+            assert done[0] and calls == ['sync', 'sync']  # Retained commit file + directory.
+            calls.append('project')
+        return write(p, raw)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, 'fsync', sync)
+        patch.setattr(cp, '_sync_commit', sync_commit)
+        patch.setattr(admission, '_save_private_bytes', save)
+        cp_payload = record(collected)[1]
+        assert collected[0].repair_record_projection('observation-request', status['actions'][0]['action_id'],
+                                                     status['commit_digest'])['outcome'] == 'applied'
+    assert calls[:3] == ['sync', 'sync', 'project']
+    assert admission.receipt_path(path.parent.parent, cp_payload['binding']['request_id']).read_bytes() != before
