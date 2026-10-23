@@ -47,6 +47,13 @@ class IncusError(Exception):
     """Raised when an Incus command fails."""
 
 
+class CreationCommandError(IncusError):
+    """The launch CLI returned nonzero; not daemon-terminal evidence."""
+    def __init__(self, message, returncode):
+        super().__init__(message)
+        self.returncode = returncode
+
+
 def query(path: str) -> dict:
     """Read JSON from the current Incus daemon and project."""
     result = _run(["incus", "query", path], capture_output=True, text=True, timeout=30)
@@ -246,7 +253,8 @@ def create_container(
         cmd, capture_output=True, text=True, timeout=_get_launch_timeout_seconds()
     )
     if result.returncode != 0:
-        raise IncusError(f"Failed to create container {name}: {result.stderr.strip()}")
+        raise CreationCommandError(
+            f"Failed to create container {name}: {result.stderr.strip()}", result.returncode)
 
 
 def stop_container(name: str) -> None:

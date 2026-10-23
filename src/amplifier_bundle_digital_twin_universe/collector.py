@@ -221,7 +221,7 @@ class AttemptStore:
             self._advance(current, "fenced")
 
     @contextmanager
-    def owned_worker(self, generation):
+    def owned_worker(self, generation, *, preserve_error=False, failure_recorder=None):
         """Full native engine adapter; consume under its existing admission lock.
 
         Caller already holds canonical-name custody. The yielded hook may run
@@ -247,9 +247,16 @@ class AttemptStore:
 
             try:
                 yield submit
-            except Exception:
-                with self._admission():
-                    self._advance(current, "unknown")
+            except Exception as primary:
+                if failure_recorder is not None:
+                    failure_recorder.failure("collector", primary)
+                try:
+                    with self._admission():
+                        self._advance(current, "unknown")
+                except Exception:
+                    if not preserve_error:
+                        raise
+                    primary.add_note("Collector transition evidence was not acknowledged")
                 raise
             else:
                 with self._admission():
@@ -260,7 +267,12 @@ class AttemptStore:
                             or any(result.get(k) != receipt.get(k) for k in ("name", "request_id", "owner_root", "created_at"))
                             or result.get("status") != "running"):
                         raise _conflict()
-                    self._advance(current, "completed", _digest(result))
+                    try:
+                        self._advance(current, "completed", _digest(result))
+                    except Exception as exc:
+                        if failure_recorder is not None:
+                            failure_recorder.failure("collector", exc)
+                        raise
 
     @contextmanager
     def mutation_guard(self, generation):

@@ -140,6 +140,8 @@ def launch(profile_arg, variables, *, wait_seconds=600, **options):
             # Preserve public request discovery if observation initialization
             # fails. No dispatch is consumed until the new record is acknowledged.
             initialize(store, generation)
+            from .collector_evidence import initialize as initialize_evidence
+            initialize_evidence(store, generation)
             store.dispatch_once(generation, lambda _: None)
     # Dispatch was consumed durably, but the parent releases name custody first.
     # A crash in this gap remains unknown; it never refunds the generation.
@@ -232,6 +234,8 @@ def public_status(request_id):
     result["collector_phase"] = state["phase"]
     from .collector_observation import projection
     result["observations"] = projection(collector.AttemptStore(root, binding), payload["generation"])
+    from .collector_evidence import projection as evidence_projection
+    result["failure_evidence"] = evidence_projection(collector.AttemptStore(root, binding), payload["generation"])
     if result.get("state") == "not_recorded":
         result["state"] = "unknown"
     refusal = _outcome(root, request_id)
@@ -298,7 +302,9 @@ def worker_run(payload):
     try:
         with backend.activate(), lifecycle.custody(backend.scope, binding["name"], timeout=30):
             backend.verify()
-            with store.owned_worker(payload["generation"]) as submission:
+            from .collector_evidence import Recorder as EvidenceRecorder
+            evidence = EvidenceRecorder(store, payload["generation"])
+            with store.owned_worker(payload["generation"], preserve_error=True, failure_recorder=evidence) as submission:
                 check_cancel()
                 from . import engine
                 from .collector_observation import Recorder
@@ -306,7 +312,7 @@ def worker_run(payload):
                 result = engine._launch_impl(payload["profile_path"], payload["variables"],
                     name=binding["name"], owner_root=binding["owner_root"], request_id=binding["request_id"],
                     offline=True, **payload["limits"], _frozen_profile=payload["profile_text"],
-                    _submission_hook=submission, _observations=observations)
+                    _submission_hook=submission, _observations=observations, _evidence=evidence)
                 return result
     except Exception as exc:
         # No raw exception/env/argv persisted. The worker scope records unknown.
@@ -321,8 +327,12 @@ def worker_run(payload):
             code = (exc.code if isinstance(exc, admission.AdmissionError) and exc.code in _NONADMISSION
                     and admission.read_receipt(root, binding["request_id"]) is None else
                     "cancel_requested" if any(isinstance(c, CollectionCancelled) for c in causes) else "unknown")
-            admission._save_private_json(_input_path(root, binding["request_id"]).with_suffix(".outcome"),
-                                        {"generation": payload["generation"], "code": code})
+            try:
+                admission._save_private_json(_input_path(root, binding["request_id"]).with_suffix(".outcome"),
+                                            {"generation": payload["generation"], "code": code})
+            except Exception:
+                exc.add_note("Collector outcome evidence was not acknowledged")
+                raise exc
         return None
     finally:
         for sig, handler in old_handlers.items():

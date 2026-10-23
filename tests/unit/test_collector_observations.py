@@ -261,7 +261,9 @@ def test_operation_completion_is_not_reported_as_cli_completion(collected, monke
     native_create = create.side_effect
     def submit(endpoint, name, image, config, pool):
         native_create(name, image, config)
-        return {"status_code": 200}
+        return {"status_code": 200, "id": "11111111-1111-4111-8111-111111111111",
+                "daemon": "b" * 64, "project": "default", "name": name,
+                "request_id": config["user.dtu.request-id"], "owner_root": config["user.dtu.owner-root"]}
     monkeypatch.setattr(engine.operations, "local_endpoint", lambda ctx: {"synthetic": True})
     submitted = MagicMock(side_effect=submit)
     monkeypatch.setattr(engine.operations, "submit", submitted)
@@ -276,7 +278,9 @@ def test_operation_completion_is_not_reported_as_cli_completion(collected, monke
 def test_operation_wait_timeout_has_no_success_ack_or_provisioning(collected, monkeypatch):
     provisioning = provision_counter(collected, monkeypatch)
     deleted = MagicMock()
-    submitted = MagicMock(return_value={"status_code": 103})
+    submitted = MagicMock(return_value={"status_code": 103, "id": "11111111-1111-4111-8111-111111111111",
+                         "daemon": "b" * 64, "project": "default", "name": "observation-case",
+                         "request_id": "observation-request", "owner_root": "observation-owner"})
     monkeypatch.setattr(incus, "delete_container", deleted)
     monkeypatch.setattr(engine.operations, "local_endpoint", lambda ctx: {"synthetic": True})
     monkeypatch.setattr(engine.operations, "submit", submitted)

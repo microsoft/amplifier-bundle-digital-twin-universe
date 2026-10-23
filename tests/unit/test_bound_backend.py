@@ -101,6 +101,20 @@ def test_capture_exact_binding_and_private_roundtrip(client):
     assert str(client.config) not in repr(bound)
 
 
+@pytest.mark.parametrize("query_failure", [False, True])
+def test_execution_timeout_category_does_not_classify_identity_query_timeout(client, query_failure):
+    bound = backend.capture()
+    def run(command, **kwargs):
+        if query_failure or command[1] != "query":
+            raise subprocess.TimeoutExpired("SECRET-ARGV", 1, output="SECRET-OUTPUT")
+        return client.reply(command, **kwargs)
+    client.run.side_effect = run
+    with pytest.raises(backend.BackendFence) as caught:
+        bound.run(["incus", "launch", "local:" + "a" * 64, "owned"], timeout=1)
+    assert isinstance(caught.value, backend.BackendExecutionTimeout) is (not query_failure)
+    assert "SECRET" not in str(caught.value)
+
+
 def test_queries_use_pinned_executable_direct_metadata_and_explicit_project(client, monkeypatch):
     monkeypatch.setattr(incus, "_run", Mock(side_effect=AssertionError("Recursion")))
     monkeypatch.setattr(incus, "query", Mock(side_effect=AssertionError("Recursion")))

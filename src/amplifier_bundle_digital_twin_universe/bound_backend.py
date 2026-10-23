@@ -56,6 +56,10 @@ class BackendFence(incus.IncusError):
     """Sanitized refusal; no raw paths, backend output or command arguments."""
 
 
+class BackendExecutionTimeout(BackendFence):
+    """The operational subprocess timed out, not an earlier identity query."""
+
+
 def _require(condition, message="Invalid bound backend record") -> None:
     if not condition:
         raise BackendFence(message)
@@ -547,5 +551,7 @@ class BoundBackend:
             return subprocess.run(
                 command, env=_environment(record), **{"check": False, **kwargs},
             )
+        except subprocess.TimeoutExpired:
+            raise BackendExecutionTimeout("Bound Incus execution timed out; outcome remains unknown") from None
         except (OSError, subprocess.SubprocessError, ValueError, TypeError):
             raise BackendFence("Bound Incus execution failed; command outcome may be unknown") from None

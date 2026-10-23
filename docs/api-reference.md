@@ -184,8 +184,31 @@ Older collected attempts without this record return `observations:
 or mismatched records refuse without repair. Evidence-write failures stop further
 work conservatively and never invoke provisioning cleanup on their own. These
 records neither release reservations nor permit retry, takeover or settlement.
-Failure-category history, cleanup evidence and exact-action repair remain
-separate work; existing collector/admission formats are unchanged.
+Existing collector/admission formats are unchanged.
+
+Future attempts additionally retain a separate, private, 32-KiB `.evidence`
+record. `failure_evidence` exposes fixed facts: CLI return/nonzero/timeout,
+validated tracked-operation identity and initial/terminal status, the first
+observed failure stage/category, delete-call entry/return/exception, and a
+separate secondary receipt-write failure. CLI failure or timeout is not daemon
+terminal failure. A delete-call entry is not proof of submission; a returned
+delete call is not a new absence check. None of these facts changes accounting,
+cancellation, replay or mutation eligibility.
+
+The exact initial collector and admission reservation bytes and their hashes
+are retained privately (4 KiB each), never reconstructed or exposed in status.
+An uncaptured reservation baseline means unobserved, not never admitted.
+Existing attempts without `.evidence` return `failure_evidence: {available:
+false}`; no read creates, migrates or repairs it. Invalid bindings, unsupported
+versions and unsafe or oversized files refuse without rewriting. Positive
+boundary persistence failure stops further work outside provisioning cleanup.
+While handling an existing failure, evidence writes are best effort and cannot
+replace the primary exception or cause another cleanup attempt. Post-replace
+fsync failure may leave visible but unacknowledged bytes.
+
+This is bounded first-failure evidence, not a complete event history. Missing
+facts remain unobserved. Exact-action repair, settlement, stream-memory-bounded
+subprocess capture and host-loss durability remain separate work.
 
 `launch-cancel REQUEST_ID --owner-root ROOT` requests cooperative cancellation
 of that exact collected generation. `cancellation_requested: true` records

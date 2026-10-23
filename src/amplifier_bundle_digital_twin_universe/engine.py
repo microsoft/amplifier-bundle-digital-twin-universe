@@ -1071,7 +1071,7 @@ def _enforce_max_instances(max_instances: int) -> None:
         )
 
 
-def _reconcile_creations(ctx: dict, request_id: str | None = None) -> None:
+def _reconcile_creations(ctx: dict, request_id: str | None = None, _evidence=None) -> None:
     """Bound passive observation; never replay creation or provisioning.
 
     Rotate unresolved receipts so a missing old operation cannot starve newer
@@ -1089,6 +1089,7 @@ def _reconcile_creations(ctx: dict, request_id: str | None = None) -> None:
                 or not receipt.get("create_operation")):
             continue
         result = None
+        fresh = False
         try:
             operations.validate_binding(receipt["create_operation"], ctx, receipt)
             if receipt.get("creation_status") in {200, 400, 401}:
@@ -1099,8 +1100,11 @@ def _reconcile_creations(ctx: dict, request_id: str | None = None) -> None:
                     continue
                 observations += 1
                 result = operations.observe(receipt["create_operation"], ctx, receipt, timeout=remaining)
+                fresh = True
         except (OSError, ValueError, KeyError, TypeError, incus.IncusError, http.client.HTTPException):
             pass  # Missing, expired or unreachable operations remain unknown.
+        if _evidence is not None and fresh and result and result["status_code"] in {200, 400, 401}:
+            _evidence.operation(receipt["create_operation"], ctx, receipt, terminal=result["status_code"])
         with admission.locked(ctx) as root:
             current = admission.read_receipt(root, receipt["request_id"])
             if (current and current.get("state") in {"launching", "unknown"}
@@ -1111,13 +1115,13 @@ def _reconcile_creations(ctx: dict, request_id: str | None = None) -> None:
                     # Creation success alone is not completed provisioning.
                     # Existing instances still count after terminal creation.
                     current["state"] = "created" if result["status_code"] == 200 else "failed"
-                admission.save_receipt(root, current)
+                _evidence_call(_evidence, "operation_receipt", admission.save_receipt, root, current)
 
 
-def _wait_for_creation(ctx: dict, request_id: str) -> None:
+def _wait_for_creation(ctx: dict, request_id: str, _evidence=None) -> None:
     deadline = time.monotonic() + incus._get_launch_timeout_seconds()
     while True:
-        _reconcile_creations(ctx, request_id)
+        _reconcile_creations(ctx, request_id, _evidence)
         with admission.locked(ctx) as root:
             current = admission.read_receipt(root, request_id)
         if current and current.get("creation_status") == 200:
@@ -1249,7 +1253,24 @@ def _result_publication_receipt(root: Path, expected: dict) -> dict:
     return current
 
 
-def _publish_launch_result(ctx: dict, receipt: dict, result: dict, *, _observations=None) -> None:
+def _evidence_call(evidence, stage, function, *args, **kwargs):
+    if evidence is None:
+        return function(*args, **kwargs)
+    with evidence.boundary(stage):
+        return function(*args, **kwargs)
+
+
+def _save_error_receipt(evidence, stage, root, receipt, primary):
+    try:
+        admission.save_receipt(root, receipt)
+    except Exception as secondary:
+        if evidence is None:
+            raise
+        evidence.failure(stage, secondary, secondary=True)
+        primary.add_note("Secondary receipt evidence was not acknowledged")
+
+
+def _publish_launch_result(ctx: dict, receipt: dict, result: dict, *, _observations=None, _evidence=None) -> None:
     checkpoint = {
         "daemon": ctx["daemon"], "project": ctx["project"],
         "intent_digest": receipt["intent_digest"], "result": result,
@@ -1257,24 +1278,24 @@ def _publish_launch_result(ctx: dict, receipt: dict, result: dict, *, _observati
     # Serialize only this short publication stage, not provisioning. This is
     # a receipt fence, not full lifecycle custody against external writers.
     with admission.locked(ctx) as root:
-        current = _result_publication_receipt(root, receipt)
+        current = _evidence_call(_evidence, "checkpoint", _result_publication_receipt, root, receipt)
         if "prepared_result" in current and current["prepared_result"] != checkpoint:
             raise admission.AdmissionError("request_conflict", "A different launch result was recorded")
         current["prepared_result"] = checkpoint
-        admission.save_receipt(root, current)
+        _evidence_call(_evidence, "checkpoint", admission.save_receipt, root, current)
         if _observations is not None:
-            _observations.mark("checkpoint_saved")
-        incus.set_config(receipt["name"], "user.dtu.launch-state", "ready")
+            _evidence_call(_evidence, "observations", _observations.mark, "checkpoint_saved")
+        _evidence_call(_evidence, "ready_marker", incus.set_config, receipt["name"], "user.dtu.launch-state", "ready")
         if _observations is not None:
-            _observations.mark("ready_marker_returned")
-        current = _result_publication_receipt(root, receipt)
+            _evidence_call(_evidence, "observations", _observations.mark, "ready_marker_returned")
+        current = _evidence_call(_evidence, "final_receipt", _result_publication_receipt, root, receipt)
         if current.get("prepared_result") != checkpoint:
             raise admission.AdmissionError("request_conflict", "The prepared launch result changed")
         current.pop("prepared_result")
         current.update(state="ready", result=result)
-        admission.save_receipt(root, current)
+        _evidence_call(_evidence, "final_receipt", admission.save_receipt, root, current)
         if _observations is not None:
-            _observations.mark("final_receipt_saved")
+            _evidence_call(_evidence, "observations", _observations.mark, "final_receipt_saved")
 
 
 # ===================================================================
@@ -1330,7 +1351,7 @@ def _launch_impl(
     owner_root: str | None = None,
     request_id: str | None = None,
     offline: bool = False,
-    *, _frozen_profile: str | None = None, _submission_hook=None, _observations=None,
+    *, _frozen_profile: str | None = None, _submission_hook=None, _observations=None, _evidence=None,
 ) -> dict:
     """Launch a Digital Twin Universe.  Returns the JSON status dict."""
     incus.check_incus()
@@ -1472,18 +1493,23 @@ def _launch_impl(
             "state": "launching",
             "created_at": now,
         }
-        admission.save_receipt(root, receipt)
+        _evidence_call(_evidence, "reservation", admission.save_receipt, root, receipt)
+        if _evidence is not None:
+            _evidence_call(_evidence, "reservation", _evidence.baseline)
         if _submission_hook is not None:
             _submission_hook(ctx, root, receipt)
         try:
             print(f"Creating container {container_name} ({image})...", file=sys.stderr)
             if endpoint:
-                receipt["create_operation"] = operations.submit(
+                receipt["create_operation"] = _evidence_call(
+                    _evidence, "creation", operations.submit,
                     endpoint, container_name, image, effective_config, ctx["storage_pool"])
+                if _evidence is not None:
+                    _evidence.operation(receipt["create_operation"], ctx, receipt)
                 code = receipt["create_operation"]["status_code"]
                 if code in {200, 400, 401}:
                     receipt.update(creation_status=code, state="created" if code == 200 else "failed")
-                admission.save_receipt(root, receipt)
+                _evidence_call(_evidence, "operation_receipt", admission.save_receipt, root, receipt)
             else:
                 try:
                     if offline:
@@ -1493,14 +1519,24 @@ def _launch_impl(
                         )
                     else:
                         incus.create_container(container_name, image, config=effective_config)
-                except (FileNotFoundError, PermissionError) as exc:
-                    raise operations.CreationRejected("Could not execute the Incus CLI") from exc
+                except Exception as exc:
+                    if _evidence is not None:
+                        _evidence.cli(exc)
+                        _evidence.failure("creation", exc)
+                    if isinstance(exc, (FileNotFoundError, PermissionError)):
+                        raise operations.CreationRejected("Could not execute the Incus CLI") from exc
+                    raise
+                if _evidence is not None:
+                    _evidence.cli()
         except Exception as exc:
+            from .collector_evidence import EvidenceError
+            if isinstance(exc, EvidenceError):
+                raise  # Recorder failure is not backend failure or cleanup authority.
             # Timeout does not mean failure: the daemon may still create the
             # instance. Retain the reservation and never replay this request.
             receipt["state"] = "failed" if isinstance(exc, operations.CreationRejected) else "unknown"
             receipt["failure_cause"] = _creation_failure_cause(exc)
-            admission.save_receipt(root, receipt)
+            _save_error_receipt(_evidence, "creation", root, receipt, exc)
             raise admission.AdmissionError(
                 "launch_failed" if receipt["state"] == "failed" else "launch_unknown",
                 "Container creation did not return a confirmed outcome; inspect launch-status",
@@ -1509,13 +1545,16 @@ def _launch_impl(
 
     if receipt.get("create_operation"):
         try:
-            _wait_for_creation(ctx, request_id)
+            if _evidence is None:
+                _wait_for_creation(ctx, request_id)
+            else:
+                _evidence_call(_evidence, "creation_wait", _wait_for_creation, ctx, request_id, _evidence)
         except Exception as exc:
             with admission.locked(ctx) as root:
                 current = admission.read_receipt(root, request_id)
                 if current and current.get("state") in {"launching", "unknown"}:
                     current.update(state="unknown", failure_cause=_creation_failure_cause(exc))
-                    admission.save_receipt(root, current)
+                    _save_error_receipt(_evidence, "creation_wait", root, current, exc)
             raise admission.AdmissionError(
                 "launch_failed" if current and current.get("state") == "failed" else "launch_unknown",
                 "Creation is not confirmed ready for provisioning; inspect launch-status",
@@ -1528,8 +1567,8 @@ def _launch_impl(
     # provisioning cleanup. Evidence failure is not a failed guest command and
     # never authorizes deletion or another submission.
     if _observations is not None:
-        _observations.mark("creation_returned", transport="operation" if endpoint else "cli")
-        _observations.mark("provisioning_entered")
+        _evidence_call(_evidence, "observations", _observations.mark, "creation_returned", transport="operation" if endpoint else "cli")
+        _evidence_call(_evidence, "observations", _observations.mark, "provisioning_entered")
     try:
         # Store metadata so `status` and `list` can discover this instance.
         incus.set_config(
@@ -1772,9 +1811,13 @@ def _launch_impl(
         result["request_id"] = request_id
         result["owner_root"] = owner_root
         result["offline"] = offline
-    except BackendFence:
+    except BackendFence as exc:
+        if _evidence is not None:
+            _evidence.failure("provisioning", exc)
         raise
-    except Exception:
+    except Exception as primary:
+        if _evidence is not None:
+            _evidence.failure("provisioning", primary)
         # Best-effort cleanup on failure, only for this successfully-created
         # instance. An uncertain creation above never enters this path.
         try:
@@ -1785,8 +1828,10 @@ def _launch_impl(
             _hm_hostname = incus.get_config(container_name, "user.dtu.hostname")
             if _hm_hostname:
                 _HM(_hm_hostname.removesuffix(".local"), container_name).unregister()
-        except BackendFence:
-            raise
+        except BackendFence as fence:
+            if _evidence is not None:
+                _evidence.failure("cleanup", fence, secondary=True)
+            raise fence from primary
         except Exception:
             pass
         if _submission_hook is None:
@@ -1795,21 +1840,32 @@ def _launch_impl(
             except Exception:
                 pass
         try:
-            incus.delete_container(container_name, force=True)
+            if _evidence is not None:
+                _evidence.cleanup("entered")
+            try:
+                incus.delete_container(container_name, force=True)
+            except Exception as exc:
+                if _evidence is not None:
+                    _evidence.cleanup("raised", exc)
+                raise
+            if _evidence is not None:
+                _evidence.cleanup("returned")
             with admission.locked(ctx) as root:
                 receipt["state"] = "failed"
                 admission.save_receipt(root, receipt)
-        except Exception:
+        except Exception as secondary:
+            if _evidence is not None and _evidence.value["cleanup"] and _evidence.value["cleanup"]["delete_call"] == "returned":
+                _evidence.failure("cleanup", secondary, secondary=True)
             with admission.locked(ctx) as root:
                 receipt["state"] = "unknown"
-                admission.save_receipt(root, receipt)
+                _save_error_receipt(_evidence, "cleanup", root, receipt, primary)
         raise
     # Evidence/ready-marker publication failures must not delete a successfully
     # provisioned environment. Checkpoint the original result before readiness.
     try:
         if _observations is not None:
-            _observations.mark("provisioning_completed", result=result)
-            _publish_launch_result(ctx, receipt, result, _observations=_observations)
+            _evidence_call(_evidence, "observations", _observations.mark, "provisioning_completed", result=result)
+            _publish_launch_result(ctx, receipt, result, _observations=_observations, _evidence=_evidence)
         else:
             _publish_launch_result(ctx, receipt, result)
     except Exception as exc:
