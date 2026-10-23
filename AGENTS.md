@@ -78,6 +78,11 @@ Run these before opening a PR. The reviewer expects evidence in the PR body, not
   observations and delete-call results from subsequent receipt-write failures.
   Error-path recorder failures preserve the primary error, not retry a write or
   grant cleanup/settlement. Missing facts/records never establish absence.
+- **Identity-query capture**: bound backend identity queries drain both pipes
+  under one absolute deadline and a 1-MiB combined raw-byte cap before decoding.
+  Overflow, truncation and timeout fence before the requested operation. Cleanup
+  targets only the owned query client, never the daemon/guest/collector.
+  Operational command capture is a separate, still-unbounded path.
 - **Hardcoded subprocess timeouts**: `subprocess.run(..., timeout=N)` values that look reasonable on a quiet laptop are too short on loaded systems. Prefer environment-variable overrides like `AMPLIFIER_DTU_INCUS_LAUNCH_TIMEOUT_SECONDS` where they exist; add one where they don't, rather than picking a new fixed number.
 - **Directory recursion in file-push / file-pull**: both code paths now handle directories recursively. Older code assumed file-only and silently no-op'd on directories. If you find a "file not transferred" bug, check whether the caller is passing a directory through a path that still assumes a single file.
 - **`mirror-from-github` fragility on ARM64**: the `amplifier-bundle-gitea` mirror-from-github path has known ARM64 reliability issues. When reliability matters (e.g., in test setup), prefer direct Gitea API calls over mirror-from-github.

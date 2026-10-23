@@ -154,6 +154,19 @@ No credentials are copied and no client configuration is created automatically.
 This is a cooperating-client drift check, not atomic protection from an
 administrator replacing a socket, executable or configuration between checks.
 
+The two backend identity queries drain stdout and stderr with one absolute query
+deadline and a **1-MiB combined raw-byte limit**, checked while reading before
+UTF-8 decoding. Stderr counts toward that limit but is not retained. Both pipe
+EOFs and client exit zero are required; a valid JSON prefix is not accepted after
+overflow or truncation. On overflow, timeout or caller interruption, cleanup
+targets only the owned query-client process with a separate bounded reap wait
+(at most five seconds, never longer than the configured query timeout). This
+does not cancel a daemon operation, kill a guest or stop the collector. OS
+process creation/reaping are not hard-real-time guarantees; unconfirmed cleanup
+remains a failure. Identity-query refusal remains `BackendFence`, distinct from
+an operational command timeout. Other operational-command capture is unchanged
+and is not covered by this memory bound.
+
 Private bounded bootstrap data freezes the profile, variables, selected backend
 and worker runtime. The worker owns name/request custody through reservation,
 creation, provisioning, legitimate failure cleanup and result publication.

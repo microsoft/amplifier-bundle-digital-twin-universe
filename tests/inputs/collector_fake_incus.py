@@ -132,6 +132,49 @@ def dispatch(a, state):
     if a == ["version"]:
         return "Client version: fixture\nServer version: fixture", False
     if len(a) == 2 and a[0] == "query":
+        mode_path = ROOT / "query-mode"
+        if a[1].split("?")[0] in {"/1.0", "/1.0/profiles/default"} and mode_path.exists():
+            owned(mode_path)
+            mode = mode_path.read_text()
+            require(mode in {"small", "stderr", "overflow", "combined", "continuous", "timeout", "cancel", "eof", "nonzero", "truncated"})
+            trace("query-" + mode)
+            if mode in {"timeout", "cancel", "eof"}:
+                if mode == "cancel":
+                    sys.stdout.write("{}")
+                    sys.stdout.flush()
+                if mode == "eof":
+                    os.close(1)
+                    os.close(2)
+                time.sleep(3)  # Finite fallback; parent uses a one-second query budget.
+            elif mode == "nonzero":
+                print("SECRET-query-stderr", file=sys.stderr)
+                raise SystemExit(37)
+            elif mode == "truncated":
+                sys.stdout.write('{"environment":')
+                sys.stdout.flush()
+                raise SystemExit(0)
+            elif mode == "continuous":
+                for _ in range(75):
+                    sys.stdout.buffer.write(b" ")
+                    sys.stdout.buffer.flush()
+                    time.sleep(.04)  # Ongoing progress must not renew deadline.
+            elif mode == "combined":
+                for _ in range(9):
+                    sys.stdout.buffer.write(b" " * 65536)
+                    sys.stdout.buffer.flush()
+                    sys.stderr.buffer.write(b" " * 65536)
+                    sys.stderr.buffer.flush()
+            elif mode == "small":
+                for _ in range(4):
+                    sys.stdout.buffer.write(b" " * 65536)
+                    sys.stdout.buffer.flush()
+                    sys.stderr.buffer.write(b" " * 65536)
+                    sys.stderr.buffer.flush()
+            else:
+                stream = sys.stderr.buffer if mode == "stderr" else sys.stdout.buffer
+                for _ in range(64):
+                    stream.write(b" " * 65536)
+                    stream.flush()
         replies = {
             "/1.0": {"environment": {"certificate_fingerprint": "b" * 64,
                                      "project": "default"}, "api_extensions": []},

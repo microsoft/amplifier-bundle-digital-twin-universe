@@ -54,6 +54,7 @@ class Guard:
     def __init__(self, case, worker, foreground=False):
         self.case, self.worker, self.foreground = case, worker, foreground
         self.allowed, self.denied, self.signal_pids = [], [], set()
+        self.processes = []
         self.termination = local()
         self.pidfd_signal = signal.pidfd_send_signal
         sys.addaudithook(self.audit)
@@ -65,6 +66,7 @@ class Guard:
                 guard.termination.construction = None
                 try:
                     super().__init__(*args, **kwargs)
+                    guard.processes.append(self)
                 finally:
                     guard.termination.construction = None
                     guard.termination.spawn = None
@@ -178,6 +180,100 @@ def foreground(case, package):
              standalone_mode=False)
     finally:
         (case / 'foreground-guard.json').write_text(json.dumps({'allowed': policy.allowed, 'denied': policy.denied}))
+
+
+def query_capture_case(package):
+    """Finite noisy identity queries through the installed helper and guard."""
+    from amplifier_bundle_digital_twin_universe import bound_backend, worker_guard
+    case = OUT / 'query-capture'
+    case.mkdir(mode=0o700)
+    prepare(case)
+    policy = Guard(case, package / 'collector_worker.py')
+    old_env = dict(os.environ)
+    os.environ.clear()
+    os.environ.update(environment(case))
+    os.environ['AMPLIFIER_DTU_BOUND_BACKEND_QUERY_TIMEOUT_SECONDS'] = '1'
+    report = {'case': 'query-capture', 'status': 'incomplete', 'realIncus': False,
+              'allowed': policy.allowed, 'denied': policy.denied, 'children': [], 'cleanupErrors': []}
+    retain = None
+    code = 1
+    try:
+        bound = bound_backend.capture()
+        retain = worker_guard.install(bound, case / 'worker-guard.json')
+        require(bound.as_dict()['query_timeout'] == 1)
+        for mode in ('small', 'stderr', 'overflow', 'combined', 'continuous', 'timeout', 'cancel', 'eof', 'nonzero', 'truncated'):
+            (case / 'query-mode').write_text(mode)
+            start = time.monotonic()
+            previous_count = len(policy.processes)
+            selector_class = bound_backend.selectors.DefaultSelector
+            if mode == 'cancel':
+                class InterruptedSelector(selector_class):
+                    def select(self, timeout=None):
+                        super().select(timeout)
+                        raise KeyboardInterrupt()
+                bound_backend.selectors.DefaultSelector = InterruptedSelector
+            try:
+                value = bound_backend._query(bound.as_dict(), '/1.0')
+            except KeyboardInterrupt:
+                require(mode == 'cancel')
+                report[mode] = {'callerInterruptionPropagated': True, 'osStopClaimed': False}
+            except bound_backend.BackendFence as exc:
+                require(mode not in {'small', 'cancel'})
+                require(not isinstance(exc, bound_backend.BackendExecutionTimeout))
+                expected = ('Backend identity response exceeds its bound' if mode in {'stderr', 'overflow', 'combined'}
+                            else 'Backend identity query failed' if mode == 'nonzero'
+                            else 'Backend identity query could not be verified')
+                require(str(exc) == expected)
+                report[mode] = {'refused': True, 'message': str(exc)}
+            else:
+                require(mode == 'small' and value['environment']['certificate_fingerprint'] == 'b' * 64)
+                report[mode] = {'passed': True, 'eachPipePaddingBytes': 262144}
+            finally:
+                bound_backend.selectors.DefaultSelector = selector_class
+            require(len(policy.processes) == previous_count + 1)
+            require(policy.processes[-1].returncode is not None, 'Helper returned without reaping query client')
+            require(policy.processes[-1].stdout.closed and policy.processes[-1].stderr.closed)
+            report[mode]['helperReapedBeforeFixtureCleanup'] = True
+            report[mode]['bothPipesClosed'] = True
+            require(time.monotonic() - start < 5, 'Query exceeded fixture completion bound')
+        require(not (case / 'launch-count').exists() and not (case / 'provision-count').exists())
+        trace = [json.loads(line) for line in (case / 'trace.jsonl').read_text().splitlines()]
+        require([x['kind'] for x in trace if x['kind'].startswith('query-')] ==
+                ['query-small', 'query-stderr', 'query-overflow', 'query-combined', 'query-continuous',
+                 'query-timeout', 'query-cancel', 'query-eof', 'query-nonzero', 'query-truncated'])
+        report.update(status='passed', noLifecycleEffects=True, runtime=bound.as_dict()['executable']['identity'])
+        code = 0
+    except BaseException as exc:
+        report.update(errorType=type(exc).__name__, errorMessage=str(exc)[:250])
+    finally:
+        # These are direct children retained at Popen return, never trace PIDs.
+        deadline = time.monotonic() + 5
+        for process in policy.processes:
+            try:
+                if process.returncode is None:
+                    report['cleanupErrors'].append('HelperDidNotReapQueryClient')
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=max(.01, deadline - time.monotonic()))
+                report['children'].append({'pid': process.pid, 'returncode': process.returncode, 'reaped': True})
+            except Exception as exc:
+                report['cleanupErrors'].append(type(exc).__name__)
+        if retain is not None:
+            try:
+                retain()
+                require(not json.loads((case / 'worker-guard.json').read_text())['denied'])
+            except Exception as exc:
+                report['cleanupErrors'].append(type(exc).__name__)
+        if policy.denied or report['cleanupErrors'] or not policy.processes:
+            code = 1
+        if code:
+            report['status'] = 'failed'
+        report['exitCode'] = code
+        (case / 'result.json').write_text(json.dumps(report, indent=2) + '\n')
+        print(json.dumps(report))
+        os.environ.clear()
+        os.environ.update(old_env)
+    return code
 
 
 def one_case(label, package, engine, collected):
@@ -402,6 +498,9 @@ if __name__=='__main__':
     manifest, plan, package, engine, collected, worker = readiness()
     if len(sys.argv)==3 and sys.argv[1]=='foreground' and sys.argv[2] in CASE_NAMES:
         foreground(OUT/sys.argv[2],package)
+    elif sys.argv[1:] == ['query-capture']:
+        OUT.mkdir(mode=0o700,exist_ok=True)
+        raise SystemExit(query_capture_case(package))
     elif len(sys.argv)==2 and sys.argv[1] in CASE_NAMES:
         OUT.mkdir(mode=0o700,exist_ok=True)
         # Linux PR_SET_CHILD_SUBREAPER, current process only. No kernel/global or

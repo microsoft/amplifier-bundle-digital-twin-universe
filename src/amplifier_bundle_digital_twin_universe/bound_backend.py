@@ -28,9 +28,11 @@ import hashlib
 import json
 import os
 import re
+import selectors
 import shutil
 import stat
 import subprocess
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -315,21 +317,91 @@ def _invalid_constant(_value):
     raise BackendFence("Non-JSON backend response value")
 
 
+def _capture_identity_query(command, *, env, timeout):
+    """Read at most limit+1 combined stdout/stderr bytes from one owned child.
+
+    Drain both pipes, retaining only stdout. No whole-output communicate() or
+    temporary-file spool. Both EOFs and direct-child completion are required.
+    Failure cleanup targets only this Popen child, with a separate reap budget
+    of at most five seconds (never longer than the configured query timeout).
+    Process creation and OS reaping are not hard-real-time guarantees.
+    """
+    deadline = time.monotonic() + timeout
+    process = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    primary = None
+    try:
+        output = bytearray()
+        received = 0
+        with selectors.DefaultSelector() as selector:
+            active = {process.stdout.fileno(), process.stderr.fileno()}
+            for descriptor in active:
+                os.set_blocking(descriptor, False)
+                selector.register(descriptor, selectors.EVENT_READ)
+            while active:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError()
+                events = selector.select(remaining)
+                if not events:
+                    raise TimeoutError()
+                for key, _ in events:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError()
+                    try:
+                        chunk = os.read(key.fd, min(65536, _QUERY_LIMIT + 1 - received))
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        selector.unregister(key.fd)
+                        active.remove(key.fd)
+                        continue
+                    received += len(chunk)
+                    _require(received <= _QUERY_LIMIT, "Backend identity response exceeds its bound")
+                    if key.fd == process.stdout.fileno():
+                        output.extend(chunk)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError()
+        _require(process.wait(timeout=remaining) == 0, "Backend identity query failed")
+        return bytes(output)
+    except BaseException as exc:
+        primary = exc
+        raise
+    finally:
+        cleanup_errors = []
+        cleanup_deadline = time.monotonic() + min(timeout, 5.0)
+        for stream in (process.stdout, process.stderr):
+            try:
+                stream.close()
+            except Exception as exc:
+                cleanup_errors.append(exc)
+        try:
+            if process.poll() is None:
+                process.kill()
+        except Exception as exc:
+            cleanup_errors.append(exc)
+        try:
+            process.wait(timeout=max(0.0, cleanup_deadline - time.monotonic()))
+        except Exception as exc:
+            cleanup_errors.append(exc)
+        if cleanup_errors:
+            if primary is not None:
+                primary.add_note("Identity-query child cleanup could not be confirmed")
+            else:
+                raise BackendFence("Identity-query child cleanup could not be confirmed") from None
+
+
 def _query(record: dict, path: str) -> dict:
     _check_local(record)
     try:
-        result = subprocess.run(
+        raw = _capture_identity_query(
             [record["executable"]["path"], "query", _project_path(path, record["scope"]["project"])],
-            env=_environment(record), stdin=subprocess.DEVNULL,
-            capture_output=True, text=True, check=False, timeout=record["query_timeout"],
+            env=_environment(record), timeout=record["query_timeout"],
         )
-        _require(result.returncode == 0, "Backend identity query failed")
-        _require(
-            isinstance(result.stdout, (str, bytes)) and len(result.stdout) <= _QUERY_LIMIT,
-            "Backend identity response exceeds its bound",
-        )
+        _require(isinstance(raw, bytes) and len(raw) <= _QUERY_LIMIT, "Backend identity response exceeds its bound")
         value = json.loads(
-            result.stdout, object_pairs_hook=_unique_pairs, parse_constant=_invalid_constant,
+            raw.decode("utf-8"), object_pairs_hook=_unique_pairs, parse_constant=_invalid_constant,
         )
         _require(isinstance(value, dict), "Invalid backend identity response")
         _require(
@@ -346,8 +418,12 @@ def _query(record: dict, path: str) -> dict:
             )
             value = value["metadata"]
         return value
-    except (OSError, subprocess.SubprocessError, ValueError, TypeError, RecursionError):
-        raise BackendFence("Backend identity query could not be verified") from None
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, RecursionError) as exc:
+        refused = BackendFence("Backend identity query could not be verified")
+        cleanup_note = "Identity-query child cleanup could not be confirmed"
+        if cleanup_note in getattr(exc, "__notes__", ()):
+            refused.add_note(cleanup_note)
+        raise refused from None
 
 
 def _observe(record: dict) -> dict:
@@ -497,7 +573,9 @@ class BoundBackend:
 
         Two read-only CLI queries identify the daemon/project and default
         profile's root pool name, not a durable storage-pool UUID. Query output
-        is size-checked after subprocess capture, not stream-memory limited.
+        is limited while reading to 1 MiB combined raw stdout/stderr; both pipes
+        are drained, stderr is counted but not retained.
+        Operational command capture below remains independently unbounded.
         """
         record = self.as_dict()
         _require(_observe(record) == record["scope"], "Backend daemon, project or root pool changed")

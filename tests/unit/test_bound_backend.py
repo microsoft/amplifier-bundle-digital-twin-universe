@@ -29,6 +29,14 @@ def no_processes(monkeypatch):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch, no_processes):
+    # Existing identity/routing tests replace only the new byte-capture seam.
+    # Dedicated test_identity_query_capture exercises its real read/cleanup loop.
+    def query_bytes(command, *, env, timeout):
+        reply = no_processes(command, env=env, stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, check=False, timeout=timeout)
+        backend._require(reply.returncode == 0, "Backend identity query failed")
+        return reply.stdout.encode("utf-8") if isinstance(reply.stdout, str) else reply.stdout
+    monkeypatch.setattr(backend, "_capture_identity_query", query_bytes)
     for key in list(os.environ):
         if key.startswith("INCUS") or key in {
             "AMPLIFIER_DTU_INCUS_PROJECT", backend._TIMEOUT_ENV,
@@ -306,6 +314,20 @@ def test_identity_query_limit_counts_raw_utf8_bytes_not_characters(client, symbo
     client.run.side_effect = reply
     with pytest.raises(backend.BackendFence, match="exceeds its bound"):
         backend.capture()
+
+
+@pytest.mark.parametrize("command", [["incus", "launch", "local:" + "a" * 64, "owned"],
+                                   ["incus", "exec", "owned", "--", "true"],
+                                   ["incus", "config", "set", "owned", "user.dtu.launch-state=ready"]])
+def test_query_overflow_fences_before_requested_operational_command(client, command):
+    bound = backend.capture()
+    client.run.reset_mock()
+    client.run.side_effect = lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "{}" + " " * backend._QUERY_LIMIT, "SECRET")
+    with pytest.raises(backend.BackendFence) as caught:
+        bound.run(command)
+    assert not isinstance(caught.value, backend.BackendExecutionTimeout)
+    assert all(c.args[0][1] == "query" for c in client.run.call_args_list)
+    assert len(client.run.call_args_list) == 1 and "SECRET" not in str(caught.value)
 
 
 @pytest.mark.parametrize("devices", [

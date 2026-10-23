@@ -289,9 +289,11 @@ def case_key(function, parameters):
 
 
 def main():
-    if sys.argv[1:] not in ([], ["--unit-suite"]):
-        raise RuntimeError("Only the frozen selection or --unit-suite is supported")
+    if sys.argv[1:] not in ([], ["--unit-suite"], ["--identity-capture"]):
+        raise RuntimeError("Only the frozen selection, --unit-suite or --identity-capture is supported")
     full_suite = sys.argv[1:] == ["--unit-suite"]
+    capture_suite = sys.argv[1:] == ["--identity-capture"]
+    capture_files = ["tests/unit/test_bound_backend.py", "tests/unit/test_identity_query_capture.py"]
     # A mounted path alone is not isolation; the caller must also verify the
     # managed resource receipt. This check prevents accidental host execution.
     if ROOT != Path("/workspace") or Path.cwd().resolve() != ROOT:
@@ -313,7 +315,7 @@ def main():
         for path in sorted((ROOT / "tests/unit").rglob("*.py"))
     }
     unit_tree = hashlib.sha256(json.dumps(unit_files, sort_keys=True).encode()).hexdigest()
-    if full_suite and unit_tree != manifest["unitSuite"]["sourceSha256"]:
+    if (full_suite or capture_suite) and unit_tree != manifest["unitSuite"]["sourceSha256"]:
         raise RuntimeError("Unit-suite source tree does not match the frozen input")
     locks = {row["path"]: row["sha256"] for row in inventory["lockfiles"]}
     if any(locks.get(name) != digest(ROOT / name) for name in ("uv.lock", "pyproject.toml")):
@@ -370,6 +372,7 @@ def main():
         "collected": [], "reports": [], "blockedEvents": blocked,
         "startedAt": time.time(), "testExecutionStarted": False,
         "faultAcceptance": False, "fullUnitSuite": full_suite,
+        "identityCaptureSuite": capture_suite,
         "unitSuiteSourceSha256": unit_tree, "collectionVerified": False,
         "collectionErrors": [], "deselectedNodeIds": [],
         "fixtureCleanup": fixtures.cleanup, "fixtureErrors": fixtures.errors,
@@ -447,7 +450,7 @@ def main():
                 ]
                 if collections.Counter(
                     case_key(item["function"], item["parameters"]) for item in actual
-                ) != expected_cases and not full_suite:
+                ) != expected_cases and not full_suite and not capture_suite:
                     pytest.exit("Exact selected case set changed", returncode=4)
                 if full_suite:
                     if collections.Counter(
@@ -457,6 +460,9 @@ def main():
                     collected_files = {item["nodeid"].split("::")[0] for item in actual}
                     if collected_files != set(manifest["unitSuite"]["testFiles"]):
                         pytest.exit("Default unit-suite file selection changed", returncode=4)
+                if capture_suite:
+                    if {item["nodeid"].split("::")[0] for item in actual} != set(capture_files):
+                        pytest.exit("Identity capture file selection changed", returncode=4)
                 result["collectionVerified"] = True
 
             def pytest_collectreport(self, report):
@@ -479,7 +485,7 @@ def main():
                 })
 
         selectors = (
-            ["tests/unit/"] if full_suite else
+            ["tests/unit/"] if full_suite else capture_files if capture_suite else
             ["tests/unit/test_admission.py::" + name for name in manifest["functions"]]
         )
         code = int(pytest.main([
@@ -503,7 +509,7 @@ def main():
             except OSError:
                 changed.append(name)
         result["changedSourceFiles"] = changed
-        if full_suite:
+        if full_suite or capture_suite:
             for name, expected in unit_files.items():
                 try:
                     if digest(ROOT / name) != expected:
@@ -527,7 +533,7 @@ def main():
         result["selectionComplete"] = (
             result["collectionVerified"]
             and bool(collected)
-            and (full_suite or len(collected) == len(manifest["cases"]))
+            and (full_suite or capture_suite or len(collected) == len(manifest["cases"]))
             and collections.Counter(called) == collections.Counter(collected)
             and not result["skippedNodeIds"]
             and not result["setupOrTeardownFailures"]
