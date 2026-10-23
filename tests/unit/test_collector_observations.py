@@ -1,4 +1,7 @@
 """Future collected attempts retain acknowledgment stages, never replay authority."""
+# ruff: noqa: F811
+# Imported pytest fixtures are registered by name and intentionally requested
+# as test parameters; the parameters do not replace the module-level fixture.
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
