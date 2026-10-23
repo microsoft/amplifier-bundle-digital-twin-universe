@@ -227,6 +227,12 @@ def test_observation_initialization_failure_dispatches_nothing(collected, monkey
     with pytest.raises(admission.AdmissionError):
         launch(collected)
     assert not collected[4] and not collected[3].called
+    status = engine.launch_status("observation-request")
+    assert status["state"] == "unknown" and status["collector_phase"] == "prepared"
+    assert status["observations"] == {"available": False}
+    with pytest.raises(admission.AdmissionError):
+        launch(collected)
+    assert not collected[4] and not collected[3].called
 
 
 def test_recorder_refuses_stale_revision_without_overwrite(collected, monkeypatch):
@@ -335,3 +341,35 @@ def test_genuine_provision_failure_keeps_cleanup_and_partial_evidence(collected,
     assert status["state"] == "failed"
     assert status["observations"]["acknowledged"] == STEPS[:2]
     assert not status["observations"]["all_acknowledged"]
+
+
+def test_cancel_after_last_provision_command_keeps_returned_acknowledgments(collected, monkeypatch):
+    runtime = collected[0]
+    execute = engine._run_provisioning
+    set_config = incus.set_config
+    deleted = MagicMock()
+
+    def cancel_after_command(*args, **kwargs):
+        execute(*args, **kwargs)
+        runtime.cancel("observation-request", "observation-owner")
+
+    def guarded_marker(*args):
+        runtime.check_cancel()
+        set_config(*args)
+
+    monkeypatch.setattr(engine, "_run_provisioning", cancel_after_command)
+    monkeypatch.setattr(incus, "set_config", guarded_marker)
+    monkeypatch.setattr(incus, "delete_container", deleted)
+    with pytest.raises(admission.AdmissionError):
+        launch(collected)
+    status = engine.launch_status("observation-request")
+    assert status["state"] == "unknown" and "result" not in status
+    assert status["cancellation_requested"]
+    assert status["observations"]["acknowledged"] == STEPS[:4]
+    path, payload = record(collected)
+    assert runtime._outcome(Path(payload["root"]), "observation-request") == "cancel_requested"
+    before = path.read_bytes()
+    with pytest.raises(admission.AdmissionError):
+        launch(collected)
+    assert path.read_bytes() == before and collected[3].call_count == 1
+    deleted.assert_not_called()

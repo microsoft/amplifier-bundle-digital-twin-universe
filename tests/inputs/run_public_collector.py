@@ -251,7 +251,12 @@ def one_case(label, package, engine, collected):
         status = engine.launch_status(request)
         acknowledged = ['creation_returned', 'provisioning_entered', 'provisioning_completed',
                         'checkpoint_saved', 'ready_marker_returned', 'final_receipt_saved']
-        if label != 'observer-loss':
+        if label == 'cancel':
+            # The in-flight final provisioning command returns after release.
+            # Cooperative cancellation is consumed at the next backend call:
+            # the ready marker, after the local prepared checkpoint was saved.
+            acknowledged = acknowledged[:4]
+        elif label == 'worker-loss':
             acknowledged = acknowledged[:2]
         require(status['observations']['available'] is True)
         require(status['observations']['acknowledged'] == acknowledged)

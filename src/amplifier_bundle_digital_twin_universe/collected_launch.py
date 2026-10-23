@@ -131,13 +131,15 @@ def launch(profile_arg, variables, *, wait_seconds=600, **options):
                 if not capacity["available"]:
                     raise admission.AdmissionError(capacity["blockers"][0]["code"], "Capacity unavailable; no collector dispatched")
             generation = store.prepare()
-            from .collector_observation import initialize
-            initialize(store, generation)
             payload["generation"] = generation
             # No raw bootstrap/profile/environment appears in public journal.
             admission._save_private_json(_input_path(root, request), payload)
             admission._save_private_json(lifecycle.marker_path(root, name), {"request_id": request, "name": name,
                                           "generation": generation, "input_digest": collector._digest(payload)})
+            from .collector_observation import initialize
+            # Preserve public request discovery if observation initialization
+            # fails. No dispatch is consumed until the new record is acknowledged.
+            initialize(store, generation)
             store.dispatch_once(generation, lambda _: None)
     # Dispatch was consumed durably, but the parent releases name custody first.
     # A crash in this gap remains unknown; it never refunds the generation.

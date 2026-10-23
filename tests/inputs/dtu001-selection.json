@@ -11,7 +11,7 @@
     "src/amplifier_bundle_digital_twin_universe/cli.py": "9486fa560375b769745eca58087ff0e9a9c51e2c0510fa890a3482cbc70a02a2",
     "src/amplifier_bundle_digital_twin_universe/engine.py": "92db74d1f7936b8511a3e91cbd44624c45c3de290f5b8f4da1ddeef53667d651",
     "src/amplifier_bundle_digital_twin_universe/bound_backend.py": "159087621a35327cf1f56f1114c39d5b50264262654e0da73037c86ae5411afd",
-    "src/amplifier_bundle_digital_twin_universe/collected_launch.py": "efde0fcf10efe615335cd30f650572aeb89f65d6396ed1a9c24b9bf5b3a9c37a",
+    "src/amplifier_bundle_digital_twin_universe/collected_launch.py": "e7bbac76593cbef78722726097212257f3d01e5fd19f403cb00cf8c72a31a374",
     "src/amplifier_bundle_digital_twin_universe/collector_observation.py": "a7e981d4f54d39fb5a6b18c27d72b0ee16ee2f4c36119c7f1aca94eadd3f96c2",
     "src/amplifier_bundle_digital_twin_universe/collector_worker.py": "da23f57779c3414ab7a15f9d1cb8cb285a5d2b9b638d6173916543ad057d191f",
     "src/amplifier_bundle_digital_twin_universe/worker_guard.py": "3c46817d1d8dca64465fb18097ea8c5b7102aa2e78dfcd0c355e2c0ff8ff47e9",
@@ -23,9 +23,9 @@
     "src/amplifier_bundle_digital_twin_universe/readiness.py": "804950cb3d4b2803ae99b21a7564260d3f39e7eb753fbcdfd8844bf5fe61204b",
     "tests/unit/test_bound_backend.py": "cc38e586bcb9f6875dcdd8ae11609a6c421475a45f7d7572af0763427553d022",
     "tests/unit/test_collected_launch.py": "3e497b8ce9766e0961d8b5e7dc632ce4b5a285d22c5e94807107e2de13b3f4f4",
-    "tests/unit/test_collector_observations.py": "a8fa3ca66cca8c3a2aa751cec44ba526805e405318a7426ac504da5ff1558d6b",
+    "tests/unit/test_collector_observations.py": "3afd5db70e89978fddd5f9c17225313df650e5465f8ea4baad0433dc7785a835",
     "tests/inputs/collector_fake_incus.py": "f9a3ae59b85600960c92c045ce4b7d5645539749e710b882a2956688fb43fb57",
-    "tests/inputs/run_public_collector.py": "7ecb0ed645cc23a3b66c81c0db96feba5336aeb6714929eb8c5117b829258d68",
+    "tests/inputs/run_public_collector.py": "7da68c1eece2c898c34342e99030a9aebe4c46ac8fc307621eb220b104e5addb",
     "tests/unit/test_admission.py": "1560b1bfb8bd992762cc3756d7eab1fea3a5260536e4ff647f3ab909a341b3ef",
     "tests/unit/test_launch_result_checkpoint.py": "21c33ca251917ba96b4c2773840a11a4ba5dbabe954a58d0c6e1a6478b08366a",
     "tests/unit/test_collector_custody.py": "dbfa7a7049994f4f3ff71e2d8a483594512470d1b8047c102088c37957888b71",
@@ -38,7 +38,7 @@
     "tests/inputs/run_collector_process.py": "95a8d84498a41152f2e2c61d0c917ad64c8887e5dce8e2af130b2c6f855a195e"
   },
   "unitSuite": {
-    "sourceSha256": "b8d6a020db0ec9c5e8ad69560996bcf76fb7af8dd1c617d7857629184a20b5d4",
+    "sourceSha256": "a7808e935c9c148ac959683e61d36fd541c53de2679dcfb8780c747847386e6f",
     "testFiles": [
       "tests/unit/profile/test_addon_matcher_parity.py",
       "tests/unit/profile/test_resolution.py",
