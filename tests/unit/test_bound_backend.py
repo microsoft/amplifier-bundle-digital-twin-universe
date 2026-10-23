@@ -294,6 +294,20 @@ def test_exit_zero_does_not_make_malformed_identity_valid(client, stdout):
         backend.capture()
 
 
+@pytest.mark.parametrize("symbol", ["\u00e9", "\U00010000"])
+def test_identity_query_limit_counts_raw_utf8_bytes_not_characters(client, symbol):
+    value = {"environment": client.environment, "padding": symbol * (backend._QUERY_LIMIT // 2)}
+    stdout = json.dumps(value, ensure_ascii=False)
+    assert len(stdout) < backend._QUERY_LIMIT < len(stdout.encode("utf-8"))
+    def reply(command, **kwargs):
+        if command[2].split("?")[0] == "/1.0":
+            return subprocess.CompletedProcess(command, 0, stdout, "")
+        return client.reply(command, **kwargs)
+    client.run.side_effect = reply
+    with pytest.raises(backend.BackendFence, match="exceeds its bound"):
+        backend.capture()
+
+
 @pytest.mark.parametrize("devices", [
     None, [], {}, {"root": "disk"}, {"root": {"type": "disk", "path": "/"}},
     {"root": {"type": "disk", "path": "/", "pool": ""}},
