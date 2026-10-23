@@ -37,6 +37,7 @@ def category(exc):
     if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired, BackendExecutionTimeout)):
         return "timeout"
     for kind, code in ((CollectionCancelled, "cancel_requested"), (BackendFence, "backend_fence"),
+                       (incus.OutputCaptureError, "observation_error"),
                        (ObservationError, "observation_error"), (EvidenceError, "evidence_error"),
                        (incus.CreationCommandError, "cli_nonzero"),
                        (operations.CreationRejected, "creation_rejected"), (OSError, "os_error")):

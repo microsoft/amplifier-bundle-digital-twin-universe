@@ -83,6 +83,14 @@ Run these before opening a PR. The reviewer expects evidence in the PR body, not
   Overflow, truncation and timeout fence before the requested operation. Cleanup
   targets only the owned query client, never the daemon/guest/collector.
   Operational command capture is a separate, still-unbounded path.
+- **Post-completion capture faults**: exec spool seek/read I/O or decoding
+  errors retain the observed client return code and original cause in
+  `OutputCaptureError`. They are observation failures, not provisioning cleanup
+  authority, including when the code is nonzero. Complete nonzero provisioning
+  results still use normal cleanup. Never retry a capture error as missing
+  networking/profile data; retain an established command failure if optional
+  diagnostics fail afterward. Public evidence uses existing `observation_error`;
+  it does not gain a per-command exit history or an output-size limit.
 - **Committed publication repair**: only future successful collected attempts
   can commit the exact ready-receipt and collector-completion pair. Repair
   requires that immutable commit, matching before/after bytes and existing

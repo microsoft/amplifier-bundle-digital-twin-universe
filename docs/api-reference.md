@@ -223,6 +223,26 @@ This is bounded first-failure evidence, not a complete event history. Missing
 facts remain unobserved. Settlement, operational-command stream-memory-bounded
 capture and host-loss durability remain separate work.
 
+If an `exec` client has returned but reading/seeking its captured output fails
+with an I/O or decoding error, the library raises `incus.OutputCaptureError`.
+Its `returncode` retains the observed numeric client exit and its `__cause__`
+retains the original local exception. The displayed message is sanitized;
+the private chained traceback is not. No partial output is returned as success.
+For collected provisioning, this records the existing `observation_error`
+category and leaves the attempt UNKNOWN, without readiness publication, deletion,
+capacity release or replay. This applies even with a nonzero client exit:
+the output-consuming caller has not received a complete result. Complete nonzero
+provisioning results retain their existing failure cleanup. A complete command
+failure also remains primary if a subsequent optional network diagnostic cannot
+be captured. Gateway polling and profile-snapshot fallback do not swallow
+capture faults as missing data.
+
+The strict evidence format is unchanged: creation CLI facts do not become
+provisioning exit facts, and the per-exec return code/cause is not newly persisted
+in public status. This is a post-return seek/read correction, not an output cap,
+truncation policy, bounded-memory guarantee, or new timeout/close-failure contract.
+Existing complete-output APIs and operational deadlines remain unchanged.
+
 #### Explicit local publication repair
 
 Future collected launches commit a private `.publication` record after

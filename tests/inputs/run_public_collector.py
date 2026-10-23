@@ -18,7 +18,7 @@ from threading import local
 ROOT = Path('/workspace')
 OUT = Path('/artifacts/dtu001-public-collector')
 SCRIPT = ROOT / 'tests/inputs/run_public_collector.py'
-CASE_NAMES = ('observer-loss', 'cancel', 'worker-loss', 'publication-repair')
+CASE_NAMES = ('observer-loss', 'cancel', 'worker-loss', 'publication-repair', 'capture-fault')
 DENY = {'os.system', 'os.posix_spawn', 'os.fork', 'os.forkpty', 'os.exec', 'os.killpg',
         'signal.pthread_kill', 'signal.delivery'}
 
@@ -155,6 +155,9 @@ def prepare(case):
     config.write_text('default-remote: local\nremotes:\n  local:\n    addr: unix:///synthetic-never-contacted.sock\n    protocol: incus\n    public: false\naliases: {}\n')
     config.chmod(0o600)
     (case / 'profile.yaml').write_text('name: public-collector-fixture\nbase:\n  image: local:' + 'a'*64 + '\n  config:\n    security.privileged: "false"\n    security.nesting: "false"\nprovision:\n  setup_cmds:\n    - collector-fixture-provision\n')
+    if case.name == 'capture-fault':
+        with (case / 'profile.yaml').open('a') as profile:
+            profile.write('    - must-not-run-after-capture-fault\n')
 
 
 def identity(pid):
@@ -318,6 +321,7 @@ def one_case(label, package, engine, collected):
         policy.signal_pids.update(known)
         wait(lambda: (case/'entered').exists(), deadline)
         require((case/'launch-count').read_text()=='1\n' and (case/'provision-count').read_text()=='1\n')
+        provision_trace_boundary = len((case/'trace.jsonl').read_text().splitlines())
         from amplifier_bundle_digital_twin_universe import admission
         try:
             engine.exec_command('local:'+request, ['true'])
@@ -365,7 +369,7 @@ def one_case(label, package, engine, collected):
             # Cooperative cancellation is consumed at the next backend call:
             # the ready marker, after the local prepared checkpoint was saved.
             acknowledged = acknowledged[:4]
-        elif label == 'worker-loss':
+        elif label in {'worker-loss', 'capture-fault'}:
             acknowledged = acknowledged[:2]
         elif label == 'publication-repair':
             acknowledged = acknowledged[:5]
@@ -377,7 +381,8 @@ def one_case(label, package, engine, collected):
         require(facts['available'] is True and facts['cli'] == {'outcome': 'returned', 'returncode': 0})
         require(facts['operation'] is None and facts['cleanup'] is None and facts['receipt_failure'] is None)
         expected_failure = ({'stage': 'ready_marker', 'category': 'cancel_requested'} if label == 'cancel'
-                            else {'stage': 'final_receipt', 'category': 'os_error'} if label == 'publication-repair' else None)
+                            else {'stage': 'final_receipt', 'category': 'os_error'} if label == 'publication-repair'
+                            else {'stage': 'provisioning', 'category': 'observation_error'} if label == 'capture-fault' else None)
         require(facts['primary'] == expected_failure)
         private_evidence = json.loads(collected._input_path(root, request).with_suffix('.evidence').read_bytes())
         for original in private_evidence['baselines'].values():
@@ -428,6 +433,19 @@ def one_case(label, package, engine, collected):
             else:
                 raise RuntimeError('Uncertain request replayed')
         require((case/'launch-count').read_text()=='1\n' and (case/'provision-count').read_text()=='1\n')
+        if label == 'capture-fault':
+            trace = [json.loads(line)['kind'] for line in (case/'trace.jsonl').read_text().splitlines()]
+            require(trace.count('provision.invalid-output') == 1)
+            require(not {'delete', 'stop'} & set(trace))
+            # Before creation, missing-instance info probes legitimately return
+            # nonzero. Only post-provisioning rejections indicate a bad next call.
+            require('rejected' not in trace[provision_trace_boundary:])
+            instance = json.loads((case/'state.json').read_bytes())['instance']
+            require(instance['status'] == 'Running' and instance['name'] == request)
+            require(instance['config'].get('user.dtu.launch-state') != 'ready')
+            require('PRIVATE-capture-output' not in json.dumps(status))
+            report.update(captureFault=True, noDelete=True, noFalseReady=True,
+                          malformedOutputObserved=True, publicErrorsSanitized=True)
         report.update(status='passed', publicStatus=status, noReplay=True, launches=1, provisions=1,
                       installedPackage=str(package), runtime=payload['runtime'], workerParent=worker['ppid'])
         code=0

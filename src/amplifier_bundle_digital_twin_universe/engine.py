@@ -96,6 +96,8 @@ def _wait_for_gateway(container_name: str, timeout: int = 60) -> str:
     while time.monotonic() < deadline:
         try:
             return incus.get_host_gateway_ip(container_name)
+        except incus.OutputCaptureError:
+            raise
         except IncusError as exc:
             last_err = exc
             time.sleep(1)
@@ -161,7 +163,17 @@ def _exec_checked(container_name: str, command: str, timeout: int = 600) -> str:
     if exit_code != 0:
         combined = stdout + stderr
         if any(hint in combined for hint in _NETWORK_ERROR_HINTS):
-            diag = incus.diagnose_network_failure(container_name)
+            try:
+                diag = incus.diagnose_network_failure(container_name)
+            except incus.OutputCaptureError as secondary:
+                # This command already returned a complete nonzero result.
+                # A later optional diagnostic failure must not erase it.
+                primary = RuntimeError(
+                    f"Command failed (exit {exit_code}): {command}\n"
+                    f"stdout: {stdout}\nstderr: {stderr}"
+                )
+                primary.add_note("Network diagnostic unavailable")
+                raise primary from secondary
             raise RuntimeError(
                 f"Command failed (exit {exit_code}): {command}\n\n"
                 f"Network diagnostic:\n{diag}\n\n"
@@ -1847,7 +1859,7 @@ def _launch_impl(
         result["request_id"] = request_id
         result["owner_root"] = owner_root
         result["offline"] = offline
-    except BackendFence as exc:
+    except (BackendFence, incus.OutputCaptureError) as exc:
         if _evidence is not None:
             _evidence.failure("provisioning", exc)
         raise
@@ -1939,6 +1951,8 @@ def _read_profile_snapshot(container_id: str) -> str | None:
             tmp_path = tmp.name
         try:
             incus.file_pull(container_id, [_PROFILE_SNAPSHOT_PATH], tmp_path)
+        except incus.OutputCaptureError:
+            raise
         except IncusError:
             return None
         return Path(tmp_path).read_text()

@@ -292,6 +292,12 @@ def main():
             return 124
         with locked():
             trace("provision.released")
+        if ROOT.name == "capture-fault":
+            with locked():
+                trace("provision.invalid-output")
+            sys.stdout.buffer.write(b"\xffPRIVATE-capture-output\n")
+            sys.stdout.buffer.flush()
+            return 0  # Successful client with deliberately undecodable output.
     if (ROOT / "publication-pause").exists() and len(a) == 4 and a[:2] == ["config", "set"] and a[3] == "user.dtu.launch-state=ready":
         (ROOT / "publication-entered").write_text("ready marker applied\n")
         deadline = time.monotonic() + 10

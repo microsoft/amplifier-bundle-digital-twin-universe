@@ -54,6 +54,17 @@ class CreationCommandError(IncusError):
         self.returncode = returncode
 
 
+class OutputCaptureError(IncusError):
+    """The exec client returned, but its complete output could not be read.
+
+    The numeric return code is observed evidence, not a complete command result.
+    The original local exception is retained as __cause__, never in the message.
+    """
+    def __init__(self, returncode: int):
+        super().__init__("Incus exec output could not be captured after client completion")
+        self.returncode = returncode
+
+
 def query(path: str) -> dict:
     """Read JSON from the current Incus daemon and project."""
     result = _run(["incus", "query", path], capture_output=True, text=True, timeout=30)
@@ -323,9 +334,15 @@ def exec_command(
             text=True,
             timeout=timeout,
         )
-        out_f.seek(0)
-        err_f.seek(0)
-        return result.returncode, out_f.read(), err_f.read()
+        try:
+            out_f.seek(0)
+            err_f.seek(0)
+            return result.returncode, out_f.read(), err_f.read()
+        except (OSError, UnicodeError) as exc:
+            # Do not turn a local observation failure into failed provisioning.
+            # Keep _run outside this handler: timeout/transport errors retain
+            # their own semantics and do not establish a returned client.
+            raise OutputCaptureError(result.returncode) from exc
 
 
 def exec_stream(

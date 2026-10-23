@@ -290,17 +290,29 @@ def case_key(function, parameters):
 
 def main():
     if sys.argv[1:] not in ([], ["--unit-suite"], ["--identity-capture"], ["--publication-repair"],
-                           ["--operational-capture-contract"]):
+                           ["--operational-capture-contract"], ["--capture-fault"]):
         raise RuntimeError("Unsupported exact test selection")
     full_suite = sys.argv[1:] == ["--unit-suite"]
     capture_suite = sys.argv[1:] in (["--identity-capture"], ["--publication-repair"],
-                                    ["--operational-capture-contract"])
+                                    ["--operational-capture-contract"], ["--capture-fault"])
     capture_files = (["tests/unit/test_bound_backend.py", "tests/unit/test_identity_query_capture.py"]
                      if sys.argv[1:] == ["--identity-capture"] else [
                          "tests/unit/test_collector_projection.py", "tests/unit/test_launch_result_checkpoint.py",
                          "tests/unit/test_collector_custody.py", "tests/unit/test_collector_observations.py",
                          "tests/unit/test_collector_evidence.py", "tests/unit/test_admission.py"])
-    if sys.argv[1:] == ["--operational-capture-contract"]:
+    fault_functions = [
+        "test_collected_capture_fault_after_completion_never_authorizes_delete",
+        "test_native_capture_error_preserves_returncode_and_cause",
+        "test_complete_nonzero_provisioning_still_cleans_up_once",
+        "test_capture_primary_survives_failure_evidence_write_fault",
+        "test_gateway_capture_error_is_not_retried",
+        "test_snapshot_capture_error_is_not_missing_profile",
+        "test_optional_capture_diagnostic_does_not_erase_known_failure",
+        "test_complete_string_exec_contract_is_preserved",
+        "test_nonzero_provisioning_retains_original_complete_diagnostics",
+        "test_execution_timeout_is_not_replaced_by_capture_read",
+    ] if sys.argv[1:] == ["--capture-fault"] else []
+    if sys.argv[1:] in (["--operational-capture-contract"], ["--capture-fault"]):
         capture_files = ["tests/unit/test_operational_capture_contract.py"]
     # A mounted path alone is not isolation; the caller must also verify the
     # managed resource receipt. This check prevents accidental host execution.
@@ -383,6 +395,10 @@ def main():
         "identityCaptureSuite": sys.argv[1:] == ["--identity-capture"],
         "publicationRepairSuite": sys.argv[1:] == ["--publication-repair"],
         "operationalCaptureContractSuite": sys.argv[1:] == ["--operational-capture-contract"],
+        "captureFaultSuite": bool(fault_functions),
+        "deferredUnexecutedCases": ([
+            "tests/unit/test_operational_capture_contract.py::test_successful_provisioning_avoids_unsized_output_reads"
+        ] if fault_functions else []),
         "unitSuiteSourceSha256": unit_tree, "collectionVerified": False,
         "collectionErrors": [], "deselectedNodeIds": [],
         "fixtureCleanup": fixtures.cleanup, "fixtureErrors": fixtures.errors,
@@ -473,6 +489,8 @@ def main():
                 if capture_suite:
                     if {item["nodeid"].split("::")[0] for item in actual} != set(capture_files):
                         pytest.exit("Identity capture file selection changed", returncode=4)
+                    if fault_functions and {item["function"] for item in actual} != set(fault_functions):
+                        pytest.exit("Capture fault safety selection changed", returncode=4)
                 result["collectionVerified"] = True
 
             def pytest_collectreport(self, report):
@@ -495,6 +513,7 @@ def main():
                 })
 
         selectors = (
+            [capture_files[0] + "::" + name for name in fault_functions] if fault_functions else
             ["tests/unit/"] if full_suite else capture_files if capture_suite else
             ["tests/unit/test_admission.py::" + name for name in manifest["functions"]]
         )
