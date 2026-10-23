@@ -1180,13 +1180,20 @@ def _prepared_launch_result(receipt: dict, ctx: dict, instance: dict | None):
 
 
 def launch_status(request_id: str) -> dict:
+    from .collected_launch import public_status
+    collected = public_status(request_id)
+    return collected if collected is not None else _launch_status_legacy(request_id)
+
+
+def _launch_status_legacy(request_id: str, *, _reconcile=True) -> dict:
     """Observe a stable request without repeating any provisioning side effect.
 
     Absence after an interrupted launch is unknown, not proof of cancellation:
     the daemon operation may still be completing. No automatic replay occurs.
     """
     ctx = admission.context()
-    _reconcile_creations(ctx, request_id)
+    if _reconcile:
+        _reconcile_creations(ctx, request_id)
     with admission.locked(ctx) as root:
         receipt = admission.read_receipt(root, request_id)
         if receipt is None:
@@ -1300,9 +1307,8 @@ def launch(
         return collected(profile_arg, variables, wait_seconds=wait_seconds, **options)
     request_id = str(uuid.uuid4()) if request_id is None else request_id
     name = name or f"dtu-{hashlib.sha256(request_id.encode()).hexdigest()[:16]}"
-    ctx = admission.context()
-    with lifecycle.custody(ctx, name) as root:
-        if lifecycle.read_marker(root, name) is not None:
+    with lifecycle.name_custody(name) as base:
+        if lifecycle.markers(base, name):
             raise admission.AdmissionError("launch_unknown", "This name belongs to a collected attempt; use its original request")
         return _launch_impl(profile_arg, variables, **{**options, "request_id": request_id, "name": name})
 
@@ -1767,12 +1773,15 @@ def _launch_impl(
             _hm_hostname = incus.get_config(container_name, "user.dtu.hostname")
             if _hm_hostname:
                 _HM(_hm_hostname.removesuffix(".local"), container_name).unregister()
+        except BackendFence:
+            raise
         except Exception:
             pass
-        try:
-            _stop_mock_containers(container_name)
-        except Exception:
-            pass
+        if _submission_hook is None:
+            try:
+                _stop_mock_containers(container_name)
+            except Exception:
+                pass
         try:
             incus.delete_container(container_name, force=True)
             with admission.locked(ctx) as root:
@@ -1848,7 +1857,8 @@ def update(
         )
 
     # Detect host gateway and rewrite localhost references in user-supplied vars.
-    host_ip = _wait_for_gateway(container_id)
+    from .bound_backend import current as bound_current
+    host_ip = "127.0.0.1" if bound_current() is not None else _wait_for_gateway(container_id)
     rewritten_vars = _rewrite_localhost(variables, host_ip)
 
     # Prefer the in-container snapshot written at launch time.  Fall back to
@@ -1883,6 +1893,9 @@ def update(
         # this is a re-parse for an already-launched DTU.
         profile = load_profile(profile_name, rewritten_vars, validate=False)
 
+    if bound_current() is not None and (profile.pypi_overrides or profile.mock_services or profile.access
+                                       or profile.passthrough or profile.url_rewrites):
+        raise BackendFence("Collected update cannot introduce unsupported external dependencies")
     if not profile.update:
         raise RuntimeError(
             f"Profile {profile_name!r} does not define an 'update' section"
@@ -2272,11 +2285,15 @@ def destroy(
             )
 
             HostnameManager(_hostname.removesuffix(".local"), container_id).unregister()
+    except BackendFence:
+        raise
     except Exception:
         pass  # best-effort
 
     # Stop mock service Docker containers before destroying the Incus container.
-    _stop_mock_containers(container_id)
+    from .bound_backend import current as bound_current
+    if bound_current() is None:
+        _stop_mock_containers(container_id)
 
     incus.stop_container(container_id)
     incus.delete_container(container_id)

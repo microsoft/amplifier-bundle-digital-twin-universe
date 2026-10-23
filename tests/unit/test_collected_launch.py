@@ -99,8 +99,9 @@ def test_collected_cancel_is_not_disconnect_or_replay(collected, monkeypatch):
     assert len(launches) == 1
 
 
+@pytest.mark.parametrize("qualified", [False, True])
 @pytest.mark.parametrize("operation", ["destroy", "update", "exec_command", "exec_stream", "exec_interactive", "file_push", "file_pull", "check_readiness"])
-def test_all_mutators_refuse_while_worker_owns_launch(collected, monkeypatch, operation):
+def test_all_mutators_refuse_while_worker_owns_launch(collected, monkeypatch, operation, qualified):
     runtime, profile, _, create, _ = collected
     entered, release = Event(), Event()
     original = engine._write_env
@@ -119,9 +120,146 @@ def test_all_mutators_refuse_while_worker_owns_launch(collected, monkeypatch, op
                     "exec_interactive": (), "file_push": (["unused"], "/unused"),
                     "file_pull": (["/unused"], "unused"), "check_readiness": ()}[operation]
             with pytest.raises(admission.AdmissionError) as error:
-                getattr(engine, operation)("busy", *args)
+                getattr(engine, operation)("local:busy" if qualified else "busy", *args)
             assert error.value.code == "admission_busy"
         finally:
             release.set()
         task.result(timeout=5)
     assert create.call_count == 1
+
+
+@pytest.mark.parametrize("reason", ["oversize", "missing-image", "capacity"])
+def test_collection_preflight_does_not_consume_attempt(collected, monkeypatch, reason):
+    _, profile, _, create, launches = collected
+    variables = {}
+    options = {}
+    if reason == "oversize":
+        variables["unused"] = "x" * 300000
+    elif reason == "missing-image":
+        monkeypatch.setattr(incus, "local_image_available", lambda _: False)
+    else:
+        options["min_free_bytes"] = 200 * 1024**3
+    with pytest.raises(admission.AdmissionError):
+        engine.launch(profile, variables, name="preflight", request_id="preflight-r", owner_root="owner",
+                      offline=True, collect=True, **options)
+    assert not create.called and not launches
+    root = admission.state_directory(admission.context())
+    assert not list(root.glob("collectors/*.json"))
+
+
+def test_worker_dispatch_is_outside_parent_custody(collected, monkeypatch):
+    from contextvars import Context
+    runtime, profile, _, _, launches = collected
+
+    def spawn(payload):
+        launches.append(payload)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(Context().run, runtime.worker_run, payload).result(timeout=5)
+
+    monkeypatch.setattr(runtime, "spawn_worker", spawn)
+    assert engine.launch(profile, {}, name="handoff", request_id="handoff-r", owner_root="owner",
+                         offline=True, collect=True)["status"] == "running"
+    assert len(launches) == 1
+
+
+def test_keyword_mutator_argument_contract(monkeypatch, tmp_path):
+    from amplifier_bundle_digital_twin_universe import lifecycle
+    from contextlib import contextmanager
+    monkeypatch.setenv("AMPLIFIER_DTU_ADMISSION_DIR", str(tmp_path / "keyword"))
+    calls = []
+
+    @contextmanager
+    def observe(name):
+        calls.append(name)
+        yield
+
+    monkeypatch.setattr(lifecycle, "mutation", observe)
+
+    @lifecycle.guarded
+    def example(container_id, command):
+        return container_id, command
+
+    assert example(container_id="same", command=["true"]) == ("same", ["true"])
+    assert calls == ["same"]
+
+
+def test_collected_status_no_private_bootstrap_or_operation_socket(collected, monkeypatch):
+    runtime, profile, _, _, launches = collected
+    monkeypatch.setattr(runtime, "spawn_worker", launches.append)
+    with pytest.raises(admission.AdmissionError):
+        engine.launch(profile, {}, name="private", request_id="private-r", owner_root="owner",
+                      offline=True, collect=True, wait_seconds=0)
+    status = engine.launch_status("private-r")
+    assert status["state"] == "unknown" and status["collector_phase"] == "dispatched"
+    assert not {"backend", "runtime", "profile_text", "variables", "create_operation"} & status.keys()
+
+
+def test_collected_provision_failure_never_calls_ambient_docker(collected, monkeypatch):
+    runtime, profile, instances, _, _ = collected
+    docker_calls = []
+    monkeypatch.setattr(engine, "_stop_mock_containers", lambda name: docker_calls.append(name))
+    monkeypatch.setattr(engine, "_write_env", lambda *args: (_ for _ in ()).throw(RuntimeError("provision failed")))
+    monkeypatch.setattr(incus, "delete_container", lambda *args, **kwargs: instances.clear())
+    with pytest.raises(admission.AdmissionError):
+        engine.launch(profile, {}, name="failure", request_id="failure-r", owner_root="owner", offline=True, collect=True)
+    assert not docker_calls and not instances
+
+
+def test_outcome_generation_cannot_claim_false_nonadmission(collected, monkeypatch):
+    runtime, profile, _, _, launches = collected
+    monkeypatch.setattr(runtime, "spawn_worker", launches.append)
+    with pytest.raises(admission.AdmissionError):
+        engine.launch(profile, {}, name="outcome", request_id="outcome-r", owner_root="owner",
+                      offline=True, collect=True, wait_seconds=0)
+    root, payload = runtime.locate("outcome-r")
+    path = runtime._input_path(root, "outcome-r").with_suffix(".outcome")
+    admission._save_private_json(path, {"generation": "0" * 32, "code": "approved_image_missing"})
+    before = path.read_bytes()
+    with pytest.raises(runtime.BackendFence):
+        engine.launch_status("outcome-r")
+    assert path.read_bytes() == before
+    admission._save_private_json(path, {"generation": payload["generation"], "code": "cancel_requested"})
+    assert engine.launch_status("outcome-r")["cancellation_requested"] is True
+    assert engine.launch_status("outcome-r")["state"] == "unknown"
+
+
+def test_completion_is_not_current_ready_after_owner_changes(collected, monkeypatch):
+    runtime, profile, instances, _, _ = collected
+
+    def spawn(payload):
+        runtime.worker_run(payload)
+        instances[0]["config"]["user.dtu.owner-root"] = "other"
+
+    monkeypatch.setattr(runtime, "spawn_worker", spawn)
+    with pytest.raises(admission.AdmissionError):
+        engine.launch(profile, {}, name="changed", request_id="changed-r", owner_root="owner",
+                      offline=True, collect=True)
+    assert engine.launch_status("changed-r")["state"] == "conflict"
+
+
+def test_no_marker_mutator_cannot_race_first_collected_admission(collected):
+    from amplifier_bundle_digital_twin_universe import lifecycle
+    _, profile, _, create, launches = collected
+    with lifecycle.mutation("racing"):
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(engine.launch, profile, {}, name="racing", request_id="racing-r",
+                                 owner_root="owner", offline=True, collect=True)
+            with pytest.raises(admission.AdmissionError) as error:
+                future.result(timeout=5)
+            assert error.value.code == "admission_busy"
+    assert not create.called and not launches
+
+
+def test_cold_worker_import_executes_only_the_verified_bytes(tmp_path):
+    import hashlib
+    import importlib.util
+    from amplifier_bundle_digital_twin_universe.collector_worker import VerifiedPackage
+    source = tmp_path / "engine.py"
+    source.write_text("value = 'original'\n")
+    loader = VerifiedPackage(tmp_path, {"engine.py": hashlib.sha256(source.read_bytes()).hexdigest()})
+    spec = loader.find_spec("amplifier_bundle_digital_twin_universe.engine")
+    module = importlib.util.module_from_spec(spec)
+    source.write_text("raise RuntimeError('unverified code ran')\n")
+    with pytest.raises(ImportError, match="changed before import"):
+        loader.exec_module(module)
+    assert "value" not in module.__dict__

@@ -1,9 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
-"""Cooperating per-name custody, always acquired before request/admission locks."""
+"""Cooperating per-name custody, always before request/admission locks.
+
+Name locks span configured scopes for this user's common state base. This is
+intentionally conservative for qualified aliases; it is not daemon-wide custody.
+"""
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
 import hashlib
+import inspect
 import os
 from pathlib import Path
 
@@ -12,8 +17,16 @@ from . import admission, incus
 _HELD = ContextVar("dtu_lifecycle", default=None)
 
 
-def _directory(root):
-    path = root / "lifecycle"
+def base_directory():
+    base = Path(os.environ.get("AMPLIFIER_DTU_ADMISSION_DIR") or
+                Path.home() / ".local/state/amplifier-dtu/admission")
+    if not base.is_absolute() or ".." in base.parts or any(p.is_symlink() for p in (base, *base.parents)):
+        raise admission.AdmissionError("state_unsafe", "Invalid lifecycle directory")
+    return base
+
+
+def _directory(root, label="lifecycle"):
+    path = root / label
     path.mkdir(mode=0o700, exist_ok=True)
     admission._private_directory(path)
     fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -24,28 +37,41 @@ def _directory(root):
     return path
 
 
-def marker_path(root, name):
-    return root / "lifecycle" / (hashlib.sha256(name.encode()).hexdigest() + ".json")
+def canonical_name(name):
+    if not isinstance(name, str) or not name:
+        raise ValueError("Instance name is required")
+    return name.rsplit(":", 1)[-1]
 
 
 @contextmanager
-def custody(ctx, name):
-    root = admission.state_directory(ctx)
-    key = (str(root), name)
+def name_custody(name, timeout=0):
+    name = canonical_name(name)
+    base = base_directory()
+    key = (str(base), name)
     if _HELD.get() == key:
-        yield root
+        yield base
         return
-    directory = _directory(root)
-    with admission._locked_file(directory / (hashlib.sha256(name.encode()).hexdigest() + ".lock"), timeout=0):
+    base.mkdir(mode=0o700, parents=True, exist_ok=True)
+    admission._private_directory(base)
+    directory = _directory(base, "lifecycle-locks")
+    with admission._locked_file(directory / (hashlib.sha256(name.encode()).hexdigest() + ".lock"), timeout=timeout):
         token = _HELD.set(key)
         try:
-            yield root
+            yield base
         finally:
             _HELD.reset(token)
 
 
-def held(root, name):
-    return _HELD.get() == (str(root), name)
+def marker_path(root, name):
+    return root / "lifecycle" / (hashlib.sha256(canonical_name(name).encode()).hexdigest() + ".json")
+
+
+@contextmanager
+def custody(ctx, name, timeout=0):
+    with name_custody(name, timeout):
+        root = admission.state_directory(ctx)
+        _directory(root)
+        yield root
 
 
 def read_marker(root, name):
@@ -55,42 +81,42 @@ def read_marker(root, name):
         return None
 
 
+def markers(base, name):
+    suffix = hashlib.sha256(canonical_name(name).encode()).hexdigest() + ".json"
+    return list(base.glob("*/lifecycle/" + suffix))
+
+
 @contextmanager
 def mutation(name):
-    if _HELD.get() is not None and _HELD.get()[1] == name:
+    canonical = canonical_name(name)
+    key = (str(base_directory()), canonical)
+    if _HELD.get() == key:
         yield
         return
-    # Preserve legacy behavior without a new daemon call when this name has
-    # never participated in collection. Inspect only the hashed-name markers.
-    base = Path(os.environ.get("AMPLIFIER_DTU_ADMISSION_DIR") or
-                Path.home() / ".local/state/amplifier-dtu/admission")
-    suffix = hashlib.sha256(name.encode()).hexdigest() + ".json"
-    candidates = list(base.glob("*/lifecycle/" + suffix))
-    if not candidates:
-        yield
-        return
-    ctx = admission.context()
-    expected_root = admission.state_directory(ctx)
-    if any(path.parent.parent != expected_root for path in candidates):
-        raise admission.AdmissionError("ownership_conflict", "Collected name is bound to a different backend scope")
-    with custody(ctx, name) as root:
-        marker = read_marker(root, name)
-        if marker is None:
+    # Lock before marker lookup, including the legacy/no-marker case. No new
+    # backend query is needed for legacy mutation. Aliases cannot bypass custody.
+    with name_custody(canonical) as base:
+        candidates = markers(base, canonical)
+        if not candidates:
             yield
             return
+        if len(candidates) != 1 or name not in {canonical, "local:" + canonical}:
+            raise admission.AdmissionError("ownership_conflict", "Collected instance scope is ambiguous")
         from . import collected_launch
-        with collected_launch.mutation(marker, root, name):
+        path = candidates[0]
+        marker = admission._read_private_json(path)
+        with collected_launch.mutation(marker, path.parent.parent, canonical):
             yield
 
 
 def guarded(function):
+    first = next(iter(inspect.signature(function).parameters))
+
     @wraps(function)
-    def call(name, *args, **kwargs):
-        # A nested call shares custody only within this exact context/thread.
-        if _HELD.get() is not None and _HELD.get()[1] == name:
-            return function(name, *args, **kwargs)
+    def call(*args, **kwargs):
+        name = args[0] if args else kwargs[first]
         with mutation(name):
-            return function(name, *args, **kwargs)
+            return function(*args, **kwargs)
     return call
 
 
