@@ -344,6 +344,7 @@ def test_genuine_provision_failure_keeps_cleanup_and_partial_evidence(collected,
 
 
 def test_cancel_after_last_provision_command_keeps_returned_acknowledgments(collected, monkeypatch):
+    provisioning = provision_counter(collected, monkeypatch)
     runtime = collected[0]
     execute = engine._run_provisioning
     set_config = incus.set_config
@@ -372,4 +373,5 @@ def test_cancel_after_last_provision_command_keeps_returned_acknowledgments(coll
     with pytest.raises(admission.AdmissionError):
         launch(collected)
     assert path.read_bytes() == before and collected[3].call_count == 1
+    assert provisioning.call_count == 1
     deleted.assert_not_called()
