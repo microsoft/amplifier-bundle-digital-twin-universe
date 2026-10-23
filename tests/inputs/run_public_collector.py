@@ -249,6 +249,14 @@ def one_case(label, package, engine, collected):
             require(response.get('error')=='launch_unknown')
             report['foregroundResponse'] = response
         status = engine.launch_status(request)
+        acknowledged = ['creation_returned', 'provisioning_entered', 'provisioning_completed',
+                        'checkpoint_saved', 'ready_marker_returned', 'final_receipt_saved']
+        if label != 'observer-loss':
+            acknowledged = acknowledged[:2]
+        require(status['observations']['available'] is True)
+        require(status['observations']['acknowledged'] == acknowledged)
+        require(status['observations']['creation_transport'] == 'cli')
+        require(status['observations']['all_acknowledged'] == (label == 'observer-loss'))
         if label != 'cancel':
             require('cancellation_requested' not in status)
             require(collected._outcome(root, request) != 'cancel_requested')

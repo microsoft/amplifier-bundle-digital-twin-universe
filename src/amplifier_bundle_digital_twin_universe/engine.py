@@ -1249,7 +1249,7 @@ def _result_publication_receipt(root: Path, expected: dict) -> dict:
     return current
 
 
-def _publish_launch_result(ctx: dict, receipt: dict, result: dict) -> None:
+def _publish_launch_result(ctx: dict, receipt: dict, result: dict, *, _observations=None) -> None:
     checkpoint = {
         "daemon": ctx["daemon"], "project": ctx["project"],
         "intent_digest": receipt["intent_digest"], "result": result,
@@ -1262,13 +1262,19 @@ def _publish_launch_result(ctx: dict, receipt: dict, result: dict) -> None:
             raise admission.AdmissionError("request_conflict", "A different launch result was recorded")
         current["prepared_result"] = checkpoint
         admission.save_receipt(root, current)
+        if _observations is not None:
+            _observations.mark("checkpoint_saved")
         incus.set_config(receipt["name"], "user.dtu.launch-state", "ready")
+        if _observations is not None:
+            _observations.mark("ready_marker_returned")
         current = _result_publication_receipt(root, receipt)
         if current.get("prepared_result") != checkpoint:
             raise admission.AdmissionError("request_conflict", "The prepared launch result changed")
         current.pop("prepared_result")
         current.update(state="ready", result=result)
         admission.save_receipt(root, current)
+        if _observations is not None:
+            _observations.mark("final_receipt_saved")
 
 
 # ===================================================================
@@ -1324,7 +1330,7 @@ def _launch_impl(
     owner_root: str | None = None,
     request_id: str | None = None,
     offline: bool = False,
-    *, _frozen_profile: str | None = None, _submission_hook=None,
+    *, _frozen_profile: str | None = None, _submission_hook=None, _observations=None,
 ) -> dict:
     """Launch a Digital Twin Universe.  Returns the JSON status dict."""
     incus.check_incus()
@@ -1518,6 +1524,12 @@ def _launch_impl(
         with admission.locked(ctx) as root:
             receipt = admission.read_receipt(root, request_id)
 
+    # These acknowledgments are outside both creation-error classification and
+    # provisioning cleanup. Evidence failure is not a failed guest command and
+    # never authorizes deletion or another submission.
+    if _observations is not None:
+        _observations.mark("creation_returned", transport="operation" if endpoint else "cli")
+        _observations.mark("provisioning_entered")
     try:
         # Store metadata so `status` and `list` can discover this instance.
         incus.set_config(
@@ -1795,7 +1807,11 @@ def _launch_impl(
     # Evidence/ready-marker publication failures must not delete a successfully
     # provisioned environment. Checkpoint the original result before readiness.
     try:
-        _publish_launch_result(ctx, receipt, result)
+        if _observations is not None:
+            _observations.mark("provisioning_completed", result=result)
+            _publish_launch_result(ctx, receipt, result, _observations=_observations)
+        else:
+            _publish_launch_result(ctx, receipt, result)
     except Exception as exc:
         raise admission.AdmissionError(
             "launch_unknown",

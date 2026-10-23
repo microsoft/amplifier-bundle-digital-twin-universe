@@ -131,6 +131,8 @@ def launch(profile_arg, variables, *, wait_seconds=600, **options):
                 if not capacity["available"]:
                     raise admission.AdmissionError(capacity["blockers"][0]["code"], "Capacity unavailable; no collector dispatched")
             generation = store.prepare()
+            from .collector_observation import initialize
+            initialize(store, generation)
             payload["generation"] = generation
             # No raw bootstrap/profile/environment appears in public journal.
             admission._save_private_json(_input_path(root, request), payload)
@@ -226,6 +228,8 @@ def public_status(request_id):
                "created_at", "instance_status", "result", "result_recovered"}
     result = {k: v for k, v in observed.items() if k in allowed}
     result["collector_phase"] = state["phase"]
+    from .collector_observation import projection
+    result["observations"] = projection(collector.AttemptStore(root, binding), payload["generation"])
     if result.get("state") == "not_recorded":
         result["state"] = "unknown"
     refusal = _outcome(root, request_id)
@@ -295,10 +299,12 @@ def worker_run(payload):
             with store.owned_worker(payload["generation"]) as submission:
                 check_cancel()
                 from . import engine
+                from .collector_observation import Recorder
+                observations = Recorder(store, payload["generation"])
                 result = engine._launch_impl(payload["profile_path"], payload["variables"],
                     name=binding["name"], owner_root=binding["owner_root"], request_id=binding["request_id"],
                     offline=True, **payload["limits"], _frozen_profile=payload["profile_text"],
-                    _submission_hook=submission)
+                    _submission_hook=submission, _observations=observations)
                 return result
     except Exception as exc:
         # No raw exception/env/argv persisted. The worker scope records unknown.

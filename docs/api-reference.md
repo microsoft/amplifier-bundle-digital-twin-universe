@@ -169,6 +169,24 @@ resumes provisioning or repairs the collected record. Lost dispatch/worker
 evidence and consumed but unobserved submission remain unknown and nonreplayable.
 Use the same request identity; do not create another name to bypass uncertainty.
 
+New collected attempts also retain a separate bounded acknowledgment record.
+The `observations` field reports the ordered calls that returned: creation,
+provisioning entry/completion, prepared-result save, ready-marker call and final
+receipt save. `creation_transport` distinguishes the CLI return from confirmed
+tracked-operation completion. These are positive observations, not a complete
+failure history. An omitted acknowledgment means unobserved, not that the
+operation did not happen; `all_acknowledged` is not current readiness or proof
+of durability through host loss. A post-replace fsync failure may leave visible
+observation bytes without a successful durability acknowledgment for that write.
+
+Older collected attempts without this record return `observations:
+{available: false}`; status does not create or backfill it. Malformed, unsupported
+or mismatched records refuse without repair. Evidence-write failures stop further
+work conservatively and never invoke provisioning cleanup on their own. These
+records neither release reservations nor permit retry, takeover or settlement.
+Failure-category history, cleanup evidence and exact-action repair remain
+separate work; existing collector/admission formats are unchanged.
+
 `launch-cancel REQUEST_ID --owner-root ROOT` requests cooperative cancellation
 of that exact collected generation. `cancellation_requested: true` records
 the request, not daemon cancellation, successful cleanup or released capacity.
