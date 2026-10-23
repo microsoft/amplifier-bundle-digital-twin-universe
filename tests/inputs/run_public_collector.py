@@ -18,7 +18,7 @@ from threading import local
 ROOT = Path('/workspace')
 OUT = Path('/artifacts/dtu001-public-collector')
 SCRIPT = ROOT / 'tests/inputs/run_public_collector.py'
-CASE_NAMES = ('observer-loss', 'cancel', 'worker-loss')
+CASE_NAMES = ('observer-loss', 'cancel', 'worker-loss', 'publication-repair')
 DENY = {'os.system', 'os.posix_spawn', 'os.fork', 'os.forkpty', 'os.exec', 'os.killpg',
         'signal.pthread_kill', 'signal.delivery'}
 
@@ -176,7 +176,8 @@ def foreground(case, package):
     from amplifier_bundle_digital_twin_universe.cli import main
     try:
         main(['launch', str(case / 'profile.yaml'), '--offline', '--collect', '--name', 'public-'+case.name,
-              '--request-id', 'public-'+case.name, '--owner-root', 'fixture-owner', '--wait-seconds', '12'],
+              '--request-id', 'public-'+case.name, '--owner-root', 'fixture-owner',
+              '--wait-seconds', '3' if case.name == 'publication-repair' else '12'],
              standalone_mode=False)
     finally:
         (case / 'foreground-guard.json').write_text(json.dumps({'allowed': policy.allowed, 'denied': policy.denied}))
@@ -287,6 +288,7 @@ def one_case(label, package, engine, collected):
               'denied': policy.denied, 'children': [], 'cleanupErrors': []}
     known = {}
     foreground_process = None
+    restricted_root = None
     code = 1
     old_env = dict(os.environ)
     os.environ.clear()
@@ -329,11 +331,19 @@ def one_case(label, package, engine, collected):
         elif label == 'cancel':
             result = collected.cancel(request, 'fixture-owner')
             require(result['cancellation_requested'])
-        else:
+        elif label == 'worker-loss':
             # The subreaper discovers/reaps adopted descendants from verified
             # kernel parentage during cleanup, never from child-reported PIDs.
             policy.signal_owned(worker, signal.SIGKILL)
+        elif label == 'publication-repair':
+            (case/'publication-pause').write_text('owned final-receipt fault\n')
         (case/'release').write_text('release\n')
+        if label == 'publication-repair':
+            wait(lambda: (case/'publication-entered').exists(), deadline)
+            require(root.is_relative_to(case/'admission'))
+            root.chmod(0o500)  # Own guest-local admission directory only.
+            restricted_root = root
+            (case/'publication-release').write_text('release\n')
         guard_path = collected._input_path(root, request).with_suffix('.guard')
         if label != 'worker-loss':
             wait(guard_path.exists, deadline)
@@ -344,6 +354,9 @@ def one_case(label, package, engine, collected):
             response = json.loads((case/'foreground.stdout').read_text().strip())
             require(response.get('error')=='launch_unknown')
             report['foregroundResponse'] = response
+        if restricted_root is not None:
+            restricted_root.chmod(0o700)
+            restricted_root = None
         status = engine.launch_status(request)
         acknowledged = ['creation_returned', 'provisioning_entered', 'provisioning_completed',
                         'checkpoint_saved', 'ready_marker_returned', 'final_receipt_saved']
@@ -354,6 +367,8 @@ def one_case(label, package, engine, collected):
             acknowledged = acknowledged[:4]
         elif label == 'worker-loss':
             acknowledged = acknowledged[:2]
+        elif label == 'publication-repair':
+            acknowledged = acknowledged[:5]
         require(status['observations']['available'] is True)
         require(status['observations']['acknowledged'] == acknowledged)
         require(status['observations']['creation_transport'] == 'cli')
@@ -361,7 +376,9 @@ def one_case(label, package, engine, collected):
         facts = status['failure_evidence']
         require(facts['available'] is True and facts['cli'] == {'outcome': 'returned', 'returncode': 0})
         require(facts['operation'] is None and facts['cleanup'] is None and facts['receipt_failure'] is None)
-        require(facts['primary'] == ({'stage': 'ready_marker', 'category': 'cancel_requested'} if label == 'cancel' else None))
+        expected_failure = ({'stage': 'ready_marker', 'category': 'cancel_requested'} if label == 'cancel'
+                            else {'stage': 'final_receipt', 'category': 'os_error'} if label == 'publication-repair' else None)
+        require(facts['primary'] == expected_failure)
         private_evidence = json.loads(collected._input_path(root, request).with_suffix('.evidence').read_bytes())
         for original in private_evidence['baselines'].values():
             require(original is not None and hashlib.sha256(bytes.fromhex(original['bytes_hex'])).hexdigest() == original['sha256'])
@@ -377,6 +394,26 @@ def one_case(label, package, engine, collected):
             retry = engine.launch(str(case/'profile.yaml'), {}, name=request, request_id=request,
                                  owner_root='fixture-owner', offline=True, collect=True, wait_seconds=0)
             require(retry['reused'])
+        elif label == 'publication-repair':
+            repair = status['publication_repair']
+            require(status['collector_phase'] == 'submitting' and status['result_recovered'])
+            require([a['state'] for a in repair['actions']] == ['before', 'before'])
+            original = {suffix: collected._input_path(root, request).with_suffix(suffix).read_bytes()
+                        for suffix in ('.observations', '.evidence', '.outcome', '.publication')}
+            first, second = repair['actions']
+            trace_before = (case/'trace.jsonl').read_text().splitlines()
+            applied = [collected.repair_record_projection(request, a['action_id'], repair['commit_digest'])
+                       for a in (first, second)]
+            require([x['outcome'] for x in applied] == ['applied', 'applied'])
+            require(collected.repair_record_projection(request, second['action_id'], repair['commit_digest'])['outcome'] == 'already_applied')
+            trace_after = (case/'trace.jsonl').read_text().splitlines()
+            repair_queries = [json.loads(x)['kind'] for x in trace_after[len(trace_before):]]
+            require(repair_queries == ['query'] * 6, 'Repair performed non-identity backend calls')
+            require(all(collected._input_path(root, request).with_suffix(s).read_bytes() == raw for s, raw in original.items()))
+            repaired = engine.launch_status(request)
+            require(repaired['collector_phase'] == 'completed' and repaired['result'] == status['result'])
+            report.update(repairActions=applied, repairBackendCalls=repair_queries,
+                          preservedHistory=True, repairedStatus=repaired)
         else:
             require(status['state']=='unknown' and 'result' not in status)
             if label == 'cancel':
@@ -400,6 +437,9 @@ def one_case(label, package, engine, collected):
         # Release owned synthetic waits, then reap exactly owned direct/adopted
         # children. Never enumerate/signal unrelated PIDs or whole process groups.
         (case/'release').write_text('cleanup\n')
+        (case/'publication-release').write_text('cleanup\n')
+        if restricted_root is not None:
+            restricted_root.chmod(0o700)
         cleanup_deadline=time.monotonic()+5
         # Discover direct descendants from the exact known process tree, not
         # from names or global process enumeration, before terminating parents.

@@ -161,7 +161,8 @@ def launch(profile_arg, variables, *, wait_seconds=600, **options):
                 raise admission.AdmissionError("launch_unknown", "Completion is recorded but the current instance is not verified ready",
                                                {"request_id": request, "id": name})
             return current["result"]
-        if observed.get("phase") in {"unknown", "fenced"} or time.monotonic() >= deadline:
+        if (refusal in {"unknown", "cancel_requested"}
+                or observed.get("phase") in {"unknown", "fenced"} or time.monotonic() >= deadline):
             raise admission.AdmissionError("launch_unknown", "Collected launch has no confirmed completed result; no replay occurred",
                                            {"request_id": request, "id": name})
         time.sleep(min(0.1, max(0, deadline - time.monotonic())))
@@ -238,6 +239,8 @@ def public_status(request_id):
     result["observations"] = projection(collector.AttemptStore(root, binding), payload["generation"])
     from .collector_evidence import projection as evidence_projection
     result["failure_evidence"] = evidence_projection(collector.AttemptStore(root, binding), payload["generation"])
+    from .collector_projection import projection as publication_projection
+    result["publication_repair"] = publication_projection(collector.AttemptStore(root, binding), payload)
     if result.get("state") == "not_recorded":
         result["state"] = "unknown"
     refusal = _outcome(root, request_id)
@@ -306,7 +309,9 @@ def worker_run(payload):
             backend.verify()
             from .collector_evidence import Recorder as EvidenceRecorder
             evidence = EvidenceRecorder(store, payload["generation"])
-            with store.owned_worker(payload["generation"], preserve_error=True, failure_recorder=evidence) as submission:
+            from .collector_projection import Publication
+            publication = Publication(store, payload)
+            with store.owned_worker(payload["generation"], preserve_error=True, failure_recorder=evidence, publication=publication) as submission:
                 check_cancel()
                 from . import engine
                 from .collector_observation import Recorder
@@ -314,7 +319,7 @@ def worker_run(payload):
                 result = engine._launch_impl(payload["profile_path"], payload["variables"],
                     name=binding["name"], owner_root=binding["owner_root"], request_id=binding["request_id"],
                     offline=True, **payload["limits"], _frozen_profile=payload["profile_text"],
-                    _submission_hook=submission, _observations=observations, _evidence=evidence)
+                    _submission_hook=submission, _observations=observations, _evidence=evidence, _publication=publication)
                 return result
     except Exception as exc:
         # No raw exception/env/argv persisted. The worker scope records unknown.
@@ -340,6 +345,27 @@ def worker_run(payload):
         for sig, handler in old_handlers.items():
             signal.signal(sig, handler)
         _ACTIVE.reset(token)
+
+
+def repair_record_projection(request_id, action_id, expected_commit_digest):
+    """Apply only one exact committed local projection. Never lifecycle replay."""
+    from .collector_projection import ProjectionError, apply_action
+    found = locate(request_id)
+    if found is None:
+        raise ProjectionError()
+    root, payload = found
+    binding = payload["binding"]
+    backend = restore_backend(payload["backend"])
+    store = collector.AttemptStore(root, binding)
+    with lifecycle.name_custody(binding["name"]), store._lifecycle(), store._admission():
+        if _load(root, request_id) != payload:
+            raise ProjectionError()
+        if (backend.scope != {k: binding[k] for k in ("daemon", "project", "storage_pool")}
+                or backend.digest != binding["destination_digest"]):
+            raise ProjectionError()
+        with backend.activate():
+            backend.verify()  # Identity queries only; no instance mutation/readiness.
+            return apply_action(store, payload, action_id, expected_commit_digest)
 
 
 def cancel(request_id, owner_root):

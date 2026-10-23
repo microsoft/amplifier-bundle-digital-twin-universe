@@ -221,7 +221,7 @@ class AttemptStore:
             self._advance(current, "fenced")
 
     @contextmanager
-    def owned_worker(self, generation, *, preserve_error=False, failure_recorder=None):
+    def owned_worker(self, generation, *, preserve_error=False, failure_recorder=None, publication=None):
         """Full native engine adapter; consume under its existing admission lock.
 
         Caller already holds canonical-name custody. The yielded hook may run
@@ -251,8 +251,9 @@ class AttemptStore:
                 if failure_recorder is not None:
                     failure_recorder.failure("collector", primary)
                 try:
-                    with self._admission():
-                        self._advance(current, "unknown")
+                    if publication is None or not publication.attempted:
+                        with self._admission():
+                            self._advance(current, "unknown")
                 except Exception:
                     if not preserve_error:
                         raise
@@ -268,7 +269,10 @@ class AttemptStore:
                             or result.get("status") != "running"):
                         raise _conflict()
                     try:
-                        self._advance(current, "completed", _digest(result))
+                        if publication is None:
+                            self._advance(current, "completed", _digest(result))
+                        else:
+                            publication.complete(current, result)
                     except Exception as exc:
                         if failure_recorder is not None:
                             failure_recorder.failure("collector", exc)

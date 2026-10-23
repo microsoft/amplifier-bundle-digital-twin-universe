@@ -1282,7 +1282,7 @@ def _save_error_receipt(evidence, stage, root, receipt, primary):
         primary.add_note("Secondary receipt evidence was not acknowledged")
 
 
-def _publish_launch_result(ctx: dict, receipt: dict, result: dict, *, _observations=None, _evidence=None) -> None:
+def _publish_launch_result(ctx: dict, receipt: dict, result: dict, *, _observations=None, _evidence=None, _publication=None) -> None:
     checkpoint = {
         "daemon": ctx["daemon"], "project": ctx["project"],
         "intent_digest": receipt["intent_digest"], "result": result,
@@ -1305,6 +1305,8 @@ def _publish_launch_result(ctx: dict, receipt: dict, result: dict, *, _observati
             raise admission.AdmissionError("request_conflict", "The prepared launch result changed")
         current.pop("prepared_result")
         current.update(state="ready", result=result)
+        if _publication is not None:
+            _publication.commit(ctx, root, current)
         _evidence_call(_evidence, "final_receipt", admission.save_receipt, root, current)
         if _observations is not None:
             _evidence_call(_evidence, "observations", _observations.mark, "final_receipt_saved")
@@ -1363,7 +1365,7 @@ def _launch_impl(
     owner_root: str | None = None,
     request_id: str | None = None,
     offline: bool = False,
-    *, _frozen_profile: str | None = None, _submission_hook=None, _observations=None, _evidence=None,
+    *, _frozen_profile: str | None = None, _submission_hook=None, _observations=None, _evidence=None, _publication=None,
 ) -> dict:
     """Launch a Digital Twin Universe.  Returns the JSON status dict."""
     incus.check_incus()
@@ -1908,7 +1910,7 @@ def _launch_impl(
     try:
         if _observations is not None:
             _evidence_call(_evidence, "observations", _observations.mark, "provisioning_completed", result=result)
-            _publish_launch_result(ctx, receipt, result, _observations=_observations, _evidence=_evidence)
+            _publish_launch_result(ctx, receipt, result, _observations=_observations, _evidence=_evidence, _publication=_publication)
         else:
             if _evidence is None:
                 _publish_launch_result(ctx, receipt, result)

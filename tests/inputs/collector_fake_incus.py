@@ -288,6 +288,13 @@ def main():
             return 124
         with locked():
             trace("provision.released")
+    if (ROOT / "publication-pause").exists() and len(a) == 4 and a[:2] == ["config", "set"] and a[3] == "user.dtu.launch-state=ready":
+        (ROOT / "publication-entered").write_text("ready marker applied\n")
+        deadline = time.monotonic() + 10
+        while not (ROOT / "publication-release").exists():
+            if time.monotonic() >= deadline:
+                return 124
+            time.sleep(.02)
     print(result if isinstance(result, str) else json.dumps(result))
     return 0
 

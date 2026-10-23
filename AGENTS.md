@@ -83,6 +83,12 @@ Run these before opening a PR. The reviewer expects evidence in the PR body, not
   Overflow, truncation and timeout fence before the requested operation. Cleanup
   targets only the owned query client, never the daemon/guest/collector.
   Operational command capture is a separate, still-unbounded path.
+- **Committed publication repair**: only future successful collected attempts
+  can commit the exact ready-receipt and collector-completion pair. Repair
+  requires that immutable commit, matching before/after bytes and existing
+  name/request/admission custody. Never infer repair from a ready marker, PID,
+  elapsed time or free lock. Status/retry never applies repair. No failed/removed
+  action, capacity release or legacy approval authority is provided.
 - **Hardcoded subprocess timeouts**: `subprocess.run(..., timeout=N)` values that look reasonable on a quiet laptop are too short on loaded systems. Prefer environment-variable overrides like `AMPLIFIER_DTU_INCUS_LAUNCH_TIMEOUT_SECONDS` where they exist; add one where they don't, rather than picking a new fixed number.
 - **Directory recursion in file-push / file-pull**: both code paths now handle directories recursively. Older code assumed file-only and silently no-op'd on directories. If you find a "file not transferred" bug, check whether the caller is passing a directory through a path that still assumes a single file.
 - **`mirror-from-github` fragility on ARM64**: the `amplifier-bundle-gitea` mirror-from-github path has known ARM64 reliability issues. When reliability matters (e.g., in test setup), prefer direct Gitea API calls over mirror-from-github.

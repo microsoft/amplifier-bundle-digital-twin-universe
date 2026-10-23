@@ -220,8 +220,51 @@ replace the primary exception or cause another cleanup attempt. Post-replace
 fsync failure may leave visible but unacknowledged bytes.
 
 This is bounded first-failure evidence, not a complete event history. Missing
-facts remain unobserved. Exact-action repair, settlement, stream-memory-bounded
-subprocess capture and host-loss durability remain separate work.
+facts remain unobserved. Settlement, operational-command stream-memory-bounded
+capture and host-loss durability remain separate work.
+
+#### Explicit local publication repair
+
+Future collected launches commit a private `.publication` record after
+acknowledged provisioning, checkpoint save and ready-marker return, before
+publishing the final admission result. The immutable record contains exactly
+two actions: `publish_ready_result`, then `complete_collector`. Both exact
+before/after images and their hashes are committed together, bound to the
+original request, owner, name, backend, intent, generation, bootstrap and
+acknowledgment evidence. It is limited to 256 KiB, with admission images limited
+to 16 KiB each and collector images to 8 KiB each. Overflow refuses without
+truncation or cleanup.
+
+`launch-status` exposes `publication_repair` with the commit digest, action IDs
+and observed `before`/`after`/`changed` states. Missing historical commits return
+`available: false`; observation never constructs one. These states describe
+local historical publication, not current guest readiness.
+
+The library API
+`collected_launch.repair_record_projection(request_id, action_id,
+expected_commit_digest)` explicitly applies only that retained action under
+name, request and admission custody. It revalidates the original bootstrap and
+bound backend with read-only identity queries; it never creates, starts,
+provisions, marks ready or deletes an instance. Admission publication precedes
+collector completion. The corresponding exact after bytes return
+`already_applied`; missing, changed, unsafe or unsupported bytes refuse. The
+retained exact commit is fsynced before a pending projection is written.
+Post-replace failure returns `projection_unknown`, not confirmed application.
+
+An attempted commit freezes the collector's before-image even when persistence
+is uncertain. A worker-recorded failure ends foreground observation promptly
+without replaying that worker. Explicit repair does not fill missing
+acknowledgments, erase failure/outcome history or infer an earlier fsync
+acknowledgment. A visible commit can be independently revalidated and synced
+for an explicit later action; it is never regenerated after uncertainty.
+
+This API has no caller-supplied desired state, bytes, backend or approval flag.
+It repairs only these future success-publication actions, not pre-commit loss,
+unacknowledged ready-marker calls, failed cleanup, historical UNKNOWN attempts
+or capacity-release settlement. Same-user cooperating clients remain the scope;
+these hashes do not authenticate a malicious same-UID writer. No status or
+launch retry invokes repair automatically, and no protected human legacy
+approve-and-apply integration is established.
 
 `launch-cancel REQUEST_ID --owner-root ROOT` requests cooperative cancellation
 of that exact collected generation. `cancellation_requested: true` records

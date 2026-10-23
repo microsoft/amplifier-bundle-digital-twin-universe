@@ -249,8 +249,12 @@ def _save_private_json(path: Path, value: dict) -> None:
     """Bounded atomic storage, independent of the admission receipt schema."""
     # Bound the replacement, not only the old file. Reconciliation can grow a
     # checkpoint too; every writer must leave a receipt the reader can load.
-    serialized = json.dumps(value)
-    if len(serialized.encode("utf-8")) > 262144:
+    _save_private_bytes(path, json.dumps(value).encode("utf-8"))
+
+
+def _save_private_bytes(path: Path, serialized: bytes) -> None:
+    """Apply exact bounded bytes with the same private atomic durability boundary."""
+    if not isinstance(serialized, bytes) or len(serialized) > 262144:
         raise AdmissionError("state_unsafe", "Admission receipt exceeded its size bound")
     root = path.parent
     _private_directory(root)
@@ -263,7 +267,7 @@ def _save_private_json(path: Path, value: dict) -> None:
     )
     tmp = Path(temporary)
     try:
-        with os.fdopen(descriptor, "w") as handle:
+        with os.fdopen(descriptor, "wb") as handle:
             handle.write(serialized)
             handle.flush()
             os.fsync(handle.fileno())
