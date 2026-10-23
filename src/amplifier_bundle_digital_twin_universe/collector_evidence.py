@@ -80,7 +80,9 @@ def _validate(store, generation, value):
             raise EvidenceError()
         original = json.loads(raw, object_pairs_hook=collector._unique_object)
         if key == "collector":
-            if (original != {"version": 1, "binding": dict(store.binding), "generation": generation,
+            if (not isinstance(original, dict) or type(original.get("version")) is not int
+                    or type(original.get("revision")) is not int
+                    or original != {"version": 1, "binding": dict(store.binding), "generation": generation,
                              "revision": 1, "phase": "prepared", "result_digest": None}):
                 raise EvidenceError()
         elif (not isinstance(original, dict) or set(original) != {
@@ -109,6 +111,11 @@ def _validate(store, generation, value):
                 or (op["terminal_status"] is not None and (type(op["terminal_status"]) is not int or op["terminal_status"] not in {200, 400, 401}))
                 or op["terminal_source"] not in ({None} if op["terminal_status"] is None else {"submit", "observe"})):
             raise EvidenceError()
+        if (op["initial_status"] in {200, 400, 401} and
+                (op["terminal_status"] != op["initial_status"] or op["terminal_source"] != "submit")):
+            raise EvidenceError()
+        if op["initial_status"] < 200 and op["terminal_source"] == "submit":
+            raise EvidenceError()
     for slot in ("primary", "receipt_failure"):
         fact = value[slot]
         if fact is not None and (not isinstance(fact, dict) or set(fact) != {"stage", "category"}
@@ -119,6 +126,12 @@ def _validate(store, generation, value):
             or cleanup["delete_call"] not in {"entered", "returned", "raised"}
             or cleanup["category"] not in (_CATEGORIES if cleanup["delete_call"] == "raised" else {None})
             or value["primary"] is None or value["primary"]["stage"] != "provisioning"):
+        raise EvidenceError()
+    expected_revision = (1 + (baselines["reservation"] is not None) + (cli is not None)
+                         + (op is not None) + (op is not None and op["terminal_source"] == "observe")
+                         + (value["primary"] is not None) + (value["receipt_failure"] is not None)
+                         + (cleanup is not None) + (cleanup is not None and cleanup["delete_call"] != "entered"))
+    if value["revision"] != expected_revision:
         raise EvidenceError()
 
 
@@ -134,6 +147,16 @@ def _read(store, generation):
     value = json.loads(raw, object_pairs_hook=collector._unique_object)
     _validate(store, generation, value)
     return value
+
+
+def preflight(binding):
+    """Reject excessive escaped identities before any durable generation exists."""
+    prepared = {"version": 1, "binding": dict(binding), "generation": "0" * 32,
+                "revision": 1, "phase": "prepared", "result_digest": None}
+    reservation = {k: binding[k] for k in ("request_id", "name", "owner_root", "intent_digest")}
+    reservation.update(state="launching", created_at="0" * 64)
+    if any(len(json.dumps(v).encode()) > _BASELINE_BYTES for v in (prepared, reservation)):
+        raise admission.AdmissionError("collect_unsupported", "Collected identity exceeds the private evidence baseline bound")
 
 
 def initialize(store, generation):

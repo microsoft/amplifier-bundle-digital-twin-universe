@@ -1103,19 +1103,31 @@ def _reconcile_creations(ctx: dict, request_id: str | None = None, _evidence=Non
                 fresh = True
         except (OSError, ValueError, KeyError, TypeError, incus.IncusError, http.client.HTTPException):
             pass  # Missing, expired or unreachable operations remain unknown.
+        evidence_error = None
         if _evidence is not None and fresh and result and result["status_code"] in {200, 400, 401}:
-            _evidence.operation(receipt["create_operation"], ctx, receipt, terminal=result["status_code"])
-        with admission.locked(ctx) as root:
-            current = admission.read_receipt(root, receipt["request_id"])
-            if (current and current.get("state") in {"launching", "unknown"}
-                    and current.get("create_operation") == receipt["create_operation"]):
-                current["operation_observed_at"] = time.time()
-                if result and result["status_code"] in {200, 400, 401}:
-                    current["creation_status"] = result["status_code"]
-                    # Creation success alone is not completed provisioning.
-                    # Existing instances still count after terminal creation.
-                    current["state"] = "created" if result["status_code"] == 200 else "failed"
-                _evidence_call(_evidence, "operation_receipt", admission.save_receipt, root, current)
+            try:
+                _evidence.operation(receipt["create_operation"], ctx, receipt, terminal=result["status_code"])
+            except Exception as exc:
+                evidence_error = exc
+        try:
+            with admission.locked(ctx) as root:
+                current = admission.read_receipt(root, receipt["request_id"])
+                if (current and current.get("state") in {"launching", "unknown"}
+                        and current.get("create_operation") == receipt["create_operation"]):
+                    current["operation_observed_at"] = time.time()
+                    if result and result["status_code"] in {200, 400, 401}:
+                        current["creation_status"] = result["status_code"]
+                        # Creation success alone is not completed provisioning.
+                        # Existing instances still count after terminal creation.
+                        current["state"] = "created" if result["status_code"] == 200 else "failed"
+                    _evidence_call(_evidence, "operation_receipt", admission.save_receipt, root, current)
+        except Exception:
+            if evidence_error is None:
+                raise
+            evidence_error.add_note("Operation journal preservation was not acknowledged")
+            raise evidence_error
+        if evidence_error is not None:
+            raise evidence_error
 
 
 def _wait_for_creation(ctx: dict, request_id: str, _evidence=None) -> None:
@@ -1504,12 +1516,24 @@ def _launch_impl(
                 receipt["create_operation"] = _evidence_call(
                     _evidence, "creation", operations.submit,
                     endpoint, container_name, image, effective_config, ctx["storage_pool"])
+                evidence_error = None
                 if _evidence is not None:
-                    _evidence.operation(receipt["create_operation"], ctx, receipt)
+                    try:
+                        _evidence.operation(receipt["create_operation"], ctx, receipt)
+                    except Exception as exc:
+                        evidence_error = exc
                 code = receipt["create_operation"]["status_code"]
                 if code in {200, 400, 401}:
                     receipt.update(creation_status=code, state="created" if code == 200 else "failed")
-                _evidence_call(_evidence, "operation_receipt", admission.save_receipt, root, receipt)
+                try:
+                    _evidence_call(_evidence, "operation_receipt", admission.save_receipt, root, receipt)
+                except Exception:
+                    if evidence_error is None:
+                        raise
+                    evidence_error.add_note("Operation journal preservation was not acknowledged")
+                    raise evidence_error
+                if evidence_error is not None:
+                    raise evidence_error
             else:
                 try:
                     if offline:
@@ -1550,11 +1574,21 @@ def _launch_impl(
             else:
                 _evidence_call(_evidence, "creation_wait", _wait_for_creation, ctx, request_id, _evidence)
         except Exception as exc:
-            with admission.locked(ctx) as root:
-                current = admission.read_receipt(root, request_id)
-                if current and current.get("state") in {"launching", "unknown"}:
-                    current.update(state="unknown", failure_cause=_creation_failure_cause(exc))
-                    _save_error_receipt(_evidence, "creation_wait", root, current, exc)
+            from .collector_evidence import EvidenceError
+            if isinstance(exc, EvidenceError):
+                raise
+            current = None
+            try:
+                with admission.locked(ctx) as root:
+                    current = admission.read_receipt(root, request_id)
+                    if current and current.get("state") in {"launching", "unknown"}:
+                        current.update(state="unknown", failure_cause=_creation_failure_cause(exc))
+                        _save_error_receipt(_evidence, "creation_wait", root, current, exc)
+            except Exception as secondary:
+                if _evidence is None:
+                    raise
+                _evidence.failure("creation_wait", secondary, secondary=True)
+                exc.add_note("Secondary creation receipt evidence was not acknowledged")
             raise admission.AdmissionError(
                 "launch_failed" if current and current.get("state") == "failed" else "launch_unknown",
                 "Creation is not confirmed ready for provisioning; inspect launch-status",
@@ -1830,7 +1864,8 @@ def _launch_impl(
                 _HM(_hm_hostname.removesuffix(".local"), container_name).unregister()
         except BackendFence as fence:
             if _evidence is not None:
-                _evidence.failure("cleanup", fence, secondary=True)
+                primary.add_note("Cleanup stopped at a backend fence")
+                raise primary from fence
             raise fence from primary
         except Exception:
             pass
@@ -1839,6 +1874,7 @@ def _launch_impl(
                 _stop_mock_containers(container_name)
             except Exception:
                 pass
+        delete_returned = False
         try:
             if _evidence is not None:
                 _evidence.cleanup("entered")
@@ -1850,15 +1886,22 @@ def _launch_impl(
                 raise
             if _evidence is not None:
                 _evidence.cleanup("returned")
+            delete_returned = True
             with admission.locked(ctx) as root:
                 receipt["state"] = "failed"
                 admission.save_receipt(root, receipt)
         except Exception as secondary:
-            if _evidence is not None and _evidence.value["cleanup"] and _evidence.value["cleanup"]["delete_call"] == "returned":
+            if _evidence is not None and delete_returned:
                 _evidence.failure("cleanup", secondary, secondary=True)
-            with admission.locked(ctx) as root:
-                receipt["state"] = "unknown"
-                _save_error_receipt(_evidence, "cleanup", root, receipt, primary)
+            try:
+                with admission.locked(ctx) as root:
+                    receipt["state"] = "unknown"
+                    _save_error_receipt(_evidence, "cleanup", root, receipt, primary)
+            except Exception as secondary:
+                if _evidence is None:
+                    raise
+                _evidence.failure("cleanup", secondary, secondary=True)
+                primary.add_note("Secondary cleanup receipt evidence was not acknowledged")
         raise
     # Evidence/ready-marker publication failures must not delete a successfully
     # provisioned environment. Checkpoint the original result before readiness.
@@ -1867,7 +1910,10 @@ def _launch_impl(
             _evidence_call(_evidence, "observations", _observations.mark, "provisioning_completed", result=result)
             _publish_launch_result(ctx, receipt, result, _observations=_observations, _evidence=_evidence)
         else:
-            _publish_launch_result(ctx, receipt, result)
+            if _evidence is None:
+                _publish_launch_result(ctx, receipt, result)
+            else:
+                _publish_launch_result(ctx, receipt, result, _evidence=_evidence)
     except Exception as exc:
         raise admission.AdmissionError(
             "launch_unknown",

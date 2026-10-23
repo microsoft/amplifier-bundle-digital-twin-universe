@@ -262,6 +262,14 @@ def one_case(label, package, engine, collected):
         require(status['observations']['acknowledged'] == acknowledged)
         require(status['observations']['creation_transport'] == 'cli')
         require(status['observations']['all_acknowledged'] == (label == 'observer-loss'))
+        facts = status['failure_evidence']
+        require(facts['available'] is True and facts['cli'] == {'outcome': 'returned', 'returncode': 0})
+        require(facts['operation'] is None and facts['cleanup'] is None and facts['receipt_failure'] is None)
+        require(facts['primary'] == ({'stage': 'ready_marker', 'category': 'cancel_requested'} if label == 'cancel' else None))
+        private_evidence = json.loads(collected._input_path(root, request).with_suffix('.evidence').read_bytes())
+        for original in private_evidence['baselines'].values():
+            require(original is not None and hashlib.sha256(bytes.fromhex(original['bytes_hex'])).hexdigest() == original['sha256'])
+        require('baselines' not in facts and 'generation' not in facts and 'binding' not in facts)
         if label != 'cancel':
             require('cancellation_requested' not in status)
             require(collected._outcome(root, request) != 'cancel_requested')

@@ -334,3 +334,173 @@ def test_unsafe_evidence_is_refused_without_writes(collected, kind):
     with pytest.raises(admission.AdmissionError):
         engine.launch_status("observation-request")
     assert path.read_bytes() == raw and other.read_bytes() == raw
+
+
+def test_escaped_identity_preflight_precedes_durable_preparation(collected):
+    from pathlib import Path
+    with pytest.raises(admission.AdmissionError) as error:
+        engine.launch(collected[1], {}, name="bounded", request_id="\U00010000" * 256,
+                      owner_root="\U00010000" * 256, offline=True, collect=True)
+    assert error.value.code == "collect_unsupported"
+    assert not collected[4] and not collected[3].called
+    assert not list(Path(collected[0].lifecycle.base_directory()).glob("*/collectors/*"))
+
+
+@pytest.mark.parametrize("mutation", ["baseline_bool", "baseline_float", "revision_one", "impossible_terminal"])
+def test_impossible_evidence_states_are_rejected(collected, mutation):
+    launch(collected)
+    path, _ = evidence(collected)
+    value = json.loads(path.read_bytes())
+    if mutation.startswith("baseline"):
+        raw = bytes.fromhex(value["baselines"]["collector"]["bytes_hex"])
+        baseline = json.loads(raw)
+        baseline["version" if mutation == "baseline_bool" else "revision"] = True if mutation == "baseline_bool" else 1.0
+        raw = json.dumps(baseline).encode()
+        value["baselines"]["collector"] = {"bytes_hex": raw.hex(), "sha256": hashlib.sha256(raw).hexdigest()}
+    elif mutation == "revision_one":
+        value["revision"] = 1
+    else:
+        value["cli"] = None
+        value["operation"] = {"id": "11111111-1111-4111-8111-111111111111", "initial_status": 200,
+                              "terminal_status": 400, "terminal_source": "observe"}
+        value["revision"] += 1
+    path.write_text(json.dumps(value))
+    before = path.read_bytes()
+    with pytest.raises(admission.AdmissionError):
+        engine.launch_status("observation-request")
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("journal_fails", [False, True])
+@pytest.mark.parametrize("at_wait", [False, True])
+def test_sidecar_failure_preserves_original_operation_journal(collected, monkeypatch, at_wait, journal_fails):
+    from amplifier_bundle_digital_twin_universe import collector_evidence as ev
+    op = {"id": "11111111-1111-4111-8111-111111111111", "status_code": 103 if at_wait else 200,
+          "daemon": "b" * 64, "project": "default", "name": "observation-case",
+          "request_id": "observation-request", "owner_root": "observation-owner"}
+    monkeypatch.setattr(engine.operations, "local_endpoint", lambda ctx: {"synthetic": True})
+    monkeypatch.setattr(engine.operations, "submit", MagicMock(return_value=op))
+    monkeypatch.setattr(engine.operations, "observe", lambda *a, **k: {"id": op["id"], "status_code": 200})
+    operation = ev.Recorder.operation
+    original_error = ev.EvidenceError()
+    raised = []
+    def fail(self, *args, **kwargs):
+        if ("terminal" in kwargs) == at_wait:
+            raised.append(original_error)
+            raise original_error
+        return operation(self, *args, **kwargs)
+    monkeypatch.setattr(ev.Recorder, "operation", fail)
+    save = admission.save_receipt
+    def fail_journal(root, value):
+        if journal_fails and raised:
+            raise OSError("secondary journal failure")
+        return save(root, value)
+    monkeypatch.setattr(admission, "save_receipt", fail_journal)
+    real_launch = engine._launch_impl
+    caught_errors = []
+    def collect_error(*args, **kwargs):
+        try:
+            return real_launch(*args, **kwargs)
+        except Exception as exc:
+            caught_errors.append(exc)
+            raise
+    monkeypatch.setattr(engine, "_launch_impl", collect_error)
+    deleted = MagicMock()
+    monkeypatch.setattr(incus, "delete_container", deleted)
+    with pytest.raises(admission.AdmissionError):
+        launch(collected)
+    path, payload = evidence(collected)
+    receipt = admission.read_receipt(path.parent.parent, payload["binding"]["request_id"])
+    assert caught_errors == [original_error]
+    if journal_fails:
+        assert receipt["state"] == "launching" and "creation_status" not in receipt
+        assert ("create_operation" in receipt) is at_wait
+    else:
+        assert receipt["create_operation"] == op and receipt["creation_status"] == 200
+        assert receipt["state"] == "created"
+    assert "failure_cause" not in receipt
+    deleted.assert_not_called()
+    assert engine.operations.submit.call_count == 1
+
+
+def test_cleanup_fence_preserves_primary_without_claiming_receipt_failure(collected, monkeypatch):
+    from amplifier_bundle_digital_twin_universe.bound_backend import BackendFence
+    primary = RuntimeError("SECRET-primary-provision")
+    counted = provision_counter(collected, monkeypatch)
+    counted.side_effect = primary
+    get = incus.get_config
+    def fence(name, key):
+        if key == "user.dtu.hostname":
+            raise BackendFence("SECRET-fence")
+        return get(name, key)
+    monkeypatch.setattr(incus, "get_config", fence)
+    deleted = MagicMock()
+    monkeypatch.setattr(incus, "delete_container", deleted)
+    with pytest.raises(admission.AdmissionError):
+        launch(collected)
+    facts = engine.launch_status("observation-request")["failure_evidence"]
+    assert facts["primary"] == {"stage": "provisioning", "category": "error"}
+    assert facts["cleanup"] is None and facts["receipt_failure"] is None
+    deleted.assert_not_called()
+
+
+def test_baseline_captures_original_format_not_reconstructed_json(attempt):
+    from amplifier_bundle_digital_twin_universe import collector_evidence as ev
+    _, store, _, _, reserve, _ = attempt
+    generation = store.prepare()
+    raw = ("\n" + json.dumps(json.loads(store.path.read_bytes()), indent=2, sort_keys=True) + "\n").encode()
+    store.path.write_bytes(raw)
+    ev.initialize(store, generation)
+    value = json.loads(store.path.with_suffix(".evidence").read_bytes())
+    assert bytes.fromhex(value["baselines"]["collector"]["bytes_hex"]) == raw
+    store.dispatch_once(generation, lambda _: None)
+    with pytest.raises(RuntimeError):
+        with store.owned_worker(generation):
+            recorder = ev.Recorder(store, generation)
+            reserve()
+            receipt = admission.receipt_path(store.root, store.binding["request_id"])
+            raw_receipt = ("\n" + json.dumps(json.loads(receipt.read_bytes()), indent=1) + "\n").encode()
+            receipt.write_bytes(raw_receipt)
+            recorder.baseline()
+            assert bytes.fromhex(recorder.value["baselines"]["reservation"]["bytes_hex"]) == raw_receipt
+            raise RuntimeError("finish fixture")
+
+
+def test_all_secondary_cleanup_locks_failing_preserve_original(collected, monkeypatch):
+    from contextlib import contextmanager
+    primary = RuntimeError("SECRET-original")
+    counted = provision_counter(collected, monkeypatch)
+    counted.side_effect = primary
+    monkeypatch.setattr(incus, "delete_container", MagicMock())
+    locked = admission._locked_file
+    # Activate failure only after the primary provisioning call.
+    @contextmanager
+    def failure(path, *args, **kwargs):
+        if counted.called and path.name == "admission.lock":
+            raise OSError("SECRET-lock")
+        with locked(path, *args, **kwargs):
+            yield
+    monkeypatch.setattr(admission, "_locked_file", failure)
+    with pytest.raises(RuntimeError) as caught:
+        launch(collected)
+    assert caught.value is primary
+    assert incus.delete_container.call_count == 1 and counted.call_count == 1
+
+
+def test_historical_large_identity_observation_precedes_new_size_preflight(collected, monkeypatch):
+    from amplifier_bundle_digital_twin_universe import collector
+    runtime, profile, _, create, launches = collected
+    request = owner = "\U00010000" * 256
+    name = "old-identity"
+    from pathlib import Path
+    binding = dict(runtime.capture_backend().scope, request_id=request, owner_root=owner, name=name,
+                   intent_digest=runtime._intent(Path(profile).read_text(), {}, name, owner), destination_digest="c" * 64)
+    with admission.locked(runtime.capture_backend().scope) as root:
+        store = collector.AttemptStore(root, binding)
+    store.prepare()  # Existing old prepared attempt; no new evidence.
+    before = store.path.read_bytes()
+    with pytest.raises(admission.AdmissionError) as caught:
+        engine.launch(profile, {}, name=name, request_id=request, owner_root=owner, offline=True, collect=True)
+    assert caught.value.code == "launch_unknown"
+    assert store.path.read_bytes() == before and not store.path.with_suffix(".evidence").exists()
+    assert not launches and not create.called

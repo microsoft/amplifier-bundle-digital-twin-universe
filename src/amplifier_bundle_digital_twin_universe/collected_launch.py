@@ -108,6 +108,8 @@ def launch(profile_arg, variables, *, wait_seconds=600, **options):
                     if status["state"] == "ready":
                         return {**status["result"], "reused": True}
                 raise admission.AdmissionError("launch_unknown", "The collected attempt already exists; observe its original request", {"request_id": request, "id": name})
+            from .collector_evidence import preflight
+            preflight(binding)
             if lifecycle.read_marker(root, name) is not None:
                 raise admission.AdmissionError("name_conflict", "A collected attempt already reserves this name")
             payload = {"version": _INPUT_VERSION, "binding": binding, "generation": "0" * 32,
@@ -316,23 +318,23 @@ def worker_run(payload):
                 return result
     except Exception as exc:
         # No raw exception/env/argv persisted. The worker scope records unknown.
-        with admission._locked_file(root / "admission.lock"):
-            causes = []
-            cause = exc
-            for _ in range(8):
-                if cause is None:
-                    break
-                causes.append(cause)
-                cause = cause.__cause__
-            code = (exc.code if isinstance(exc, admission.AdmissionError) and exc.code in _NONADMISSION
-                    and admission.read_receipt(root, binding["request_id"]) is None else
-                    "cancel_requested" if any(isinstance(c, CollectionCancelled) for c in causes) else "unknown")
-            try:
+        try:
+            with admission._locked_file(root / "admission.lock"):
+                causes = []
+                cause = exc
+                for _ in range(8):
+                    if cause is None:
+                        break
+                    causes.append(cause)
+                    cause = cause.__cause__
+                code = (exc.code if isinstance(exc, admission.AdmissionError) and exc.code in _NONADMISSION
+                        and admission.read_receipt(root, binding["request_id"]) is None else
+                        "cancel_requested" if any(isinstance(c, CollectionCancelled) for c in causes) else "unknown")
                 admission._save_private_json(_input_path(root, binding["request_id"]).with_suffix(".outcome"),
                                             {"generation": payload["generation"], "code": code})
-            except Exception:
-                exc.add_note("Collector outcome evidence was not acknowledged")
-                raise exc
+        except Exception:
+            exc.add_note("Collector outcome evidence was not acknowledged")
+            raise exc
         return None
     finally:
         for sig, handler in old_handlers.items():

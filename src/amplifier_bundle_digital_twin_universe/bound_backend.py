@@ -552,6 +552,6 @@ class BoundBackend:
                 command, env=_environment(record), **{"check": False, **kwargs},
             )
         except subprocess.TimeoutExpired:
-            raise BackendExecutionTimeout("Bound Incus execution timed out; outcome remains unknown") from None
+            raise BackendExecutionTimeout("Bound Incus execution failed; command outcome may be unknown") from None
         except (OSError, subprocess.SubprocessError, ValueError, TypeError):
             raise BackendFence("Bound Incus execution failed; command outcome may be unknown") from None
