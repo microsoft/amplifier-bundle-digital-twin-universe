@@ -6,7 +6,6 @@ Linux subreaper applies to this guest supervisor only, for exact owned descendan
 """
 import ctypes
 import hashlib
-import importlib.metadata
 import json
 import os
 from pathlib import Path

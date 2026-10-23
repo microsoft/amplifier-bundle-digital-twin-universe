@@ -6,6 +6,9 @@ trace.jsonl is classifications + PID/PPID only (64 KiB cap, fails closed).
 Mode/uid/gid/chmod are inert. Parent owns source/interpreter receipts and audit.
 Python guard is not an OS sandbox against hostile concurrent writers.
 """
+# ruff: noqa: E402
+# Disable bytecode before importing the remaining stdlib; this ordering is
+# deliberate bootstrap hygiene, not executable fixture setup between imports.
 import sys
 
 sys.dont_write_bytecode = True
