@@ -27,8 +27,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
-from amplifier_bundle_digital_twin_universe import admission, incus, operations
+from amplifier_bundle_digital_twin_universe import admission, incus, operations, lifecycle
 from amplifier_bundle_digital_twin_universe.incus import IncusError
+from amplifier_bundle_digital_twin_universe.bound_backend import BackendFence
 from dataclasses import dataclass
 
 import yaml as _yaml
@@ -1137,14 +1138,62 @@ def capacity(max_running=None, max_instances=None, min_free_bytes=None) -> dict:
         return admission.snapshot(ctx, limits, root)
 
 
+def _prepared_launch_result(receipt: dict, ctx: dict, instance: dict | None):
+    """Recover only a saved result with current exact ready-instance evidence."""
+    checkpoint = receipt.get("prepared_result")
+    if (
+        receipt["state"] not in {"launching", "unknown", "created"}
+        or not isinstance(checkpoint, dict)
+        or instance is None
+        or instance.get("status") != "Running"
+    ):
+        return None
+    config = instance.get("config", {})
+    identity = admission._reservation_identity(
+        receipt.get("name"), receipt.get("request_id"), receipt.get("owner_root")
+    )
+    if (
+        identity is None
+        or identity != admission._reservation_identity(
+            instance.get("name"), config.get("user.dtu.request-id"),
+            config.get("user.dtu.owner-root"),
+        )
+        or config.get("user.dtu.launch-state") != "ready"
+        or any(checkpoint.get(key) != ctx[key] for key in ("daemon", "project"))
+        or any(
+            not isinstance(receipt.get(key), str) or not receipt[key].strip()
+            for key in ("intent_digest", "created_at")
+        )
+        or checkpoint.get("intent_digest") != receipt["intent_digest"]
+    ):
+        return None
+    result = checkpoint.get("result")
+    if (
+        not isinstance(result, dict) or result.get("id") != receipt["name"]
+        or result.get("status") != "running"
+        or any(result.get(key) != receipt.get(key) for key in (
+            "name", "request_id", "owner_root", "created_at",
+        ))
+    ):
+        return None
+    return result
+
+
 def launch_status(request_id: str) -> dict:
+    from .collected_launch import public_status
+    collected = public_status(request_id)
+    return collected if collected is not None else _launch_status_legacy(request_id)
+
+
+def _launch_status_legacy(request_id: str, *, _reconcile=True) -> dict:
     """Observe a stable request without repeating any provisioning side effect.
 
     Absence after an interrupted launch is unknown, not proof of cancellation:
     the daemon operation may still be completing. No automatic replay occurs.
     """
     ctx = admission.context()
-    _reconcile_creations(ctx, request_id)
+    if _reconcile:
+        _reconcile_creations(ctx, request_id)
     with admission.locked(ctx) as root:
         receipt = admission.read_receipt(root, request_id)
         if receipt is None:
@@ -1157,6 +1206,7 @@ def launch_status(request_id: str) -> dict:
         match = next((i for i in instances if i["name"] == receipt["name"]), None)
         observed = dict(receipt)
         observed.pop("intent_digest", None)
+        observed.pop("prepared_result", None)
         if match is not None:
             config = match.get("config", {})
             if (
@@ -1174,7 +1224,51 @@ def launch_status(request_id: str) -> dict:
             observed["state"] = "removed"
         elif receipt["state"] in {"launching", "unknown"}:
             observed["state"] = "unknown"
+        # A newer terminal record must not be promoted by an older marker.
+        if receipt["state"] in {"failed", "removed"} and observed["state"] != "conflict":
+            observed["state"] = receipt["state"]
+        if "prepared_result" in receipt:
+            result = _prepared_launch_result(receipt, ctx, match)
+            if result is not None:
+                observed.update(result=result, result_recovered=True)
         return {"schema_version": 1, **observed}
+
+
+def _result_publication_receipt(root: Path, expected: dict) -> dict:
+    current = admission.read_receipt(root, expected["request_id"])
+    if (
+        current is None
+        or current["state"] not in {"launching", "unknown", "created"}
+        or any(key not in current or key not in expected or current[key] != expected[key] for key in (
+            "name", "request_id", "owner_root", "intent_digest", "created_at",
+        ))
+    ):
+        raise admission.AdmissionError(
+            "request_conflict", "Launch result publication no longer matches its receipt"
+        )
+    return current
+
+
+def _publish_launch_result(ctx: dict, receipt: dict, result: dict) -> None:
+    checkpoint = {
+        "daemon": ctx["daemon"], "project": ctx["project"],
+        "intent_digest": receipt["intent_digest"], "result": result,
+    }
+    # Serialize only this short publication stage, not provisioning. This is
+    # a receipt fence, not full lifecycle custody against external writers.
+    with admission.locked(ctx) as root:
+        current = _result_publication_receipt(root, receipt)
+        if "prepared_result" in current and current["prepared_result"] != checkpoint:
+            raise admission.AdmissionError("request_conflict", "A different launch result was recorded")
+        current["prepared_result"] = checkpoint
+        admission.save_receipt(root, current)
+        incus.set_config(receipt["name"], "user.dtu.launch-state", "ready")
+        current = _result_publication_receipt(root, receipt)
+        if current.get("prepared_result") != checkpoint:
+            raise admission.AdmissionError("request_conflict", "The prepared launch result changed")
+        current.pop("prepared_result")
+        current.update(state="ready", result=result)
+        admission.save_receipt(root, current)
 
 
 # ===================================================================
@@ -1198,6 +1292,28 @@ def _creation_failure_cause(exc: Exception) -> dict:
 
 
 def launch(
+    profile_arg: str, variables: dict[str, str], name: str | None = None,
+    hostname: str | None = None, max_instances: int | None = None,
+    max_running: int | None = None, min_free_bytes: int | None = None,
+    owner_root: str | None = None, request_id: str | None = None, offline: bool = False,
+    *, collect: bool = False, wait_seconds: float = 600,
+) -> dict:
+    """Launch synchronously by default, or explicitly collect a bounded attempt."""
+    options = dict(name=name, hostname=hostname, max_instances=max_instances,
+                   max_running=max_running, min_free_bytes=min_free_bytes,
+                   owner_root=owner_root, request_id=request_id, offline=offline)
+    if collect:
+        from .collected_launch import launch as collected
+        return collected(profile_arg, variables, wait_seconds=wait_seconds, **options)
+    request_id = str(uuid.uuid4()) if request_id is None else request_id
+    name = name or f"dtu-{hashlib.sha256(request_id.encode()).hexdigest()[:16]}"
+    with lifecycle.name_custody(name) as base:
+        if lifecycle.markers(base, name):
+            raise admission.AdmissionError("launch_unknown", "This name belongs to a collected attempt; use its original request")
+        return _launch_impl(profile_arg, variables, **{**options, "request_id": request_id, "name": name})
+
+
+def _launch_impl(
     profile_arg: str,
     variables: dict[str, str],
     name: str | None = None,
@@ -1208,12 +1324,14 @@ def launch(
     owner_root: str | None = None,
     request_id: str | None = None,
     offline: bool = False,
+    *, _frozen_profile: str | None = None, _submission_hook=None,
 ) -> dict:
     """Launch a Digital Twin Universe.  Returns the JSON status dict."""
     incus.check_incus()
 
     # Quick-load to get the base image.
-    host_profile = load_profile(profile_arg, variables)
+    host_profile = (load_profile(profile_arg, variables) if _frozen_profile is None else
+                    load_profile_from_content(_frozen_profile, variables, path=Path(profile_arg)))
     if offline and (
         host_profile.url_rewrites
         or host_profile.mock_services
@@ -1240,11 +1358,11 @@ def launch(
     image = _resolve_image(host_profile.base.image)
     limits = admission.policy(max_running, max_instances, min_free_bytes)
     ctx = admission.context()
-    _reconcile_creations(ctx)
+    _reconcile_creations(ctx, request_id) if _submission_hook is not None else _reconcile_creations(ctx)
     intent_digest = hashlib.sha256(
         json.dumps(
             {
-                "profile": host_profile.path.read_text(),
+                "profile": host_profile.path.read_text() if _frozen_profile is None else _frozen_profile,
                 "variables": variables,
                 "name": container_name,
                 "hostname": hostname,
@@ -1349,6 +1467,8 @@ def launch(
             "created_at": now,
         }
         admission.save_receipt(root, receipt)
+        if _submission_hook is not None:
+            _submission_hook(ctx, root, receipt)
         try:
             print(f"Creating container {container_name} ({image})...", file=sys.stderr)
             if endpoint:
@@ -1411,12 +1531,13 @@ def launch(
         # still having the original file at the same location.  We push the
         # raw pre-substitution YAML so `--var` values supplied at update time
         # are re-applied freshly (matching launch-time semantics).
-        incus.file_push(
-            container_name,
-            [str(host_profile.path)],
-            _PROFILE_SNAPSHOT_PATH,
-            create_dirs=True,
-        )
+        if _frozen_profile is None:
+            incus.file_push(container_name, [str(host_profile.path)], _PROFILE_SNAPSHOT_PATH, create_dirs=True)
+        else:
+            with tempfile.NamedTemporaryFile("w", suffix=".yaml") as snapshot:
+                snapshot.write(_frozen_profile)
+                snapshot.flush()
+                incus.file_push(container_name, [snapshot.name], _PROFILE_SNAPSHOT_PATH, create_dirs=True)
 
         # Detect host gateway IP (retries until networking is up).
         host_ip = "127.0.0.1" if offline else _wait_for_gateway(container_name)
@@ -1426,7 +1547,8 @@ def launch(
         # validate=False: validation already ran on the host_profile parse
         # above; re-emitting warnings here would produce duplicates.
         rewritten_vars = _rewrite_localhost(variables, host_ip)
-        profile = load_profile(profile_arg, rewritten_vars, validate=False)
+        profile = (load_profile(profile_arg, rewritten_vars, validate=False) if _frozen_profile is None else
+                   load_profile_from_content(_frozen_profile, rewritten_vars, path=Path(profile_arg), validate=False))
 
         # Mock services -- resolve, build, and start Docker sidecars.
         running_services: list[RunningService] = []
@@ -1611,7 +1733,6 @@ def launch(
                 f"amplifier-digital-twin check-readiness {container_name}"
             )
 
-        print(f"DTU {container_name} ready.", file=sys.stderr)
         result: dict = {
             "id": container_name,
             "name": container_name,
@@ -1639,7 +1760,8 @@ def launch(
         result["request_id"] = request_id
         result["owner_root"] = owner_root
         result["offline"] = offline
-        incus.set_config(container_name, "user.dtu.launch-state", "ready")
+    except BackendFence:
+        raise
     except Exception:
         # Best-effort cleanup on failure, only for this successfully-created
         # instance. An uncertain creation above never enters this path.
@@ -1651,12 +1773,15 @@ def launch(
             _hm_hostname = incus.get_config(container_name, "user.dtu.hostname")
             if _hm_hostname:
                 _HM(_hm_hostname.removesuffix(".local"), container_name).unregister()
+        except BackendFence:
+            raise
         except Exception:
             pass
-        try:
-            _stop_mock_containers(container_name)
-        except Exception:
-            pass
+        if _submission_hook is None:
+            try:
+                _stop_mock_containers(container_name)
+            except Exception:
+                pass
         try:
             incus.delete_container(container_name, force=True)
             with admission.locked(ctx) as root:
@@ -1667,18 +1792,17 @@ def launch(
                 receipt["state"] = "unknown"
                 admission.save_receipt(root, receipt)
         raise
-    # A lost acknowledgement must not tear down a successfully provisioned
-    # environment. launch-status can recover its ready marker from Incus.
+    # Evidence/ready-marker publication failures must not delete a successfully
+    # provisioned environment. Checkpoint the original result before readiness.
     try:
-        with admission.locked(ctx) as root:
-            receipt.update(state="ready", result=result)
-            admission.save_receipt(root, receipt)
+        _publish_launch_result(ctx, receipt, result)
     except Exception as exc:
         raise admission.AdmissionError(
             "launch_unknown",
             "Provisioning completed but its receipt could not be saved; inspect launch-status",
             {"request_id": request_id, "id": container_name},
         ) from exc
+    print(f"DTU {container_name} ready.", file=sys.stderr)
     return result
 
 
@@ -1703,6 +1827,7 @@ def _read_profile_snapshot(container_id: str) -> str | None:
             Path(tmp_path).unlink(missing_ok=True)
 
 
+@lifecycle.guarded
 def update(
     container_id: str,
     variables: dict[str, str],
@@ -1732,7 +1857,8 @@ def update(
         )
 
     # Detect host gateway and rewrite localhost references in user-supplied vars.
-    host_ip = _wait_for_gateway(container_id)
+    from .bound_backend import current as bound_current
+    host_ip = "127.0.0.1" if bound_current() is not None else _wait_for_gateway(container_id)
     rewritten_vars = _rewrite_localhost(variables, host_ip)
 
     # Prefer the in-container snapshot written at launch time.  Fall back to
@@ -1767,6 +1893,9 @@ def update(
         # this is a re-parse for an already-launched DTU.
         profile = load_profile(profile_name, rewritten_vars, validate=False)
 
+    if bound_current() is not None and (profile.pypi_overrides or profile.mock_services or profile.access
+                                       or profile.passthrough or profile.url_rewrites):
+        raise BackendFence("Collected update cannot introduce unsupported external dependencies")
     if not profile.update:
         raise RuntimeError(
             f"Profile {profile_name!r} does not define an 'update' section"
@@ -1815,6 +1944,7 @@ def update(
     return result
 
 
+@lifecycle.guarded
 def exec_command(
     container_id: str,
     command: list[str],
@@ -1843,6 +1973,7 @@ def exec_command(
     }
 
 
+@lifecycle.guarded
 def exec_stream(
     container_id: str,
     command: list[str],
@@ -1885,6 +2016,7 @@ def sanitize_visual_id(value: str) -> str:
     return value
 
 
+@lifecycle.guarded
 def exec_interactive(container_id: str, *, visual_id: str | None = None) -> int:
     """Attach an interactive shell to the environment.
 
@@ -1906,6 +2038,7 @@ def exec_interactive(container_id: str, *, visual_id: str | None = None) -> int:
     return incus.exec_interactive(container_id, env=env)
 
 
+@lifecycle.guarded
 def file_push(
     container_id: str,
     local_paths: list[str],
@@ -1934,6 +2067,7 @@ def file_push(
     )
 
 
+@lifecycle.guarded
 def file_pull(
     container_id: str,
     container_paths: list[str],
@@ -2017,6 +2151,7 @@ def list_environments() -> list[dict]:
     return [_instance_info(inst["name"]) for inst in instances]
 
 
+@lifecycle.guarded
 def check_readiness(
     container_id: str,
     skip_access_check: bool = False,
@@ -2122,6 +2257,7 @@ def check_readiness(
     return result
 
 
+@lifecycle.guarded
 def destroy(
     container_id: str, owner_root: str | None = None, request_id: str | None = None
 ) -> dict:
@@ -2149,11 +2285,15 @@ def destroy(
             )
 
             HostnameManager(_hostname.removesuffix(".local"), container_id).unregister()
+    except BackendFence:
+        raise
     except Exception:
         pass  # best-effort
 
     # Stop mock service Docker containers before destroying the Incus container.
-    _stop_mock_containers(container_id)
+    from .bound_backend import current as bound_current
+    if bound_current() is None:
+        _stop_mock_containers(container_id)
 
     incus.stop_container(container_id)
     incus.delete_container(container_id)

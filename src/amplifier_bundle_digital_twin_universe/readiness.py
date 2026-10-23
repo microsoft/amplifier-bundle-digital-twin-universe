@@ -107,6 +107,12 @@ def _run_command_check(container_name: str, check: ReadinessCheck) -> dict:
 
 
 def check_readiness(container_name: str, checks: list[ReadinessCheck]) -> dict:
+    from . import lifecycle
+    with lifecycle.mutation(container_name):
+        return _check_readiness(container_name, checks)
+
+
+def _check_readiness(container_name: str, checks: list[ReadinessCheck]) -> dict:
     """Run all readiness checks and return the aggregated result.
 
     Returns a dict with ``ready`` (bool), ``message`` (str), and
