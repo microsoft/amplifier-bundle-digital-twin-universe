@@ -250,6 +250,9 @@ def one_case(label, package, engine, collected):
             require(response.get('error')=='launch_unknown')
             report['foregroundResponse'] = response
         status = engine.launch_status(request)
+        if label != 'cancel':
+            require('cancellation_requested' not in status)
+            require(collected._outcome(root, request) != 'cancel_requested')
         if label == 'observer-loss':
             require(status['state']=='ready' and status['collector_phase']=='completed')
             receipt = admission.read_receipt(root, request)

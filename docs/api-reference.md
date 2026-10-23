@@ -124,9 +124,61 @@ The lock requires a POSIX caller (Linux, WSL or macOS). Native Windows callers
 must run this CLI in WSL. No distributed or daemon-wide guarantee is implied.
 
 Use a private, stable `INCUS_CONF` when managing a remote explicitly, and
-`AMPLIFIER_DTU_INCUS_PROJECT` to pass `--project` to every Incus command. Incus
-itself does not honor `INCUS_PROJECT`. The capacity response identifies the
-actual daemon and project for callers to verify.
+`AMPLIFIER_DTU_INCUS_PROJECT` to pass `--project` to every ordinary Incus command.
+Do not rely on version-dependent ambient project selection. The capacity
+response identifies the actual daemon and project for callers to verify.
+
+#### Explicit collected launch (bounded initial rollout)
+
+`launch --collect --wait-seconds N` (library: `launch(..., collect=True,
+wait_seconds=N)`) runs the existing lifecycle in one library-owned worker.
+The foreground observes it for up to `N` seconds (default 600). Foreground
+timeout/disconnection does not cancel the worker. This is opt-in, not the
+default for existing callers and not a claim that every profile is supported.
+
+This first subset requires POSIX, `--offline`, an exact cached
+`local:<64-character fingerprint>` image, and a nonblank `--owner-root`.
+The profile and variable mapping are bounded to 64 KiB each. Host file seeding,
+package overrides, mocks, access ports/hostnames, passthrough and URL rewrites
+are unsupported. Explicit unsupported collection refuses before dispatch;
+it never falls back to a foreground launch. Synchronous launches retain their
+existing profile and remote/authentication support without a background guarantee.
+
+The caller must already have private, stable `INCUS_CONF` and
+`INCUS_GLOBAL_CONF` directories. The selected configuration must describe one
+explicit local Unix-socket remote without aliases or external authentication.
+The global configuration must be absent or equivalent. Capture measures the
+client executable/configuration and verifies daemon, project and storage pool.
+Every worker command uses that bound selection and refuses observed drift.
+No credentials are copied and no client configuration is created automatically.
+This is a cooperating-client drift check, not atomic protection from an
+administrator replacing a socket, executable or configuration between checks.
+
+Private bounded bootstrap data freezes the profile, variables, selected backend
+and worker runtime. The worker owns name/request custody through reservation,
+creation, provisioning, legitimate failure cleanup and result publication.
+Current public mutation entry points recognize that custody, including exec,
+transfers, readiness, update and destroy. A busy or unresolved collected attempt
+does not grant takeover permission. Older clients and direct Incus calls do not
+honor these guards; mixed-version lifecycle writes remain outside the guarantee.
+
+`launch-status REQUEST_ID` reports the original saved result and current bound
+instance evidence, plus `collector_phase`. A saved completion is not proof that
+the instance is still running. Observation never dispatches a replacement,
+resumes provisioning or repairs the collected record. Lost dispatch/worker
+evidence and consumed but unobserved submission remain unknown and nonreplayable.
+Use the same request identity; do not create another name to bypass uncertainty.
+
+`launch-cancel REQUEST_ID --owner-root ROOT` requests cooperative cancellation
+of that exact collected generation. `cancellation_requested: true` records
+the request, not daemon cancellation, successful cleanup or released capacity.
+The worker stops at a later guarded boundary; an in-flight backend operation
+can still finish. Owner labels remain descriptive, not authenticated human
+approval. Foreground timeout alone writes no cancellation.
+
+This increment does not establish host/process-group-loss durability,
+automatic takeover, external-writer exactly-once execution or legacy UNKNOWN
+adjudication. Those original recovery goals remain separate acceptance work.
 
 ### `capacity`
 

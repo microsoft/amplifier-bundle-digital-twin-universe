@@ -8,6 +8,7 @@ from threading import Event
 import pytest
 
 from amplifier_bundle_digital_twin_universe import admission, engine, incus
+from amplifier_bundle_digital_twin_universe.collected_launch import spawn_worker as real_spawn_worker
 from .test_admission import launch_infra  # noqa: F401
 
 
@@ -310,3 +311,48 @@ def test_worker_native_spawn_requires_exact_one_use_owned_constructor(monkeypatc
     assert effects == ["owned native construction"]
     assert recorded["allowed_counts"] == {"subprocess.Popen": 1, "os.posix_spawn": 1}
     assert recorded["denied"] == ["os.posix_spawn"] * 3 + ["subprocess.Popen"]
+
+
+def test_lost_spawn_ack_retains_original_generation_without_second_child(collected, monkeypatch):
+    """A returned synthetic child precedes the failed durable spawn acknowledgement."""
+    runtime, profile, _, create, _ = collected
+    calls, reaped = [], Event()
+
+    class Child:
+        pid = 12345
+
+        def wait(self):
+            reaped.set()
+            return 0
+
+    monkeypatch.setattr(runtime, "spawn_worker", real_spawn_worker)
+    real_save = admission._save_private_json
+
+    def fail_ack(path, value):
+        if path.suffix == ".dispatch":
+            raise OSError("synthetic spawn acknowledgement loss")
+        return real_save(path, value)
+
+    def fake_spawn(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return Child()
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", fake_spawn)
+    monkeypatch.setattr(admission, "_save_private_json", fail_ack)
+    with pytest.raises(OSError, match="acknowledgement"):
+        engine.launch(profile, {}, name="lost-ack", request_id="lost-ack-r",
+                      owner_root="owner", offline=True, collect=True)
+    root, payload = runtime.locate("lost-ack-r")
+    state = runtime.collector.AttemptStore(root, payload["binding"])
+    assert state.observe()["phase"] == "dispatched"
+    assert len(calls) == 1 and not create.called and reaped.wait(timeout=2)
+    with pytest.raises(admission.AdmissionError) as error:
+        engine.launch(profile, {}, name="lost-ack", request_id="lost-ack-r",
+                      owner_root="owner", offline=True, collect=True)
+    assert error.value.code == "launch_unknown"
+    assert len(calls) == 1 and not create.called
+    runtime.worker_run(payload)
+    assert state.observe()["phase"] == "completed" and create.call_count == 1
+    assert engine.launch(profile, {}, name="lost-ack", request_id="lost-ack-r",
+                         owner_root="owner", offline=True, collect=True)["reused"]
+    assert len(calls) == 1 and create.call_count == 1

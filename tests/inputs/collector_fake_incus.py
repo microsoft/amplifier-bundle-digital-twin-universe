@@ -171,7 +171,8 @@ def dispatch(a, state):
     if a[:2] == ["file", "push"]:
         push(a[2:], state)
         return "", False
-    if len(a) == 6 and a[0] == "exec" and a[2:5] == ["--", "bash", "-lc"]:
+    if (len(a) == 6 and a[0] == "exec"
+            and a[2:4] == ["--", "bash"] and a[4] in {"-c", "-lc"}):
         require(instance(state, a[1])["status"] == "Running")
         if a[5] in CHMOD:
             require((ROOT / "guests" / a[1] / a[5].split()[-1].lstrip("/")).is_file())
