@@ -25,7 +25,8 @@
     "src/amplifier_bundle_digital_twin_universe/readiness.py": "804950cb3d4b2803ae99b21a7564260d3f39e7eb753fbcdfd8844bf5fe61204b",
     "tests/unit/test_bound_backend.py": "451fb48364b126e5dab41f364dfec08b7e6a1efc76b0a3dafd9e8a6181fed52a",
     "tests/unit/test_identity_query_capture.py": "b402f3f57539445e822df32cd4178cd84ca1ca540fa4d70586d206451994090f",
-    "tests/unit/test_operational_capture_contract.py": "159f59b4be180f45a09637f34a9d7af10c01e348a0848110bea32da43c4b4fe2",
+    "tests/unit/test_operational_capture_contract.py": "63f2e1d9ce6da8479221a041ff2b6d1f201e45d2e24d07db3af0d0fe13adfc80",
+    "tests/deferred/operational_capture_contract.py": "2570053a09a62791d7e7cb2e5189e726852949fc2225bc1ce2cdfb5df63faa8a",
     "tests/unit/test_collected_launch.py": "3e497b8ce9766e0961d8b5e7dc632ce4b5a285d22c5e94807107e2de13b3f4f4",
     "tests/unit/test_collector_observations.py": "269aead4f71544401eafd39e68b36b6f03277d52e726e6c9d6279d35c1944097",
     "tests/unit/test_collector_evidence.py": "11398fdc47efd3b40a751c1d210fbb90ad3455cbcdf734bc7e26b643200f2a64",
@@ -40,11 +41,11 @@
     "tests/helpers.py": "a3d4492788cdd6e6d5cb9a50722680e5040b1c19138629b9c300ff88396a9bb5",
     "pyproject.toml": "c1cf4a09148bacafdb42c836d6b3ffd96d79433617540c1c13a327174b2d5fb3",
     "uv.lock": "6a7c424e26a53152a16af0911dd3e511631f5d9ba222756fc0fede7042b0494f",
-    "tests/inputs/run_dtu001.py": "0527cac7a52aace228abcaf8c6b04c2a8086cb8e258d4a22cee758189f525f34",
+    "tests/inputs/run_dtu001.py": "b8c819ab83e56865a0b197394b1131915c4280af7845e260bd3dfd33ec4a6ced",
     "tests/inputs/run_collector_process.py": "95a8d84498a41152f2e2c61d0c917ad64c8887e5dce8e2af130b2c6f855a195e"
   },
   "unitSuite": {
-    "sourceSha256": "0bacdd56ec49925e60b1083b6cb559d18455de11339bbdd637ff95a6a956a561",
+    "sourceSha256": "7dd3c5f3b75f74d1ac9f35204dc50fc9ea43d1b66a596fa47c38c99fa2917ca2",
     "testFiles": [
       "tests/unit/profile/test_addon_matcher_parity.py",
       "tests/unit/profile/test_resolution.py",

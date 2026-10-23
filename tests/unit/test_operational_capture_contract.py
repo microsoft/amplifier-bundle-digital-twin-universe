@@ -1,7 +1,7 @@
-"""Test-first operational capture boundaries; no new output-budget policy.
+"""Operational capture safety boundaries; no new output-budget policy.
 
-The stream guard detects unsized reads without allocating large payloads.
-It does not prove a memory bound: chunked reads followed by joining also grow.
+The deferred unsized-read oracle lives in tests/deferred/operational_capture_contract.py.
+It is explicit opt-in, not a default safety test or a bounded-memory claim.
 All subprocess/backend effects are fakes. These are not installed/live proofs.
 """
 # ruff: noqa: F811
@@ -66,15 +66,6 @@ def fake_spools(monkeypatch, *, stdout="complete stdout\n", stderr="complete std
         patch.setattr(incus, "_run", run)
         yield calls, streams
     assert len(streams) == 2 and all(stream.closed for stream in streams)
-
-
-def test_successful_provisioning_avoids_unsized_output_reads(monkeypatch):
-    # This asserts finite reads, not a proposed public byte limit. Small finite
-    # payloads plus the sentinel discriminate without relying on memory pressure.
-    monkeypatch.setattr(incus, "exec_command", native_exec)
-    with fake_spools(monkeypatch, require_sized_reads=True) as (calls, _):
-        engine._run_provisioning("candidate", ["fixture-step"])
-        assert calls == [(["incus", "exec", "candidate", "--", "bash", "-lc", "fixture-step"], 600)]
 
 
 @pytest.mark.parametrize("read_error", [OSError("PRIVATE-capture-read"), UnicodeError("PRIVATE-decode")],

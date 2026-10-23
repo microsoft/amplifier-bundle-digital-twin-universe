@@ -23,6 +23,8 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = Path("/artifacts/dtu001-mocked")
+if sys.argv[1:] in (["--collect-unit"], ["--collect-capture-contract"]):
+    OUTPUT = Path("/artifacts/dtu001-collection") / sys.argv[1][2:]
 MANIFEST = ROOT / "tests/inputs/dtu001-selection.json"
 FORBIDDEN = {
     "subprocess.Popen", "os.system", "os.posix_spawn", "os.fork",
@@ -290,11 +292,17 @@ def case_key(function, parameters):
 
 def main():
     if sys.argv[1:] not in ([], ["--unit-suite"], ["--identity-capture"], ["--publication-repair"],
-                           ["--operational-capture-contract"], ["--capture-fault"]):
+                           ["--operational-capture-contract"], ["--capture-fault"],
+                           ["--collect-unit"], ["--collect-capture-contract"]):
         raise RuntimeError("Unsupported exact test selection")
+    collection_only = sys.argv[1:] in (["--collect-unit"], ["--collect-capture-contract"])
+    unit_collection = sys.argv[1:] == ["--collect-unit"]
+    deferred_file = "tests/deferred/operational_capture_contract.py"
+    deferred_function = "test_successful_provisioning_avoids_unsized_output_reads"
     full_suite = sys.argv[1:] == ["--unit-suite"]
     capture_suite = sys.argv[1:] in (["--identity-capture"], ["--publication-repair"],
-                                    ["--operational-capture-contract"], ["--capture-fault"])
+                                    ["--operational-capture-contract"], ["--capture-fault"],
+                                    ["--collect-capture-contract"])
     capture_files = (["tests/unit/test_bound_backend.py", "tests/unit/test_identity_query_capture.py"]
                      if sys.argv[1:] == ["--identity-capture"] else [
                          "tests/unit/test_collector_projection.py", "tests/unit/test_launch_result_checkpoint.py",
@@ -312,8 +320,10 @@ def main():
         "test_nonzero_provisioning_retains_original_complete_diagnostics",
         "test_execution_timeout_is_not_replaced_by_capture_read",
     ] if sys.argv[1:] == ["--capture-fault"] else []
-    if sys.argv[1:] in (["--operational-capture-contract"], ["--capture-fault"]):
+    if sys.argv[1:] == ["--capture-fault"]:
         capture_files = ["tests/unit/test_operational_capture_contract.py"]
+    if sys.argv[1:] in (["--operational-capture-contract"], ["--collect-capture-contract"]):
+        capture_files = [deferred_file]
     # A mounted path alone is not isolation; the caller must also verify the
     # managed resource receipt. This check prevents accidental host execution.
     if ROOT != Path("/workspace") or Path.cwd().resolve() != ROOT:
@@ -335,7 +345,7 @@ def main():
         for path in sorted((ROOT / "tests/unit").rglob("*.py"))
     }
     unit_tree = hashlib.sha256(json.dumps(unit_files, sort_keys=True).encode()).hexdigest()
-    if (full_suite or capture_suite) and unit_tree != manifest["unitSuite"]["sourceSha256"]:
+    if (full_suite or capture_suite or collection_only) and unit_tree != manifest["unitSuite"]["sourceSha256"]:
         raise RuntimeError("Unit-suite source tree does not match the frozen input")
     locks = {row["path"]: row["sha256"] for row in inventory["lockfiles"]}
     if any(locks.get(name) != digest(ROOT / name) for name in ("uv.lock", "pyproject.toml")):
@@ -397,8 +407,10 @@ def main():
         "operationalCaptureContractSuite": sys.argv[1:] == ["--operational-capture-contract"],
         "captureFaultSuite": bool(fault_functions),
         "deferredUnexecutedCases": ([
-            "tests/unit/test_operational_capture_contract.py::test_successful_provisioning_avoids_unsized_output_reads"
+            deferred_file + "::" + deferred_function
         ] if fault_functions else []),
+        "collectionOnly": collection_only,
+        "collectionComplete": False,
         "unitSuiteSourceSha256": unit_tree, "collectionVerified": False,
         "collectionErrors": [], "deselectedNodeIds": [],
         "fixtureCleanup": fixtures.cleanup, "fixtureErrors": fixtures.errors,
@@ -476,9 +488,9 @@ def main():
                 ]
                 if collections.Counter(
                     case_key(item["function"], item["parameters"]) for item in actual
-                ) != expected_cases and not full_suite and not capture_suite:
+                ) != expected_cases and not full_suite and not capture_suite and not collection_only:
                     pytest.exit("Exact selected case set changed", returncode=4)
-                if full_suite:
+                if full_suite or unit_collection:
                     if collections.Counter(
                         case_key(item["function"], item["parameters"]) for item in selected_actual
                     ) != expected_cases:
@@ -486,11 +498,17 @@ def main():
                     collected_files = {item["nodeid"].split("::")[0] for item in actual}
                     if collected_files != set(manifest["unitSuite"]["testFiles"]):
                         pytest.exit("Default unit-suite file selection changed", returncode=4)
+                    if any(item["function"] == deferred_function for item in actual):
+                        pytest.exit("Deferred contract appeared in default collection", returncode=4)
                 if capture_suite:
                     if {item["nodeid"].split("::")[0] for item in actual} != set(capture_files):
                         pytest.exit("Identity capture file selection changed", returncode=4)
                     if fault_functions and {item["function"] for item in actual} != set(fault_functions):
                         pytest.exit("Capture fault safety selection changed", returncode=4)
+                    if capture_files == [deferred_file] and (
+                        len(actual) != 1 or actual[0]["function"] != deferred_function
+                    ):
+                        pytest.exit("Deferred opt-in oracle selection changed", returncode=4)
                 result["collectionVerified"] = True
 
             def pytest_collectreport(self, report):
@@ -513,14 +531,15 @@ def main():
                 })
 
         selectors = (
-            [capture_files[0] + "::" + name for name in fault_functions] if fault_functions else
-            ["tests/unit/"] if full_suite else capture_files if capture_suite else
+            ["tests/unit/"] if full_suite or unit_collection else capture_files if capture_suite else
             ["tests/unit/test_admission.py::" + name for name in manifest["functions"]]
         )
+        result["pytestSelectors"] = selectors
         code = int(pytest.main([
             "-q", "--tb=short", "-ra", "-p", "no:cacheprovider",
             "--basetemp", str(OUTPUT / "pytest-tmp"),
-            "--junitxml", str(OUTPUT / "junit.xml"), *selectors,
+            "--junitxml", str(OUTPUT / "junit.xml"),
+            *(["--collect-only"] if collection_only else []), *selectors,
         ], plugins=[Evidence()]))
         result["pytestExitCode"] = code
         result["status"] = "completed"
@@ -538,7 +557,7 @@ def main():
             except OSError:
                 changed.append(name)
         result["changedSourceFiles"] = changed
-        if full_suite or capture_suite:
+        if full_suite or capture_suite or collection_only:
             for name, expected in unit_files.items():
                 try:
                     if digest(ROOT / name) != expected:
@@ -560,7 +579,8 @@ def main():
         collected = [r["nodeid"] for r in result["collected"]]
         result["missingCallNodeIds"] = sorted(set(collected) - set(called))
         result["selectionComplete"] = (
-            result["collectionVerified"]
+            not collection_only
+            and result["collectionVerified"]
             and bool(collected)
             and (full_suite or capture_suite or len(collected) == len(manifest["cases"]))
             and collections.Counter(called) == collections.Counter(collected)
@@ -569,7 +589,12 @@ def main():
             and not result["collectionErrors"]
             and not result["deselectedNodeIds"]
         )
-        if not result["selectionComplete"]:
+        result["collectionComplete"] = (
+            collection_only and result["collectionVerified"] and bool(collected)
+            and not result["testExecutionStarted"] and not result["reports"]
+            and not result["collectionErrors"] and not result["deselectedNodeIds"]
+        )
+        if not (result["collectionComplete"] if collection_only else result["selectionComplete"]):
             result["status"] = "incomplete"
             if code == 0:
                 code = 2
