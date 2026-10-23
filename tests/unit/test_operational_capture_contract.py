@@ -1,6 +1,7 @@
 """Test-first operational capture boundaries; no new output-budget policy.
 
-The stream guard detects whole-output reads without allocating large payloads.
+The stream guard detects unsized reads without allocating large payloads.
+It does not prove a memory bound: chunked reads followed by joining also grow.
 All subprocess/backend effects are fakes. These are not installed/live proofs.
 """
 # ruff: noqa: F811
@@ -27,7 +28,10 @@ def fake_spools(monkeypatch, *, stdout="complete stdout\n", stderr="complete std
     calls = []
 
     class Spool(io.StringIO):
+        read_calls = 0
+
         def read(self, size=-1):
+            self.read_calls += 1
             if read_error is not None:
                 raise read_error
             if require_sized_reads and (size is None or size < 0):
@@ -53,7 +57,7 @@ def fake_spools(monkeypatch, *, stdout="complete stdout\n", stderr="complete std
     assert len(streams) == 2 and all(stream.closed for stream in streams)
 
 
-def test_successful_provisioning_does_not_materialize_discarded_output(monkeypatch):
+def test_successful_provisioning_avoids_unsized_output_reads(monkeypatch):
     # This asserts finite reads, not a proposed public byte limit. Small finite
     # payloads plus the sentinel discriminate without relying on memory pressure.
     monkeypatch.setattr(incus, "exec_command", native_exec)
@@ -68,6 +72,17 @@ def test_collected_capture_fault_after_exit_zero_never_authorizes_delete(collect
     path = Path(collected[1])
     path.write_text(path.read_text() + "provision:\n  setup_cmds:\n    - fixture-step\n")
     monkeypatch.setattr(incus, "exec_command", native_exec)
+    # Deliberately use an output-consuming engine helper at the provisioning
+    # boundary. Skipping unused success output in ordinary setup_cmds would be
+    # valid, but cannot replace handling a capture error when output IS needed.
+    # This fake step does not pretend the offline profile uses _exec_checked.
+    consumed = []
+
+    def consume(name, commands):
+        for command in commands:
+            consumed.append(engine._exec_checked(name, command))
+
+    monkeypatch.setattr(engine, "_run_provisioning", consume)
     deleted = MagicMock()
     monkeypatch.setattr(incus, "delete_container", deleted)
     with fake_spools(monkeypatch, read_error=read_error) as (calls, streams):
@@ -75,7 +90,8 @@ def test_collected_capture_fault_after_exit_zero_never_authorizes_delete(collect
             launch(collected)
         # The child returned zero before the local read error. A capture fault
         # cannot retroactively establish failed provisioning or permit deletion.
-        assert calls == [(["incus", "exec", "observation-case", "--", "bash", "-lc", "fixture-step"], 600)]
+        assert calls == [(["incus", "exec", "observation-case", "--", "bash", "-c", "fixture-step"], 600)]
+        assert sum(stream.read_calls for stream in streams) == 1 and not consumed
         assert all(stream.closed for stream in streams)
         assert deleted.call_count == 0
         status = engine.launch_status("observation-request")
