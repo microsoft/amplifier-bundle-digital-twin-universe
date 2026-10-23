@@ -62,6 +62,23 @@ class Guard:
         guard = self
 
         class OwnedPopen(original):
+            def __init__(self, *args, **kwargs):
+                guard.termination.construction = None
+                try:
+                    super().__init__(*args, **kwargs)
+                finally:
+                    guard.termination.construction = None
+                    guard.termination.spawn = None
+
+            def _posix_spawn(self, args, executable, env, *rest, **kwargs):
+                require((executable, tuple(args), env) == getattr(guard.termination, 'construction', None))
+                guard.termination.construction = None
+                guard.termination.spawn = (executable, args, env)
+                try:
+                    return super()._posix_spawn(args, executable, env, *rest, **kwargs)
+                finally:
+                    guard.termination.spawn = None
+
             def send_signal(self, sig):
                 if self.poll() is not None:
                     return
@@ -91,6 +108,13 @@ class Guard:
             else:
                 permitted |= (exe == sys.executable and argv == [exe, '-I', '-B', str(SCRIPT), 'foreground', self.case.name])
             if not permitted:
+                self.refuse(event)
+            self.termination.construction = (exe, tuple(argv), env)
+            self.allowed.append(event)
+        elif event == 'os.posix_spawn':
+            permit = getattr(self.termination, 'spawn', None)
+            self.termination.spawn = None
+            if permit != args:
                 self.refuse(event)
             self.allowed.append(event)
         elif event == 'os.kill':

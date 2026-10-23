@@ -33,6 +33,11 @@ def install(backend, report_path):
             executable, argv, cwd, env = args
             permit = (executable == record["executable"]["path"] and isinstance(argv, list)
                       and argv[0] == executable and env == expected_env and cwd is None)
+            if permit:
+                termination.construction = (executable, tuple(argv), dict(env))
+        elif event == "os.posix_spawn":
+            permit = args == getattr(termination, "spawn", None)
+            termination.spawn = None
         elif event == "socket.__new__":
             permit = args[1:3] == (socket.AF_UNIX, socket.SOCK_STREAM)
         elif event == "socket.connect":
@@ -50,6 +55,26 @@ def install(backend, report_path):
     original_popen = subprocess.Popen
 
     class OwnedPopen(original_popen):
+        def __init__(self, *args, **kwargs):
+            termination.construction = None
+            try:
+                super().__init__(*args, **kwargs)
+            finally:
+                termination.construction = None
+                termination.spawn = None
+
+        def _posix_spawn(self, args, executable, env, *rest, **kwargs):
+            # Python 3.13 may implement the approved Popen with posix_spawn.
+            # Permit its exact native event only inside this constructor path.
+            if (executable, tuple(args), env) != getattr(termination, "construction", None):
+                raise BackendFence("Unbound native child construction")
+            termination.construction = None
+            termination.spawn = (executable, args, env)
+            try:
+                return super()._posix_spawn(args, executable, env, *rest, **kwargs)
+            finally:
+                termination.spawn = None
+
         def send_signal(self, sig):
             # subprocess.run(timeout=...) must be able to terminate its exact
             # owned, unreaped child. Never authorize arbitrary PID/group calls.

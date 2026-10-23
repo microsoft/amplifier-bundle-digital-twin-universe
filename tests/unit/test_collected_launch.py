@@ -263,3 +263,50 @@ def test_cold_worker_import_executes_only_the_verified_bytes(tmp_path):
     with pytest.raises(ImportError, match="changed before import"):
         loader.exec_module(module)
     assert "value" not in module.__dict__
+
+
+def test_worker_native_spawn_requires_exact_one_use_owned_constructor(monkeypatch, tmp_path):
+    """Exercise audit decisions without dispatching a process or installing a hook."""
+    import json
+    import signal
+    from types import SimpleNamespace
+    from amplifier_bundle_digital_twin_universe import worker_guard
+
+    hooks, effects = [], []
+    environment = {"PATH": "/approved"}
+    executable = "/approved/incus"
+    monkeypatch.setattr(worker_guard.sys, "addaudithook", hooks.append)
+    monkeypatch.setattr(worker_guard, "_environment", lambda record: environment)
+    for name in ("raise_signal", "pthread_kill", "pidfd_send_signal"):
+        if hasattr(signal, name):
+            monkeypatch.setattr(signal, name, getattr(signal, name))
+
+    class FakePopen:
+        def __init__(self, argv, env):
+            hooks[0]("subprocess.Popen", (argv[0], argv, None, env))
+            self._posix_spawn(argv, argv[0], env)
+
+        def _posix_spawn(self, argv, program, env):
+            hooks[0]("os.posix_spawn", (program, argv, env))
+            # A second event must not reuse this native constructor permit.
+            with pytest.raises(worker_guard.BackendFence):
+                hooks[0]("os.posix_spawn", (program, argv, env))
+            effects.append("owned native construction")
+
+    monkeypatch.setattr(worker_guard.subprocess, "Popen", FakePopen)
+    retain = worker_guard.install(SimpleNamespace(as_dict=lambda: {
+        "executable": {"path": executable}, "socket": "/approved/incus.sock"
+    }), tmp_path / "guard.json")
+    event = (executable, [executable, "query", "/1.0"], environment)
+    with pytest.raises(worker_guard.BackendFence):
+        hooks[0]("os.posix_spawn", event)
+    worker_guard.subprocess.Popen(event[1], env=environment)
+    with pytest.raises(worker_guard.BackendFence):
+        hooks[0]("os.posix_spawn", event)
+    with pytest.raises(worker_guard.BackendFence):
+        worker_guard.subprocess.Popen(["/foreign/incus"], env=environment)
+    retain()
+    recorded = json.loads((tmp_path / "guard.json").read_text())
+    assert effects == ["owned native construction"]
+    assert recorded["allowed_counts"] == {"subprocess.Popen": 1, "os.posix_spawn": 1}
+    assert recorded["denied"] == ["os.posix_spawn"] * 3 + ["subprocess.Popen"]
