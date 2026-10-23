@@ -289,11 +289,15 @@ def case_key(function, parameters):
 
 
 def main():
-    if sys.argv[1:] not in ([], ["--unit-suite"], ["--identity-capture"]):
-        raise RuntimeError("Only the frozen selection, --unit-suite or --identity-capture is supported")
+    if sys.argv[1:] not in ([], ["--unit-suite"], ["--identity-capture"], ["--publication-repair"]):
+        raise RuntimeError("Unsupported exact test selection")
     full_suite = sys.argv[1:] == ["--unit-suite"]
-    capture_suite = sys.argv[1:] == ["--identity-capture"]
-    capture_files = ["tests/unit/test_bound_backend.py", "tests/unit/test_identity_query_capture.py"]
+    capture_suite = sys.argv[1:] in (["--identity-capture"], ["--publication-repair"])
+    capture_files = (["tests/unit/test_bound_backend.py", "tests/unit/test_identity_query_capture.py"]
+                     if sys.argv[1:] == ["--identity-capture"] else [
+                         "tests/unit/test_collector_projection.py", "tests/unit/test_launch_result_checkpoint.py",
+                         "tests/unit/test_collector_custody.py", "tests/unit/test_collector_observations.py",
+                         "tests/unit/test_collector_evidence.py"])
     # A mounted path alone is not isolation; the caller must also verify the
     # managed resource receipt. This check prevents accidental host execution.
     if ROOT != Path("/workspace") or Path.cwd().resolve() != ROOT:
@@ -372,7 +376,8 @@ def main():
         "collected": [], "reports": [], "blockedEvents": blocked,
         "startedAt": time.time(), "testExecutionStarted": False,
         "faultAcceptance": False, "fullUnitSuite": full_suite,
-        "identityCaptureSuite": capture_suite,
+        "identityCaptureSuite": sys.argv[1:] == ["--identity-capture"],
+        "publicationRepairSuite": sys.argv[1:] == ["--publication-repair"],
         "unitSuiteSourceSha256": unit_tree, "collectionVerified": False,
         "collectionErrors": [], "deselectedNodeIds": [],
         "fixtureCleanup": fixtures.cleanup, "fixtureErrors": fixtures.errors,
