@@ -57,16 +57,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # No `enable-cache:`. It caches keyed on **/uv.lock, and this repo
-      # commits no lockfile (see .gitignore), so setup-uv HARD-FAILS the step
-      # with "No file matched to [**/uv.lock]" -- a red that proves nothing,
-      # because it happens before ruff or pytest ever runs. Observed by the
-      # sibling wayfinder CI lane on its first red-proof run. Note also that
-      # `enable-caching:` (with a -ing) is NOT a valid input and is silently
-      # ignored -- do not "fix" it into `enable-cache: true` here.
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       - name: Lint (ruff, pinned)
         run: uvx ruff@0.16.6 check --isolated --select E4,E7,E9,F .
@@ -113,10 +106,9 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # No `enable-cache:` -- see the note in the lint job above.
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       - name: Run the standing test command (AGENTS.md)
         run: >
@@ -146,9 +138,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
 
