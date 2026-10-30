@@ -7,6 +7,16 @@ CLI: `amplifier-digital-twin`
 All commands return JSON to stdout unless noted otherwise.
 
 
+## Incus control command timeout
+
+`AMPLIFIER_DTU_INCUS_CONTROL_TIMEOUT_SECONDS` sets the subprocess deadline for
+Incus metadata/configuration commands, including the metadata writes during
+launch. It defaults to 10 seconds and accepts integers from 1 to 3600. Empty or
+invalid values retain the default; invalid nonempty values emit a warning.
+For a loaded host, select an appropriate finite value such as 120. Launch and
+exec deadlines remain independently configured. A timeout does not prove that
+an operation did not happen; reconcile recorded identities before retrying.
+
 ## Lifecycle
 
 > **Instance lifecycle.** `launch` creates an unmanaged, long-lived Incus
