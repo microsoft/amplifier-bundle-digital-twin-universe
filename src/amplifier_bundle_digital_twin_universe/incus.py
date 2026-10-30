@@ -61,7 +61,7 @@ def check_incus() -> None:
             ["incus", "version"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=_get_control_timeout_seconds(),
         )
         if result.returncode != 0:
             raise IncusError(f"Incus daemon unreachable: {result.stderr.strip()}")
@@ -169,6 +169,25 @@ _MAX_INCUS_LAUNCH_TIMEOUT: int = 3600
 _INCUS_LAUNCH_TIMEOUT_ENV_VAR: str = "AMPLIFIER_DTU_INCUS_LAUNCH_TIMEOUT_SECONDS"
 
 
+def _get_control_timeout_seconds() -> int:
+    """Bound metadata/configuration commands independently of launch and exec."""
+    name = "AMPLIFIER_DTU_INCUS_CONTROL_TIMEOUT_SECONDS"
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return 10
+    try:
+        value = int(raw)
+        if 1 <= value <= 3600:
+            return value
+    except ValueError:
+        pass
+    print(
+        f"Warning: {name}={raw!r} must be an integer from 1 to 3600; using default 10s.",
+        file=sys.stderr,
+    )
+    return 10
+
+
 def _get_launch_timeout_seconds() -> int:
     """Return the incus launch timeout in seconds, read from the environment.
 
@@ -210,7 +229,9 @@ def local_image_available(fingerprint: str) -> bool:
         raise ValueError("An exact local image fingerprint is required")
     result = _run(
         ["incus", "image", "list", "local:", fingerprint, "--format=json"],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if result.returncode:
         raise IncusError("The approved local image could not be inspected")
@@ -269,7 +290,7 @@ def container_exists(name: str) -> bool:
         ["incus", "info", name],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=_get_control_timeout_seconds(),
     )
     return result.returncode == 0
 
@@ -737,7 +758,7 @@ def set_config(name: str, key: str, value: str) -> None:
         ["incus", "config", "set", name, f"{key}={value}"],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=_get_control_timeout_seconds(),
     )
     if result.returncode != 0:
         raise IncusError(
@@ -751,7 +772,7 @@ def get_config(name: str, key: str) -> str:
         ["incus", "config", "get", name, key],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=_get_control_timeout_seconds(),
     )
     if result.returncode != 0:
         raise IncusError(
@@ -771,7 +792,7 @@ def get_instance_state(name: str) -> str:
         ["incus", "list", name, "--format=json"],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=_get_control_timeout_seconds(),
     )
     if result.returncode != 0:
         raise IncusError(f"Failed to query instance {name}: {result.stderr.strip()}")
@@ -791,7 +812,7 @@ def list_instances(config_key: str, config_value: str) -> list[dict]:
         ["incus", "list", f"{config_key}={config_value}", "--format=json"],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=_get_control_timeout_seconds(),
     )
     if result.returncode != 0:
         raise IncusError(
@@ -811,7 +832,7 @@ def get_container_ip(name: str) -> str:
         ["incus", "list", name, "--format=json"],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=_get_control_timeout_seconds(),
     )
     if result.returncode != 0:
         raise IncusError(f"Failed to query container {name}: {result.stderr.strip()}")
@@ -875,7 +896,7 @@ def add_proxy_device(
         ],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=_get_control_timeout_seconds(),
     )
     if result.returncode != 0:
         raise IncusError(
