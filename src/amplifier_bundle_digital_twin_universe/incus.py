@@ -22,6 +22,12 @@ from urllib.parse import quote
 
 def _run(command, *args, **kwargs):
     """Pin every Incus call to an explicitly selected project when configured."""
+    from .bound_backend import current
+    bound = current()
+    if bound is not None:
+        from .collected_launch import check_cancel
+        check_cancel()
+        return bound.run(command, *args, **kwargs)
     project = os.environ.get("AMPLIFIER_DTU_INCUS_PROJECT")
     if command and command[0] == "incus" and project:
         if command[1] == "query":
