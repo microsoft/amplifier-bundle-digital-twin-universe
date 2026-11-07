@@ -77,6 +77,9 @@ def main() -> None:
     is_flag=True,
     help="Omit inherited profiles, NICs and host mounts; use only the root storage pool.",
 )
+@click.option("--collect", is_flag=True, help="Opt in to one local offline worker; unsupported inputs refuse, never fall back.")
+@click.option("--wait-seconds", type=click.FloatRange(min=0, max=86400), default=600,
+              help="Collected foreground observation budget; timeout does not cancel the worker.")
 def launch(
     profile: str,
     var: tuple[str, ...],
@@ -88,6 +91,8 @@ def launch(
     owner_root: str | None,
     request_id: str | None,
     offline: bool,
+    collect: bool,
+    wait_seconds: float,
 ) -> None:
     """Launch a new Digital Twin Universe from a profile."""
     variables: dict[str, str] = {}
@@ -99,6 +104,7 @@ def launch(
         variables[key] = value
 
     try:
+        collection = {"collect": True, "wait_seconds": wait_seconds} if collect else {}
         result = engine.launch(
             profile,
             variables,
@@ -110,6 +116,7 @@ def launch(
             owner_root=owner_root,
             request_id=request_id,
             offline=offline,
+            **collection,
         )
         click.echo(json.dumps(result))
     except admission.AdmissionError as exc:
@@ -165,6 +172,22 @@ def launch_status(request_id: str) -> None:
                 }
             )
         )
+        sys.exit(1)
+
+
+@main.command(name="launch-cancel")
+@click.argument("request_id")
+@click.option("--owner-root", required=True)
+def launch_cancel(request_id: str, owner_root: str):
+    """Request cooperative collected-worker cancellation; never retire a receipt."""
+    from .collected_launch import cancel
+    try:
+        click.echo(json.dumps(cancel(request_id, owner_root)))
+    except admission.AdmissionError as exc:
+        click.echo(json.dumps(exc.as_dict()))
+        sys.exit(1)
+    except Exception:
+        click.echo(json.dumps({"error": "launch_unknown", "message": "Cancellation could not be confirmed"}))
         sys.exit(1)
 
 

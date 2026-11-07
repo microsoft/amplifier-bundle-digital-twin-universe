@@ -22,6 +22,12 @@ from urllib.parse import quote
 
 def _run(command, *args, **kwargs):
     """Pin every Incus call to an explicitly selected project when configured."""
+    from .bound_backend import current
+    bound = current()
+    if bound is not None:
+        from .collected_launch import check_cancel
+        check_cancel()
+        return bound.run(command, *args, **kwargs)
     project = os.environ.get("AMPLIFIER_DTU_INCUS_PROJECT")
     if command and command[0] == "incus" and project:
         if command[1] == "query":
@@ -39,6 +45,13 @@ def _run(command, *args, **kwargs):
 
 class IncusError(Exception):
     """Raised when an Incus command fails."""
+
+
+class CreationCommandError(IncusError):
+    """The launch CLI returned nonzero; not daemon-terminal evidence."""
+    def __init__(self, message, returncode):
+        super().__init__(message)
+        self.returncode = returncode
 
 
 def query(path: str) -> dict:
@@ -240,7 +253,8 @@ def create_container(
         cmd, capture_output=True, text=True, timeout=_get_launch_timeout_seconds()
     )
     if result.returncode != 0:
-        raise IncusError(f"Failed to create container {name}: {result.stderr.strip()}")
+        raise CreationCommandError(
+            f"Failed to create container {name}: {result.stderr.strip()}", result.returncode)
 
 
 def stop_container(name: str) -> None:
