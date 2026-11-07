@@ -124,9 +124,178 @@ The lock requires a POSIX caller (Linux, WSL or macOS). Native Windows callers
 must run this CLI in WSL. No distributed or daemon-wide guarantee is implied.
 
 Use a private, stable `INCUS_CONF` when managing a remote explicitly, and
-`AMPLIFIER_DTU_INCUS_PROJECT` to pass `--project` to every Incus command. Incus
-itself does not honor `INCUS_PROJECT`. The capacity response identifies the
-actual daemon and project for callers to verify.
+`AMPLIFIER_DTU_INCUS_PROJECT` to pass `--project` to every ordinary Incus command.
+Do not rely on version-dependent ambient project selection. The capacity
+response identifies the actual daemon and project for callers to verify.
+
+#### Explicit collected launch (bounded initial rollout)
+
+`launch --collect --wait-seconds N` (library: `launch(..., collect=True,
+wait_seconds=N)`) runs the existing lifecycle in one library-owned worker.
+The foreground observes it for up to `N` seconds (default 600). Foreground
+timeout/disconnection does not cancel the worker. This is opt-in, not the
+default for existing callers and not a claim that every profile is supported.
+
+This first subset requires POSIX, `--offline`, an exact cached
+`local:<64-character fingerprint>` image, and a nonblank `--owner-root`.
+The profile and variable mapping are bounded to 64 KiB each. Host file seeding,
+package overrides, mocks, access ports/hostnames, passthrough and URL rewrites
+are unsupported. Explicit unsupported collection refuses before dispatch;
+it never falls back to a foreground launch. Synchronous launches retain their
+existing profile and remote/authentication support without a background guarantee.
+
+The caller must already have private, stable `INCUS_CONF` and
+`INCUS_GLOBAL_CONF` directories. The selected configuration must describe one
+explicit local Unix-socket remote without aliases or external authentication.
+The global configuration must be absent or equivalent. Capture measures the
+client executable/configuration and verifies daemon, project and storage pool.
+Every worker command uses that bound selection and refuses observed drift.
+No credentials are copied and no client configuration is created automatically.
+This is a cooperating-client drift check, not atomic protection from an
+administrator replacing a socket, executable or configuration between checks.
+
+The two backend identity queries drain stdout and stderr with one absolute query
+deadline and a **1-MiB combined raw-byte limit**, checked while reading before
+UTF-8 decoding. Stderr counts toward that limit but is not retained. Both pipe
+EOFs and client exit zero are required; a valid JSON prefix is not accepted after
+overflow or truncation. On overflow, timeout or caller interruption, cleanup
+targets only the owned query-client process with a separate bounded reap wait
+(at most five seconds, never longer than the configured query timeout). This
+does not cancel a daemon operation, kill a guest or stop the collector. OS
+process creation/reaping are not hard-real-time guarantees; unconfirmed cleanup
+remains a failure. Identity-query refusal remains `BackendFence`, distinct from
+an operational command timeout. Other operational-command capture is unchanged
+and is not covered by this memory bound.
+
+Private bounded bootstrap data freezes the profile, variables, selected backend
+and worker runtime. The worker owns name/request custody through reservation,
+creation, provisioning, legitimate failure cleanup and result publication.
+Current public mutation entry points recognize that custody, including exec,
+transfers, readiness, update and destroy. A busy or unresolved collected attempt
+does not grant takeover permission. Older clients and direct Incus calls do not
+honor these guards; mixed-version lifecycle writes remain outside the guarantee.
+
+`launch-status REQUEST_ID` reports the original saved result and current bound
+instance evidence, plus `collector_phase`. A saved completion is not proof that
+the instance is still running. Observation never dispatches a replacement,
+resumes provisioning or repairs the collected record. Lost dispatch/worker
+evidence and consumed but unobserved submission remain unknown and nonreplayable.
+Use the same request identity; do not create another name to bypass uncertainty.
+
+New collected attempts also retain a separate bounded acknowledgment record.
+The `observations` field reports the ordered calls that returned: creation,
+provisioning entry/completion, prepared-result save, ready-marker call and final
+receipt save. `creation_transport` distinguishes the CLI return from confirmed
+tracked-operation completion. These are positive observations, not a complete
+failure history. An omitted acknowledgment means unobserved, not that the
+operation did not happen; `all_acknowledged` is not current readiness or proof
+of durability through host loss. A post-replace fsync failure may leave visible
+observation bytes without a successful durability acknowledgment for that write.
+
+Older collected attempts without this record return `observations:
+{available: false}`; status does not create or backfill it. Malformed, unsupported
+or mismatched records refuse without repair. Evidence-write failures stop further
+work conservatively and never invoke provisioning cleanup on their own. These
+records neither release reservations nor permit retry, takeover or settlement.
+Existing collector/admission formats are unchanged.
+
+Future attempts additionally retain a separate, private, 32-KiB `.evidence`
+record. `failure_evidence` exposes fixed facts: CLI return/nonzero/timeout,
+validated tracked-operation identity and initial/terminal status, the first
+observed failure stage/category, delete-call entry/return/exception, and a
+separate secondary receipt-write failure. CLI failure or timeout is not daemon
+terminal failure. A delete-call entry is not proof of submission; a returned
+delete call is not a new absence check. None of these facts changes accounting,
+cancellation, replay or mutation eligibility.
+
+The exact initial collector and admission reservation bytes and their hashes
+are retained privately (4 KiB each), never reconstructed or exposed in status.
+An uncaptured reservation baseline means unobserved, not never admitted.
+Existing attempts without `.evidence` return `failure_evidence: {available:
+false}`; no read creates, migrates or repairs it. Invalid bindings, unsupported
+versions and unsafe or oversized files refuse without rewriting. Positive
+boundary persistence failure stops further work outside provisioning cleanup.
+While handling an existing failure, evidence writes are best effort and cannot
+replace the primary exception or cause another cleanup attempt. Post-replace
+fsync failure may leave visible but unacknowledged bytes.
+
+This is bounded first-failure evidence, not a complete event history. Missing
+facts remain unobserved. Settlement, operational-command stream-memory-bounded
+capture and host-loss durability remain separate work.
+
+If an `exec` client has returned but reading/seeking its captured output fails
+with an I/O or decoding error, the library raises `incus.OutputCaptureError`.
+Its `returncode` retains the observed numeric client exit and its `__cause__`
+retains the original local exception. The displayed message is sanitized;
+the private chained traceback is not. No partial output is returned as success.
+For collected provisioning, this records the existing `observation_error`
+category and leaves the attempt UNKNOWN, without readiness publication, deletion,
+capacity release or replay. This applies even with a nonzero client exit:
+the output-consuming caller has not received a complete result. Complete nonzero
+provisioning results retain their existing failure cleanup. A complete command
+failure also remains primary if a subsequent optional network diagnostic cannot
+be captured. Gateway polling and profile-snapshot fallback do not swallow
+capture faults as missing data.
+
+The strict evidence format is unchanged: creation CLI facts do not become
+provisioning exit facts, and the per-exec return code/cause is not newly persisted
+in public status. This is a post-return seek/read correction, not an output cap,
+truncation policy, bounded-memory guarantee, or new timeout/close-failure contract.
+Existing complete-output APIs and operational deadlines remain unchanged.
+
+#### Explicit local publication repair
+
+Future collected launches commit a private `.publication` record after
+acknowledged provisioning, checkpoint save and ready-marker return, before
+publishing the final admission result. The immutable record contains exactly
+two actions: `publish_ready_result`, then `complete_collector`. Both exact
+before/after images and their hashes are committed together, bound to the
+original request, owner, name, backend, intent, generation, bootstrap and
+acknowledgment evidence. It is limited to 256 KiB, with admission images limited
+to 16 KiB each and collector images to 8 KiB each. Overflow refuses without
+truncation or cleanup.
+
+`launch-status` exposes `publication_repair` with the commit digest, action IDs
+and observed `before`/`after`/`changed` states. Missing historical commits return
+`available: false`; observation never constructs one. These states describe
+local historical publication, not current guest readiness.
+
+The library API
+`collected_launch.repair_record_projection(request_id, action_id,
+expected_commit_digest)` explicitly applies only that retained action under
+name, request and admission custody. It revalidates the original bootstrap and
+bound backend with read-only identity queries; it never creates, starts,
+provisions, marks ready or deletes an instance. Admission publication precedes
+collector completion. The corresponding exact after bytes return
+`already_applied`; missing, changed, unsafe or unsupported bytes refuse. The
+retained exact commit is fsynced before a pending projection is written.
+Post-replace failure returns `projection_unknown`, not confirmed application.
+
+An attempted commit freezes the collector's before-image even when persistence
+is uncertain. A worker-recorded failure ends foreground observation promptly
+without replaying that worker. Explicit repair does not fill missing
+acknowledgments, erase failure/outcome history or infer an earlier fsync
+acknowledgment. A visible commit can be independently revalidated and synced
+for an explicit later action; it is never regenerated after uncertainty.
+
+This API has no caller-supplied desired state, bytes, backend or approval flag.
+It repairs only these future success-publication actions, not pre-commit loss,
+unacknowledged ready-marker calls, failed cleanup, historical UNKNOWN attempts
+or capacity-release settlement. Same-user cooperating clients remain the scope;
+these hashes do not authenticate a malicious same-UID writer. No status or
+launch retry invokes repair automatically, and no protected human legacy
+approve-and-apply integration is established.
+
+`launch-cancel REQUEST_ID --owner-root ROOT` requests cooperative cancellation
+of that exact collected generation. `cancellation_requested: true` records
+the request, not daemon cancellation, successful cleanup or released capacity.
+The worker stops at a later guarded boundary; an in-flight backend operation
+can still finish. Owner labels remain descriptive, not authenticated human
+approval. Foreground timeout alone writes no cancellation.
+
+This increment does not establish host/process-group-loss durability,
+automatic takeover, external-writer exactly-once execution or legacy UNKNOWN
+adjudication. Those original recovery goals remain separate acceptance work.
 
 ### `capacity`
 
@@ -153,6 +322,21 @@ and `storage_unknown`; all applicable blockers are returned. Unrecognized
 instance states count as active. Incus storage usage includes retained volumes,
 images and other users of that pool; no container is deleted during observation.
 
+Pending reservations are deduplicated against observed instances only when the
+name, request ID and owner root are all nonblank strings and match exactly within
+the selected daemon/project. A foreign same-name instance does not hide a
+reservation. An unresolved ownerless attempt remains counted separately even if
+a same-name instance is present; missing metadata is not proof of identity.
+This is accounting, not authentication or permission to retire an attempt.
+
+Persisted admission receipts use the existing **unversioned** format. The
+`schema_version: 1` in API responses does not designate an on-disk format.
+Explicit receipt versions or unsupported states fail closed with
+`state_unsupported`; malformed request-ID/path identity or a missing/non-string
+state fails with `state_unsafe`. Incomplete name/owner metadata does not establish
+a deduplication match.
+Supported legacy receipts are read without migration or rewriting.
+
 ### `launch-status REQUEST_ID`
 
 Returns `{schema_version, request_id, name, owner_root, state, created_at}` plus
@@ -162,6 +346,25 @@ Absent after an interrupted launch remains unknown: absence does not establish
 that a remote operation was cancelled. Ready markers come from provisioning,
 not merely from an Incus Running status. Receipts are private, durable and are
 not removed automatically, preventing completed request IDs from being replayed.
+
+New launches checkpoint their completed provisioning result before writing the
+ready marker. If final receipt publication is interrupted, `launch-status` can
+return that exact saved `result` with `result_recovered: true`, but only when a
+currently Running, ready-marked instance has complete matching name/request/owner
+identity and the checkpoint matches the receipt intent and daemon/project.
+The prepared checkpoint is not exposed as a completed result on missing,
+conflicting, stopped or not-ready observations. A newer failed/removed receipt
+is not promoted by an older ready marker.
+
+This recovery projection does not rewrite the receipt or resume provisioning;
+existing creation-operation reconciliation can still persist its own evidence.
+An unresolved original `launch` retry remains refused even when status recovers
+its result. Checkpoint/marker/final-publication failures leave the successfully
+provisioned environment intact and report `launch_unknown`. They do not prove
+failure or authorize cleanup. The checkpoint uses the existing private atomic
+receipt writer and its size bound; it is not a background collector or a
+guarantee across unobserved host/process-group loss. Older clients do not honor
+these publication guards; mixed-version lifecycle safety is not established.
 
 For `--offline` launches using an exact `local:<64-character fingerprint>` on the
 current local Unix-socket daemon, DTU records the Incus asynchronous creation
