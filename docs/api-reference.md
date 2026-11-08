@@ -337,6 +337,143 @@ state fails with `state_unsafe`. Incomplete name/owner metadata does not establi
 a deduplication match.
 Supported legacy receipts are read without migration or rewriting.
 
+### Protected legacy disposition (designated operator)
+
+The separate `legacy_disposition` library and thin `legacy_cli` module implement
+local accounting under an **operator-provisioned POSIX account boundary**. They
+do not authenticate a human, elevate privileges, offer a general command
+executor, or authorize an actual historical attempt. A host that requires a
+human decision must obtain that exact decision through its own protected input
+path before invoking the designated account. A question answer, actor string,
+TTY, signature supplied by the caller, or permission to implement this feature
+is not that decision.
+
+#### Deployment requirements
+
+An administrator must provision the runtime, existing admission domain and
+fixed `/etc/amplifier-dtu/legacy-disposition.json`. The configuration and its
+ancestors must be root-owned, without symlinks or group/other write permission.
+The interface has no caller-selected configuration path or environment override.
+The configuration has exactly these fields:
+
+| Field | Required value |
+|---|---|
+| `version` | Integer `1` |
+| `operator_uid` | Designated non-root UID; both real and effective UID must match |
+| `admission_base` | Absolute private operator-owned existing admission base |
+| `backend` | Existing serialized `BoundBackend` v1 for the selected local Unix backend |
+| `generation` | Administrator-selected 64-character lowercase hex deployment generation |
+| `enabled` | `true`; disabling it refuses new operations |
+| `python_prefix` | Exact installed virtual-environment prefix |
+| `package_path` | Exact installed DTU package directory |
+| `writer_boundary` | Literal `exclusive_operator` deployment declaration |
+
+Invoke the installed interpreter with `-I`. Its runtime, import paths, package,
+backend executable/configuration and state must be protected from agent writes.
+Root and the designated operator are trusted. The account check is not a
+defense against arbitrary code already running with operator privileges.
+Do not expose an operator shell, arbitrary Python execution, broad sudo rule or
+agent-controlled import path as an approval interface.
+
+**Before any release, drain and exclude old/in-flight/direct writers from this
+accounting domain and protect backend access.** The configuration declaration
+records that operator responsibility; it cannot enforce exclusion by itself.
+The library checks file ownership and selected path permissions, not every
+possible host ACL, process-control route or administrator action. A new state
+directory must not be used to evade live reservations. Missing supported
+authority fails closed; changed or unavailable authority/backend verification
+does not make an applied release eligible for accounting.
+
+The supported subset is an existing unversioned `launching`/`unknown` receipt
+with complete request/name/owner/intent/creation metadata, **without** a tracked
+creation operation, prepared result, collector evidence or lifecycle marker.
+This is not future-operation settlement or collector takeover. Both effects
+require a complete unfiltered instance observation: a matching name, or the
+same request under another name, refuses. Absence is a precondition, never proof
+that the original operation failed or was cancelled.
+
+#### Effects and exact invocation
+
+- `record_unknown_keep_reservation`: retain a disposition without reducing
+  capacity.
+- `accept_unknown_risk_release_reservation`: exclude only the exact unresolved
+  reservation from pending capacity. Physical instances, including late arrivals,
+  still count through normal capacity rules.
+
+The original receipt bytes remain unchanged. Neither effect reports failure,
+cancellation or removal, transfers the recorded late-cleanup owner, or permits
+the original request/name to run again. The first retained disposition is
+immutable; changing KEEP into RELEASE is not an available operation.
+
+Library entry points:
+
+```python
+prepare(request_id, owner_root, effect)
+apply(request_id, owner_root, effect, expected_digest, operation_id)
+reconcile(request_id)
+recover(request_id, expected_digest, operation_id)
+capacity()
+```
+
+The thin adapter is intentionally separate from ordinary launch:
+
+```text
+/opt/dtu-operator/venv/bin/python -I -m amplifier_bundle_digital_twin_universe.legacy_cli prepare REQUEST --owner-root OWNER --effect record_unknown_keep_reservation
+/opt/dtu-operator/venv/bin/python -I -m amplifier_bundle_digital_twin_universe.legacy_cli apply REQUEST --owner-root OWNER --effect record_unknown_keep_reservation --digest EXACT_PREVIEW_DIGEST --operation-id DECISION_ID
+/opt/dtu-operator/venv/bin/python -I -m amplifier_bundle_digital_twin_universe.legacy_cli reconcile REQUEST
+/opt/dtu-operator/venv/bin/python -I -m amplifier_bundle_digital_twin_universe.legacy_cli recover REQUEST --digest EXACT_PREVIEW_DIGEST --operation-id DECISION_ID
+/opt/dtu-operator/venv/bin/python -I -m amplifier_bundle_digital_twin_universe.legacy_cli capacity
+```
+
+Use the administrator's actual interpreter path. `prepare` returns a digest and
+a **private** preview containing exact original receipt bytes; do not publish
+that preview. All entry points, including preparation/status, require the
+designated account. An untrusted agent can request a preview through an
+appropriately scoped host integration, but this module supplies no privileged
+agent-to-operator transport.
+
+The preview binds exact receipt bytes, owner/name/request, daemon/project/pool,
+frozen backend digest, configuration digest/generation, effect, residual
+observation and unchanged cleanup owner. Its revision `1` belongs to this new
+decision, not to the historical unversioned receipt. The stable operation ID
+provides per-attempt idempotency; it is not a bearer credential or a detached
+reusable approval token. There is no grant-expiry mechanism: the operator acts
+directly, with fresh configuration checks; deployment changes invalidate pending
+previews rather than extending them.
+
+#### Persistence, accounting and recovery
+
+Under name → request → admission custody, apply revalidates the backend and
+receipt, then saves a bounded immutable `legacy/<request-hash>.intent` before
+the separate `.applied` marker. The preview is limited to 200,000 encoded bytes;
+private record reads/writes remain bounded to 256 KiB. Overflow refuses without
+truncating or discarding evidence.
+
+A committed intent without the exact marker stays `committed_pending` and keeps
+the reservation. Repeating `apply` does not finish it: it returns
+`projection_pending`. Only explicit `recover`, with the same digest and operation
+ID and fresh binding/residual checks, can finish that local marker. No create,
+start, provisioning, stop or delete is performed by disposition or recovery.
+
+An exact applied marker produces `already_applied`. This observes matching bytes;
+it does not retroactively acknowledge a previous fsync. Explicit recovery also
+syncs the retained intent and marker. A post-replace persistence error returns
+`projection_unknown` even when bytes are visible; subsequent accounting may see
+the exact marker, so uncertainty must not be reported as proof of nonapplication.
+`reconcile` only reads, without fsync, backend queries, dispatch or repair.
+
+Current writers refuse to overwrite a reviewed original receipt; synchronous
+and collected launches reject its quarantined name before new dispatch.
+`launch-status` keeps the reviewed legacy outcome UNKNOWN and does not promote
+it from a late ready marker. The original strict collector/evidence/publication
+formats are unchanged. Protection against excluded old binaries is a deployment
+requirement, not a property supplied by these cooperating-writer guards.
+
+Qualification with synthetic records and separate OS accounts establishes only
+that tested boundary. It does not establish real-daemon settlement, a human UI
+approval gesture, atomic protection against administrators, or host-power-loss
+durability. Historical application requires separate exact-attempt authority.
+
 ### `launch-status REQUEST_ID`
 
 Returns `{schema_version, request_id, name, owner_root, state, created_at}` plus

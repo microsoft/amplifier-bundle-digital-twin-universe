@@ -97,6 +97,19 @@ Run these before opening a PR. The reviewer expects evidence in the PR body, not
   name/request/admission custody. Never infer repair from a ready marker, PID,
   elapsed time or free lock. Status/retry never applies repair. No failed/removed
   action, capacity release or legacy approval authority is provided.
+- **Protected legacy accounting**: `legacy_disposition` is a separate,
+  designated-POSIX-operator interface, not a human authentication service or a
+  privilege escalator. Its fixed root-owned configuration, isolated installed
+  interpreter and admission domain must be inaccessible to untrusted agents.
+  Drain/exclude old and direct writers before enabling it; a configuration
+  declaration or a free lock does not prove that deployment boundary. Preserve
+  the original receipt bytes and UNKNOWN state. KEEP never releases; RELEASE
+  excludes only the exact unresolved reservation after its separate marker.
+  Pending intents retain capacity, quarantine the name/request, and require
+  explicit exact recovery. Read-only reconciliation never repairs. A visible
+  post-replace marker is not an acknowledgment of the earlier fsync. Never use
+  synthetic account/backend proof as human-gesture or real-daemon acceptance,
+  or as authorization to apply a historical disposition.
 - **Hardcoded subprocess timeouts**: `subprocess.run(..., timeout=N)` values that look reasonable on a quiet laptop are too short on loaded systems. Prefer environment-variable overrides like `AMPLIFIER_DTU_INCUS_LAUNCH_TIMEOUT_SECONDS` where they exist; add one where they don't, rather than picking a new fixed number.
 - **Directory recursion in file-push / file-pull**: both code paths now handle directories recursively. Older code assumed file-only and silently no-op'd on directories. If you find a "file not transferred" bug, check whether the caller is passing a directory through a path that still assumes a single file.
 - **`mirror-from-github` fragility on ARM64**: the `amplifier-bundle-gitea` mirror-from-github path has known ARM64 reliability issues. When reliability matters (e.g., in test setup), prefer direct Gitea API calls over mirror-from-github.
