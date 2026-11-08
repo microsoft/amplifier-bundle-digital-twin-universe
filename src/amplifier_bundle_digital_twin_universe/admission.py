@@ -17,6 +17,7 @@ import stat
 import tempfile
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from amplifier_bundle_digital_twin_universe import incus
@@ -26,6 +27,22 @@ MANAGED_VALUE = "amplifier-digital-twin"
 DEFAULT_MAX_RUNNING = 15
 DEFAULT_MAX_INSTANCES = 256
 DEFAULT_MIN_FREE_BYTES = 10 * 1024**3
+_STATE_BASE = ContextVar("dtu_admission_base", default=None)
+
+
+def base_directory() -> Path:
+    return Path(_STATE_BASE.get() or os.environ.get("AMPLIFIER_DTU_ADMISSION_DIR")
+                or Path.home() / ".local/state/amplifier-dtu/admission")
+
+
+@contextmanager
+def state_scope(base):
+    """Trusted in-process adapter selection; never a permission grant."""
+    token = _STATE_BASE.set(str(base))
+    try:
+        yield
+    finally:
+        _STATE_BASE.reset(token)
 
 
 class AdmissionError(RuntimeError):
@@ -125,10 +142,7 @@ def _private_directory(path: Path) -> None:
 
 
 def state_directory(ctx: dict) -> Path:
-    base = Path(
-        os.environ.get("AMPLIFIER_DTU_ADMISSION_DIR")
-        or Path.home() / ".local/state/amplifier-dtu/admission"
-    )
+    base = base_directory()
     if not base.is_absolute() or ".." in base.parts:
         raise AdmissionError(
             "state_unsafe", "Admission directory must be an absolute normalized path"
@@ -151,13 +165,21 @@ def state_directory(ctx: dict) -> Path:
 @contextmanager
 def locked(ctx: dict):
     """Bounded process lock. A waiting caller gets a retryable reason."""
-    import fcntl
-
     root = state_directory(ctx)
     timeout = resolve_limit(None, "AMPLIFIER_DTU_ADMISSION_TIMEOUT_SECONDS", 30)
+    with _locked_file(root / "admission.lock", timeout):
+        yield root
+
+
+@contextmanager
+def _locked_file(path: Path, timeout: int = 30):
+    """Shared private lock primitive; callers define the enclosing lock order."""
+    import fcntl
+
+    _private_directory(path.parent)
     deadline = time.monotonic() + timeout
     descriptor = os.open(
-        root / "admission.lock",
+        path,
         os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
         0o600,
     )
@@ -175,7 +197,7 @@ def locked(ctx: dict):
                     )
                 time.sleep(0.05)
         try:
-            yield root
+            yield
         finally:
             fcntl.flock(handle, fcntl.LOCK_UN)
 
@@ -184,7 +206,24 @@ def receipt_path(root: Path, request_id: str) -> Path:
     return root / (hashlib.sha256(request_id.encode()).hexdigest() + ".json")
 
 
-def _read_receipt_file(path: Path) -> dict:
+def _validate_receipt(receipt: dict) -> None:
+    if not isinstance(receipt, dict):
+        raise AdmissionError("state_unsafe", "Admission receipt must be an object")
+    # Persisted receipts are unversioned. schema_version=1 belongs to API
+    # responses, not a supported disk format; do not guess future semantics.
+    if "schema_version" in receipt:
+        raise AdmissionError("state_unsupported", "Unsupported admission receipt format")
+    request_id = receipt.get("request_id")
+    if not isinstance(request_id, str) or not request_id.strip():
+        raise AdmissionError("state_unsafe", "Admission receipt identity is invalid")
+    state = receipt.get("state")
+    if not isinstance(state, str):
+        raise AdmissionError("state_unsafe", "Admission receipt state is invalid")
+    if state not in {"launching", "unknown", "created", "ready", "failed", "removed"}:
+        raise AdmissionError("state_unsupported", "Unsupported admission receipt state")
+
+
+def _read_private_json(path: Path, **json_options) -> dict:
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor) as stream:
         _private_file(os.fstat(stream.fileno()))
@@ -193,12 +232,17 @@ def _read_receipt_file(path: Path) -> dict:
             raise AdmissionError(
                 "state_unsafe", "Admission receipt exceeded its size bound"
             )
-        value = json.loads(raw)
-    if (
-        not isinstance(value, dict)
-        or not isinstance(value.get("request_id"), str)
-        or receipt_path(path.parent, value["request_id"]) != path
-    ):
+        try:
+            value = json.loads(raw, **json_options)
+        except ValueError:
+            raise AdmissionError("state_unsafe", "Admission receipt is not valid JSON") from None
+    return value
+
+
+def _read_receipt_file(path: Path) -> dict:
+    value = _read_private_json(path)
+    _validate_receipt(value)
+    if receipt_path(path.parent, value["request_id"]) != path:
         raise AdmissionError("state_unsafe", "Admission receipt identity is invalid")
     return value
 
@@ -211,8 +255,26 @@ def read_receipt(root: Path, request_id: str) -> dict | None:
 
 
 def save_receipt(root: Path, receipt: dict) -> None:
+    _validate_receipt(receipt)
+    from .legacy_disposition import has_intent
+    if has_intent(root, receipt["request_id"]):
+        raise AdmissionError("legacy_disposition_fenced", "Reviewed legacy receipt is immutable")
+    _save_private_json(receipt_path(root, receipt["request_id"]), receipt)
+
+
+def _save_private_json(path: Path, value: dict) -> None:
+    """Bounded atomic storage, independent of the admission receipt schema."""
+    # Bound the replacement, not only the old file. Reconciliation can grow a
+    # checkpoint too; every writer must leave a receipt the reader can load.
+    _save_private_bytes(path, json.dumps(value).encode("utf-8"))
+
+
+def _save_private_bytes(path: Path, serialized: bytes) -> None:
+    """Apply exact bounded bytes with the same private atomic durability boundary."""
+    if not isinstance(serialized, bytes) or len(serialized) > 262144:
+        raise AdmissionError("state_unsafe", "Admission receipt exceeded its size bound")
+    root = path.parent
     _private_directory(root)
-    path = receipt_path(root, receipt["request_id"])
     try:
         _private_file(path.lstat())
     except FileNotFoundError:
@@ -222,8 +284,8 @@ def save_receipt(root: Path, receipt: dict) -> None:
     )
     tmp = Path(temporary)
     try:
-        with os.fdopen(descriptor, "w") as handle:
-            json.dump(receipt, handle)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(serialized)
             handle.flush()
             os.fsync(handle.fileno())
         tmp.replace(path)
@@ -236,9 +298,29 @@ def save_receipt(root: Path, receipt: dict) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _reservation_identity(name, request_id, owner_root) -> tuple[str, str, str] | None:
+    """Only complete, exact identities can represent a pending reservation."""
+    values = (name, request_id, owner_root)
+    if all(isinstance(value, str) and value.strip() for value in values):
+        return values
+    return None
+
+
 def snapshot(ctx: dict, limits: dict, root: Path) -> dict:
+    from .legacy_disposition import accounting_view
     instances = incus.list_instances(MANAGED_KEY, MANAGED_VALUE)
-    names = {i["name"] for i in instances}
+    receipts = [_read_receipt_file(p) for p in root.glob("*.json")]
+    instances, released = accounting_view(ctx, root, receipts, instances)
+    identities = set()
+    for instance in instances:
+        config = instance.get("config", {})
+        identity = _reservation_identity(
+            instance.get("name"),
+            config.get("user.dtu.request-id"),
+            config.get("user.dtu.owner-root"),
+        )
+        if identity is not None:
+            identities.add(identity)
     # Unknown states and still-provisioning stopped instances remain active.
     retained = sum(
         i.get("status", "").lower() == "stopped"
@@ -246,8 +328,11 @@ def snapshot(ctx: dict, limits: dict, root: Path) -> dict:
         for i in instances
     )
     pending = sum(
-        r.get("state") in {"launching", "unknown"} and r["name"] not in names
-        for r in (_read_receipt_file(p) for p in root.glob("*.json"))
+        r["state"] in {"launching", "unknown"}
+        and _reservation_identity(r.get("name"), r["request_id"], r.get("owner_root"))
+        not in identities
+        and r["request_id"] not in released
+        for r in receipts
     )
     active = len(instances) - retained + pending
     total = len(instances) + pending

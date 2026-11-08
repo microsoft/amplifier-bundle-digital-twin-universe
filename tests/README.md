@@ -14,6 +14,79 @@ tests/
 Opt in with `--run-integration` and `--run-e2e` respectively. See
 [../docs/development.md](../docs/development.md) for the full command list.
 
+### Deferred output-memory contract oracle (explicit opt-in)
+
+`tests/deferred/operational_capture_contract.py` preserves
+`test_successful_provisioning_avoids_unsized_output_reads` unchanged from the
+retained red runs at `c0d0fe2` and `25cc61a`. It describes the **deferred**
+output-memory contract, not acceptance of the capture-error/no-delete fix.
+Its filename deliberately does not match pytest's default `test_*.py` or
+`*_test.py` discovery patterns, and it is outside `tests/unit/`.
+
+Run it explicitly when working on that contract:
+
+```bash
+uv run pytest tests/deferred/operational_capture_contract.py -q
+```
+
+The current expected observation is **a real failure** at the unsized-read
+sentinel, not an `xfail`, skip or pass. The finite fixture does not allocate
+large output; avoiding this sentinel alone would not prove bounded memory.
+No output cap or replacement result API is selected by moving this test.
+All 35 capture-fault safety cases remain normally collected in
+`tests/unit/test_operational_capture_contract.py`.
+
+### Protected legacy accounting
+
+Focused checks for the new module and its affected admission/collected-launch
+guards:
+
+```bash
+uv run pytest tests/unit/test_legacy_disposition.py tests/unit/test_admission.py tests/unit/test_collected_launch.py -q
+```
+
+The units replace `Executor.from_system` with a synthetic fixture. They test
+storage faults, exact binding, accounting, quarantine and explicit recovery;
+they do **not** qualify OS authentication.
+
+`tests/inputs/run_legacy_boundary.py` is an explicit root fixture driver for an
+already-owned disposable guest, never the live development host. It expects
+operator UID/GID 2101 and restricted agent UID/GID 2102, protected
+`/opt/protected-executor` and `/var/lib/protected-executor` roots, agent-owned
+`/work/protected-executor`, and `/opt/fixture` harness storage. It installs a
+supplied noneditable wheel and compares every installed Python module to the
+supplied source before invoking real separate-account processes.
+
+The driver uses a strictly synthetic, read-only backend. It verifies denied
+agent apply/write attempts, exact operator accounting, residual/configuration
+drift, concurrent apply, and real directory-permission failure after commit
+followed by observational reconciliation and explicit recovery. Root orchestrates
+the fixture; that does not mean the root driver was confined or that an actual
+human approved a disposition. The installed candidate is not patched for these
+cases. File/directory-fsync injection belongs to the focused unit proof.
+
+Both fixtures implement the actual managed-by predicate separately from the
+complete inventory. Late-resource regressions cover untagged, foreign/partial
+metadata and renamed request matches, managed deduplication, unrelated untagged
+exclusion and failed inventory refusal. The installed fixture records exact
+initial/released/late-resource counts through the `legacy_cli capacity` surface
+and separately verifies that its filtered backend listing excludes untagged rows.
+
+In that guest only, run with distinct existing source/wheel paths and a new
+output directory:
+
+```text
+python3 tests/inputs/run_legacy_boundary.py --source SOURCE --wheel WHEEL --output NEW_OUTPUT_DIRECTORY
+```
+
+`tests/inputs/qualify_legacy.py` additionally retains focused lint, JUnit, build
+and optional boundary output using the guest's `/opt/fixture/venv`. It is not an
+installer for host accounts or a general runner. Preserve failed outputs and
+synthetic state, then tear down the exact owned guest with its creation owner.
+No original UNKNOWN receipt or live daemon is an input to these fixtures.
+For an accounting-only correction, `--accounting-only` selects the maintained
+legacy/admission test files without repeating the collected-launch suite.
+
 
 ## Layout
 

@@ -22,6 +22,12 @@ from urllib.parse import quote
 
 def _run(command, *args, **kwargs):
     """Pin every Incus call to an explicitly selected project when configured."""
+    from .bound_backend import current
+    bound = current()
+    if bound is not None:
+        from .collected_launch import check_cancel
+        check_cancel()
+        return bound.run(command, *args, **kwargs)
     project = os.environ.get("AMPLIFIER_DTU_INCUS_PROJECT")
     if command and command[0] == "incus" and project:
         if command[1] == "query":
@@ -39,6 +45,24 @@ def _run(command, *args, **kwargs):
 
 class IncusError(Exception):
     """Raised when an Incus command fails."""
+
+
+class CreationCommandError(IncusError):
+    """The launch CLI returned nonzero; not daemon-terminal evidence."""
+    def __init__(self, message, returncode):
+        super().__init__(message)
+        self.returncode = returncode
+
+
+class OutputCaptureError(IncusError):
+    """The exec client returned, but its complete output could not be read.
+
+    The numeric return code is observed evidence, not a complete command result.
+    The original local exception is retained as __cause__, never in the message.
+    """
+    def __init__(self, returncode: int):
+        super().__init__("Incus exec output could not be captured after client completion")
+        self.returncode = returncode
 
 
 def query(path: str) -> dict:
@@ -240,7 +264,8 @@ def create_container(
         cmd, capture_output=True, text=True, timeout=_get_launch_timeout_seconds()
     )
     if result.returncode != 0:
-        raise IncusError(f"Failed to create container {name}: {result.stderr.strip()}")
+        raise CreationCommandError(
+            f"Failed to create container {name}: {result.stderr.strip()}", result.returncode)
 
 
 def stop_container(name: str) -> None:
@@ -309,9 +334,15 @@ def exec_command(
             text=True,
             timeout=timeout,
         )
-        out_f.seek(0)
-        err_f.seek(0)
-        return result.returncode, out_f.read(), err_f.read()
+        try:
+            out_f.seek(0)
+            err_f.seek(0)
+            return result.returncode, out_f.read(), err_f.read()
+        except (OSError, UnicodeError) as exc:
+            # Do not turn a local observation failure into failed provisioning.
+            # Keep _run outside this handler: timeout/transport errors retain
+            # their own semantics and do not establish a returned client.
+            raise OutputCaptureError(result.returncode) from exc
 
 
 def exec_stream(
