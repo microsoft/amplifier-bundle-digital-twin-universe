@@ -10,7 +10,6 @@ from functools import wraps
 import hashlib
 import inspect
 import os
-from pathlib import Path
 
 from . import admission, incus
 
