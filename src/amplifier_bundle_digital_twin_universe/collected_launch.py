@@ -98,6 +98,8 @@ def launch(profile_arg, variables, *, wait_seconds=600, **options):
                        intent_digest=_intent(raw, variables, name, owner), destination_digest=backend.digest)
         store = collector.AttemptStore(root, binding)
         with lifecycle.custody(backend.scope, name):
+            from .legacy_disposition import guard_name
+            guard_name(root, name)
             previous = store._read()
             if previous is not None:
                 # No generation reset or dispatch replay, even if no PID exists.

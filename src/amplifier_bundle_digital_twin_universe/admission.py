@@ -17,6 +17,7 @@ import stat
 import tempfile
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from amplifier_bundle_digital_twin_universe import incus
@@ -26,6 +27,22 @@ MANAGED_VALUE = "amplifier-digital-twin"
 DEFAULT_MAX_RUNNING = 15
 DEFAULT_MAX_INSTANCES = 256
 DEFAULT_MIN_FREE_BYTES = 10 * 1024**3
+_STATE_BASE = ContextVar("dtu_admission_base", default=None)
+
+
+def base_directory() -> Path:
+    return Path(_STATE_BASE.get() or os.environ.get("AMPLIFIER_DTU_ADMISSION_DIR")
+                or Path.home() / ".local/state/amplifier-dtu/admission")
+
+
+@contextmanager
+def state_scope(base):
+    """Trusted in-process adapter selection; never a permission grant."""
+    token = _STATE_BASE.set(str(base))
+    try:
+        yield
+    finally:
+        _STATE_BASE.reset(token)
 
 
 class AdmissionError(RuntimeError):
@@ -125,10 +142,7 @@ def _private_directory(path: Path) -> None:
 
 
 def state_directory(ctx: dict) -> Path:
-    base = Path(
-        os.environ.get("AMPLIFIER_DTU_ADMISSION_DIR")
-        or Path.home() / ".local/state/amplifier-dtu/admission"
-    )
+    base = base_directory()
     if not base.is_absolute() or ".." in base.parts:
         raise AdmissionError(
             "state_unsafe", "Admission directory must be an absolute normalized path"
@@ -242,6 +256,9 @@ def read_receipt(root: Path, request_id: str) -> dict | None:
 
 def save_receipt(root: Path, receipt: dict) -> None:
     _validate_receipt(receipt)
+    from .legacy_disposition import has_intent
+    if has_intent(root, receipt["request_id"]):
+        raise AdmissionError("legacy_disposition_fenced", "Reviewed legacy receipt is immutable")
     _save_private_json(receipt_path(root, receipt["request_id"]), receipt)
 
 
@@ -290,6 +307,7 @@ def _reservation_identity(name, request_id, owner_root) -> tuple[str, str, str] 
 
 
 def snapshot(ctx: dict, limits: dict, root: Path) -> dict:
+    from .legacy_disposition import reservation_released
     instances = incus.list_instances(MANAGED_KEY, MANAGED_VALUE)
     identities = set()
     for instance in instances:
@@ -311,6 +329,7 @@ def snapshot(ctx: dict, limits: dict, root: Path) -> dict:
         r["state"] in {"launching", "unknown"}
         and _reservation_identity(r.get("name"), r["request_id"], r.get("owner_root"))
         not in identities
+        and not reservation_released(root, r)
         for r in (_read_receipt_file(p) for p in root.glob("*.json"))
     )
     active = len(instances) - retained + pending

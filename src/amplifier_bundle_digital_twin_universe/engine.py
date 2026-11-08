@@ -1097,6 +1097,9 @@ def _reconcile_creations(ctx: dict, request_id: str | None = None, _evidence=Non
                     else [admission._read_receipt_file(path) for path in root.glob("*.json")])
     receipts.sort(key=lambda row: (row or {}).get("operation_observed_at", 0))
     for receipt in receipts:
+        from .legacy_disposition import has_intent
+        if receipt and has_intent(admission.state_directory(ctx), receipt["request_id"]):
+            continue
         if (not receipt or receipt.get("state") not in {"launching", "unknown"}
                 or not receipt.get("create_operation")):
             continue
@@ -1230,6 +1233,12 @@ def _launch_status_legacy(request_id: str, *, _reconcile=True) -> dict:
                 "request_id": request_id,
                 "state": "not_recorded",
             }
+        from .legacy_disposition import has_intent
+        if has_intent(root, request_id):
+            return {"schema_version": 1, "request_id": request_id,
+                    "name": receipt["name"], "owner_root": receipt["owner_root"],
+                    "state": "unknown", "legacy_disposition": "recorded",
+                    "replay_permitted": False}
         instances = incus.list_instances(_MANAGED_BY_KEY, _MANAGED_BY_VALUE)
         match = next((i for i in instances if i["name"] == receipt["name"]), None)
         observed = dict(receipt)
@@ -1361,6 +1370,10 @@ def launch(
     request_id = str(uuid.uuid4()) if request_id is None else request_id
     name = name or f"dtu-{hashlib.sha256(request_id.encode()).hexdigest()[:16]}"
     with lifecycle.name_custody(name) as base:
+        from .legacy_disposition import guard_name
+        for root in base.iterdir():
+            if root.is_dir():
+                guard_name(root, name)
         if lifecycle.markers(base, name):
             raise admission.AdmissionError("launch_unknown", "This name belongs to a collected attempt; use its original request")
         return _launch_impl(profile_arg, variables, **{**options, "request_id": request_id, "name": name})
@@ -1445,6 +1458,8 @@ def _launch_impl(
         "user.dtu.offline": str(offline).lower(),
     }
     with admission.locked(ctx) as root:
+        from .legacy_disposition import guard_name
+        guard_name(root, container_name)
         previous = admission.read_receipt(root, request_id)
         if previous is not None:
             if previous["intent_digest"] != intent_digest:

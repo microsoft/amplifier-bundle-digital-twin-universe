@@ -18,8 +18,7 @@ _HELD = ContextVar("dtu_lifecycle", default=None)
 
 
 def base_directory():
-    base = Path(os.environ.get("AMPLIFIER_DTU_ADMISSION_DIR") or
-                Path.home() / ".local/state/amplifier-dtu/admission")
+    base = admission.base_directory()
     if not base.is_absolute() or ".." in base.parts or any(p.is_symlink() for p in (base, *base.parents)):
         raise admission.AdmissionError("state_unsafe", "Invalid lifecycle directory")
     return base
@@ -96,6 +95,10 @@ def mutation(name):
     # Lock before marker lookup, including the legacy/no-marker case. No new
     # backend query is needed for legacy mutation. Aliases cannot bypass custody.
     with name_custody(canonical) as base:
+        from .legacy_disposition import guard_name
+        for root in base.iterdir():
+            if root.is_dir():
+                guard_name(root, canonical)
         candidates = markers(base, canonical)
         if not candidates:
             yield
