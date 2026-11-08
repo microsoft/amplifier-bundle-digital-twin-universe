@@ -307,8 +307,10 @@ def _reservation_identity(name, request_id, owner_root) -> tuple[str, str, str] 
 
 
 def snapshot(ctx: dict, limits: dict, root: Path) -> dict:
-    from .legacy_disposition import reservation_released
+    from .legacy_disposition import accounting_view
     instances = incus.list_instances(MANAGED_KEY, MANAGED_VALUE)
+    receipts = [_read_receipt_file(p) for p in root.glob("*.json")]
+    instances, released = accounting_view(ctx, root, receipts, instances)
     identities = set()
     for instance in instances:
         config = instance.get("config", {})
@@ -329,8 +331,8 @@ def snapshot(ctx: dict, limits: dict, root: Path) -> dict:
         r["state"] in {"launching", "unknown"}
         and _reservation_identity(r.get("name"), r["request_id"], r.get("owner_root"))
         not in identities
-        and not reservation_released(root, r)
-        for r in (_read_receipt_file(p) for p in root.glob("*.json"))
+        and r["request_id"] not in released
+        for r in receipts
     )
     active = len(instances) - retained + pending
     total = len(instances) + pending

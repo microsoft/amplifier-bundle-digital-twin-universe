@@ -165,7 +165,10 @@ def case(tmp_path, monkeypatch):
         assert argv[2].endswith("&project=default")
         return json.dumps(query(argv[2].removesuffix("&project=default"))).encode()
     monkeypatch.setattr(bound_backend, "_capture_identity_query", capture)
-    monkeypatch.setattr(incus, "list_instances", lambda *args: deepcopy(data.inventory))
+    def filtered_list(key, value):
+        assert (key, value) == (admission.MANAGED_KEY, admission.MANAGED_VALUE)
+        return deepcopy([row for row in data.inventory if row.get("config", {}).get(key) == value])
+    monkeypatch.setattr(incus, "list_instances", filtered_list)
     forbidden = Mock(side_effect=AssertionError("Legacy disposition attempted an external effect"))
     for name in (
         "_run", "create_container", "delete_container", "stop_container",
@@ -263,6 +266,119 @@ def test_release_never_hides_an_instance_that_arrives_later(case, status):
     }
     legacy.reconcile(REQUEST)
     assert _files(case.base) == before
+    _original(case)
+
+
+@pytest.mark.parametrize("status", ["Running", "Stopped", "Frozen", "Unrecognized"])
+@pytest.mark.parametrize("metadata", ["untagged", "foreign-tag", "partial", "renamed-request", "managed"])
+def test_late_resource_accounting_preserves_backend_filter(case, status, metadata):
+    assert _counts(case)["pending_unobserved"] == _counts(case)["total"] == 1
+    _apply(case, _prepare(case))
+    assert _counts(case)["total"] == 0
+    row = {"name": NAME, "status": status, "config": {}}
+    if metadata == "foreign-tag":
+        row["config"] = {admission.MANAGED_KEY: "other-manager"}
+    elif metadata == "partial":
+        row["config"] = {"user.dtu.owner-root": "foreign-owner"}
+    elif metadata == "renamed-request":
+        row["name"] = "renamed-instance"
+        row["config"] = {"user.dtu.request-id": REQUEST}
+    elif metadata == "managed":
+        row = _instance(status=status)
+    case.inventory[:] = [row]
+    assert incus.list_instances(admission.MANAGED_KEY, admission.MANAGED_VALUE) == (
+        [row] if metadata == "managed" else []
+    )
+    before = _files(case.base)
+    snapshot = admission.snapshot(case.backend.scope, admission.policy(1, 1, 0), case.root)
+    assert snapshot["counts"] == {
+        "active": int(status != "Stopped"), "stopped_retained": int(status == "Stopped"),
+        "pending_unobserved": 0, "total": 1,
+    }
+    assert {b["code"] for b in snapshot["blockers"]} == (
+        {"retained_capacity"} if status == "Stopped" else {"execution_capacity", "retained_capacity"}
+    )
+    assert legacy.reconcile(REQUEST)["original_outcome"] == "unknown"
+    with pytest.raises(admission.AdmissionError):
+        legacy.guard_name(case.root, NAME)
+    assert _files(case.base) == before
+    _original(case)
+
+
+def test_release_accounting_does_not_expand_unrelated_unmanaged_scope(case):
+    _apply(case, _prepare(case))
+    case.inventory[:] = [
+        {"name": NAME, "status": "Running", "config": {}},
+        {"name": "unrelated", "status": "Running", "config": {}},
+        _instance(name="managed-other", request="other", owner="other"),
+    ]
+    before = _files(case.base)
+    counts = _counts(case)
+    assert counts == {"active": 2, "stopped_retained": 0, "pending_unobserved": 0, "total": 2}
+    assert _files(case.base) == before
+    _original(case)
+
+
+def test_one_late_resource_matching_two_releases_counts_once(case):
+    _apply(case, _prepare(case))
+    other = {**case.receipt, "request_id": "other-request", "name": "other-legacy-name"}
+    other_path = admission.receipt_path(case.root, other["request_id"])
+    original = json.dumps(other).encode()
+    _private_bytes(other_path, original)
+    prepared = legacy.prepare(other["request_id"], OWNER, legacy.RELEASE)
+    legacy.apply(other["request_id"], OWNER, legacy.RELEASE, prepared["digest"], "other-decision")
+    case.inventory[:] = [{"name": NAME, "status": "Running",
+                          "config": {"user.dtu.request-id": other["request_id"]}}]
+    assert _counts(case) == {"active": 1, "stopped_retained": 0, "pending_unobserved": 0, "total": 1}
+    assert other_path.read_bytes() == original
+    _original(case)
+
+
+@pytest.mark.parametrize("fault", ["unavailable", "truncated", "duplicate", "blank-name", "wrong-scope"])
+def test_release_accounting_never_publishes_capacity_from_incomplete_inventory(case, monkeypatch, fault):
+    _apply(case, _prepare(case))
+    before = _files(case.base)
+    # The ordinary filtered listing succeeds; only the extra full observation fails.
+    if fault == "unavailable":
+        def failed(*args, **kwargs):
+            raise bound_backend.BackendFence("Synthetic unavailable inventory")
+        monkeypatch.setattr(bound_backend, "_capture_identity_query", failed)
+    elif fault == "truncated":
+        monkeypatch.setattr(bound_backend, "_capture_identity_query", lambda *a, **k: b"[")
+    elif fault == "duplicate":
+        case.inventory[:] = [{"name": NAME, "status": "Running", "config": {}}] * 2
+    elif fault == "blank-name":
+        case.inventory[:] = [{"name": "", "status": "Running", "config": {}}]
+    with pytest.raises((admission.AdmissionError, bound_backend.BackendFence)):
+        if fault == "wrong-scope":
+            admission.snapshot({**case.backend.scope, "project": "different"},
+                               admission.policy(1, 2, 0), case.root)
+        else:
+            _counts(case)
+    assert _files(case.base) == before
+    _original(case)
+
+
+@pytest.mark.parametrize("disposition", ["none", "keep", "pending"])
+def test_no_applied_release_keeps_normal_filtered_snapshot(case, monkeypatch, disposition):
+    if disposition == "keep":
+        _apply(case, _prepare(case, legacy.KEEP), legacy.KEEP)
+    elif disposition == "pending":
+        writer = admission._save_private_bytes
+        def fail_marker(path, raw):
+            if path == case.marker:
+                raise OSError("before marker")
+            writer(path, raw)
+        with monkeypatch.context() as patch:
+            patch.setattr(admission, "_save_private_bytes", fail_marker)
+            with pytest.raises(admission.AdmissionError):
+                _apply(case, _prepare(case))
+    case.inventory[:] = [{"name": "unrelated", "status": "Running", "config": {}},
+                        _instance(name="managed-other", request="other", owner="other")]
+    unexpected = Mock(side_effect=AssertionError("Unreleased snapshot queried complete inventory"))
+    monkeypatch.setattr(bound_backend, "_capture_identity_query", unexpected)
+    assert _counts(case) == {"active": 2, "stopped_retained": 0, "pending_unobserved": 1, "total": 2}
+    unexpected.assert_not_called()
     _original(case)
 
 

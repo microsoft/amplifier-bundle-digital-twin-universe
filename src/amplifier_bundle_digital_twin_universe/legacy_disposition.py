@@ -384,6 +384,43 @@ def reservation_released(root, receipt):
     return True
 
 
+def accounting_view(ctx, root, receipts, managed_instances):
+    """Count late resources before excluding a released reservation.
+
+    The ordinary managed-by filter misses partial/untagged late arrivals.
+    Only applied, currently verified releases expand the accounting selection:
+    their exact names or request IDs, in the same daemon/project, count even
+    without a managed tag. A full inventory failure refuses the snapshot rather
+    than publishing an available slot from incomplete observation.
+    Caller holds the admission lock. No receipt or disposition is changed.
+    """
+    released = {r["request_id"]: r for r in receipts
+                if r["state"] in {"launching", "unknown"} and reservation_released(root, r)}
+    if not released:
+        return managed_instances, set()
+    executor = Executor.from_system()
+    _require(executor.root == root and executor.backend.scope == ctx)
+    with executor.scope():
+        executor.revalidate()
+        for request_id in released:
+            row, _ = _read_intent(root, request_id)
+            _require(row["preview"]["config_digest"] == executor.config_digest
+                     and row["preview"]["destination_digest"] == executor.backend.digest
+                     and row["preview"]["scope"] == ctx)
+        rows = executor.inventory()
+        executor.revalidate()
+    names = {r["name"] for r in released.values()}
+    # A complete project inventory has one nonblank name per resource; reject
+    # duplicates, not silently count or collapse inconsistent query output.
+    _require(all(r["name"].strip() for r in rows)
+             and len({r["name"] for r in rows}) == len(rows))
+    selected = [r for r in rows if
+                r["config"].get(admission.MANAGED_KEY) == admission.MANAGED_VALUE
+                or r["name"] in names
+                or r["config"].get("user.dtu.request-id") in released]
+    return selected, set(released)
+
+
 def guard_name(root, name):
     directory = root / "legacy"
     if not directory.exists():

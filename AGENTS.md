@@ -105,6 +105,10 @@ Run these before opening a PR. The reviewer expects evidence in the PR body, not
   declaration or a free lock does not prove that deployment boundary. Preserve
   the original receipt bytes and UNKNOWN state. KEEP never releases; RELEASE
   excludes only the exact unresolved reservation after its separate marker.
+  Applied-release accounting must use complete bound inventory to count late
+  exact-name/request instances even without the managed tag, deduplicated with
+  managed instances. Fixtures must honor the real managed-by list predicate;
+  returning all inventory from a filtered list creates false acceptance.
   Pending intents retain capacity, quarantine the name/request, and require
   explicit exact recovery. Read-only reconciliation never repairs. A visible
   post-replace marker is not an acknowledgment of the earlier fsync. Never use

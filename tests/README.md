@@ -65,6 +65,13 @@ the fixture; that does not mean the root driver was confined or that an actual
 human approved a disposition. The installed candidate is not patched for these
 cases. File/directory-fsync injection belongs to the focused unit proof.
 
+Both fixtures implement the actual managed-by predicate separately from the
+complete inventory. Late-resource regressions cover untagged, foreign/partial
+metadata and renamed request matches, managed deduplication, unrelated untagged
+exclusion and failed inventory refusal. The installed fixture records exact
+initial/released/late-resource counts through the `legacy_cli capacity` surface
+and separately verifies that its filtered backend listing excludes untagged rows.
+
 In that guest only, run with distinct existing source/wheel paths and a new
 output directory:
 
@@ -77,6 +84,8 @@ and optional boundary output using the guest's `/opt/fixture/venv`. It is not an
 installer for host accounts or a general runner. Preserve failed outputs and
 synthetic state, then tear down the exact owned guest with its creation owner.
 No original UNKNOWN receipt or live daemon is an input to these fixtures.
+For an accounting-only correction, `--accounting-only` selects the maintained
+legacy/admission test files without repeating the collected-launch suite.
 
 
 ## Layout

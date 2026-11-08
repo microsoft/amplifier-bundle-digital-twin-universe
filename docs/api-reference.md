@@ -400,6 +400,21 @@ that the original operation failed or was cancelled.
   reservation from pending capacity. Physical instances, including late arrivals,
   still count through normal capacity rules.
 
+When a currently verified RELEASE is applied, capacity takes one complete,
+bounded inventory from that protected backend. It counts the ordinary
+`user.dtu.managed-by=amplifier-digital-twin` selection **plus** any instance with
+an exact released name or request ID, even if its managed tag or other metadata
+is missing or different. An instance matching both selections (or more than one
+release) counts once. An unrelated untagged instance does not enter the DTU count.
+Running, frozen and unknown states consume active capacity; stopped instances
+follow the existing retained/provisioning rules.
+
+The full inventory and frozen configuration/backend are revalidated before the
+snapshot returns. Missing, malformed, oversized or unavailable observation
+refuses the snapshot; it never reports a free slot from a partial list. This
+additional observation is not needed without a recognized applied RELEASE.
+It does not repair or rewrite any original receipt, intent or applied marker.
+
 The original receipt bytes remain unchanged. Neither effect reports failure,
 cancellation or removal, transfers the recorded late-cleanup owner, or permits
 the original request/name to run again. The first retained disposition is

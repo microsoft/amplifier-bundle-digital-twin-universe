@@ -10,13 +10,19 @@ p = argparse.ArgumentParser()
 p.add_argument("--source", type=Path, required=True)
 p.add_argument("--output", type=Path, required=True)
 p.add_argument("--boundary", action="store_true")
+p.add_argument("--accounting-only", action="store_true",
+               help="Select legacy/admission checks only for the accounting correction.")
 a = p.parse_args()
 a.output.mkdir(parents=True, exist_ok=False)
 env = dict(os.environ, PYTHONPATH=str(a.source / "src"), PATH="/opt/fixture/venv/bin:/usr/bin:/bin")
 steps = []
+test_files = ["tests/unit/test_legacy_disposition.py", "tests/unit/test_admission.py"]
+if not a.accounting_only:
+    test_files.append("tests/unit/test_collected_launch.py")
 commands = [
-    [sys.executable, "-m", "ruff", "check", "src/amplifier_bundle_digital_twin_universe/legacy_disposition.py", "src/amplifier_bundle_digital_twin_universe/legacy_cli.py", "tests/unit/test_legacy_disposition.py", "tests/inputs/run_legacy_boundary.py", "tests/inputs/qualify_legacy.py"],
-    [sys.executable, "-m", "pytest", "tests/unit/test_legacy_disposition.py", "tests/unit/test_admission.py", "tests/unit/test_collected_launch.py", "-q", "--tb=short", "--junitxml=" + str(a.output / "junit.xml")],
+    [sys.executable, "-m", "ruff", "check", "--isolated", "--select", "E4,E7,E9,F",
+     "src/amplifier_bundle_digital_twin_universe/admission.py", "src/amplifier_bundle_digital_twin_universe/legacy_disposition.py", "src/amplifier_bundle_digital_twin_universe/legacy_cli.py", "tests/unit/test_legacy_disposition.py", "tests/inputs/run_legacy_boundary.py", "tests/inputs/qualify_legacy.py"],
+    [sys.executable, "-m", "pytest", *test_files, "-q", "--tb=short", "--junitxml=" + str(a.output / "junit.xml")],
     [sys.executable, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(a.output / "dist")],
 ]
 if a.boundary:

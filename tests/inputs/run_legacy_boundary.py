@@ -94,7 +94,7 @@ if args[:1]==['query'] and len(args)==2:
   elif p.path=='/1.0/instances' and q.get('recursion')==['1']: kind='inventory'; value=json.loads((base/'inventory.json').read_text())
   elif p.path=='/1.0/storage-pools/pool/resources': kind='storage'; value={'space':{'total':100000000000,'used':0}}
 elif args==['list','user.dtu.managed-by=amplifier-digital-twin','--format=json']:
- kind='list'; value=json.loads((base/'inventory.json').read_text())
+ kind='list'; value=[r for r in json.loads((base/'inventory.json').read_text()) if r.get('config',{}).get('user.dtu.managed-by')=='amplifier-digital-twin']
 with (base/'trace.jsonl').open('a') as f: f.write(json.dumps({'kind':kind})+'\\n')
 if kind=='inventory' and (base/'gate.json').exists():
  gate=json.loads((base/'gate.json').read_text())
@@ -143,9 +143,17 @@ print(json.dumps(value))
             write(path, json.dumps(receipt, indent=2) + "\n")
             return request, path, digest(path)
 
-        def cli(operation, request, *extra, uid=OPERATOR, expect=0):
+        def cli(operation, request=None, *extra, uid=OPERATOR, expect=0):
             python = op_python if uid == OPERATOR else agent_python
-            return json.loads(run(uid, [python, "-I", "-m", CLI, operation, request, *extra], expect))
+            target = [] if request is None else [request]
+            return json.loads(run(uid, [python, "-I", "-m", CLI, operation, *target, *extra], expect))
+
+        report["accounting_observations"] = {}
+
+        def counts(label):
+            result = cli("capacity")["counts"]
+            report["accounting_observations"][label] = result
+            return result
 
         def prep(request, effect):
             return cli("prepare", request, "--owner-root", "fixture-owner", "--effect", effect)["digest"]
@@ -157,6 +165,8 @@ print(json.dumps(value))
         keep = "record_unknown_keep_reservation"
         release = "accept_unknown_risk_release_reservation"
         request, path, original = seed("release")
+        assert counts("initial") == {
+            "active": 1, "stopped_retained": 0, "pending_unobserved": 1, "total": 1}
         d = prep(request, release)
         denied = cli("apply", request, "--owner-root", "fixture-owner", "--effect", release,
                      "--digest", d, "--operation-id", "agent", uid=AGENT, expect=1)
@@ -173,17 +183,46 @@ print(json.dumps(value))
         report["cases"].append("exact apply/idempotent duplicate; wrong digest/effect/operation refused; original unchanged")
         status = cli("reconcile", request)
         assert status["original_outcome"] == "unknown" and status["replay_permitted"] is False
-        counts_code = "from " + PACKAGE + " import legacy_disposition as l, admission; import json; e=l.Executor.from_system()\nwith e.scope(), admission.locked(e.backend.scope) as root: print(json.dumps(admission.snapshot(e.backend.scope,admission.policy(0,0,0),root)['counts']))"
-        assert json.loads(run(OPERATOR, [op_python, "-I", "-c", counts_code]))["pending_unobserved"] == 0
+        assert counts("after_release") == {
+            "active": 0, "stopped_retained": 0, "pending_unobserved": 0, "total": 0}
+        intent = root / "legacy" / (hashlib.sha256(request.encode()).hexdigest() + ".intent")
+        applied = intent.with_suffix(".applied")
+        originals = {str(p): digest(p) for p in (path, intent, applied)}
+        for status in ("Running", "Stopped", "Frozen", "Unrecognized"):
+            write(inventory, json.dumps([{"name": "legacy-release", "status": status, "config": {}}]))
+            # Exercise the fake's real predicate separately: this must be empty.
+            filtered = json.loads(run(OPERATOR, [binary, "--project", "default", "list",
+                                      "user.dtu.managed-by=amplifier-digital-twin", "--format=json"]))
+            assert filtered == []
+            assert counts("late_untagged_" + status) == {
+                "active": int(status != "Stopped"), "stopped_retained": int(status == "Stopped"),
+                "pending_unobserved": 0, "total": 1}
+        write(inventory, json.dumps([{"name": "legacy-release", "status": "Running",
+                                     "config": {"user.dtu.managed-by": "amplifier-digital-twin"}}]))
+        assert len(json.loads(run(OPERATOR, [binary, "--project", "default", "list",
+                                      "user.dtu.managed-by=amplifier-digital-twin", "--format=json"]))) == 1
+        assert counts("late_managed")["total"] == 1  # Not counted twice.
+        write(inventory, json.dumps([{"name": "renamed", "status": "Running",
+                                     "config": {"user.dtu.request-id": request}},
+                                    {"name": "unrelated", "status": "Running", "config": {}}]))
+        assert counts("renamed_request_and_unrelated_untagged")["total"] == 1
+        # A failed full observation cannot publish a free slot using only list.
+        write(inventory, json.dumps([{"name": "incomplete"}]))
+        assert cli("capacity", expect=1)["error"] == "disposition_conflict"
+        report["incomplete_inventory_refused"] = True
+        write(inventory, "[]")
+        assert originals == {str(p): digest(p) for p in (path, intent, applied)}
+        assert cli("reconcile", request)["original_outcome"] == "unknown"
+        report["cases"].append("faithful managed filter excludes untagged rows; full bound accounting counts late resources exactly once and refuses incomplete inventory")
         rkeep, pkeep, hkeep = seed("keep")
         assert apply(rkeep, keep, prep(rkeep, keep))["outcome"] == "applied"
-        assert json.loads(run(OPERATOR, [op_python, "-I", "-c", counts_code]))["pending_unobserved"] == 1
+        assert counts("keep_and_release")["pending_unobserved"] == 1
         assert digest(pkeep) == hkeep
         report["cases"].append("canonical snapshot release0 vs keep1; no receipt rewrite")
         # Any future same-name resource still counts; no historical outcome is promoted.
         write(inventory, json.dumps([{"name": "legacy-release", "status": "Running", "config": {}}]))
-        counts = json.loads(run(OPERATOR, [op_python, "-I", "-c", counts_code]))
-        assert counts["active"] == 2 and counts["total"] == 2
+        late_counts = counts("keep_and_late_release_resource")
+        assert late_counts["active"] == 2 and late_counts["total"] == 2
         rlate, plate, hlate = seed("late")
         write(inventory, "[]")
         dlate = prep(rlate, release)
