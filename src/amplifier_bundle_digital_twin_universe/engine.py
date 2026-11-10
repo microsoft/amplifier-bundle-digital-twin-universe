@@ -95,6 +95,8 @@ def _wait_for_gateway(container_name: str, timeout: int = 60) -> str:
     while time.monotonic() < deadline:
         try:
             return incus.get_host_gateway_ip(container_name)
+        except incus.OutputCaptureError:
+            raise
         except IncusError as exc:
             last_err = exc
             time.sleep(1)
@@ -160,7 +162,17 @@ def _exec_checked(container_name: str, command: str, timeout: int = 600) -> str:
     if exit_code != 0:
         combined = stdout + stderr
         if any(hint in combined for hint in _NETWORK_ERROR_HINTS):
-            diag = incus.diagnose_network_failure(container_name)
+            try:
+                diag = incus.diagnose_network_failure(container_name)
+            except incus.OutputCaptureError as secondary:
+                # The original command already has a complete nonzero result.
+                # Optional diagnostics must not replace that primary failure.
+                primary = RuntimeError(
+                    f"Command failed (exit {exit_code}): {command}\n"
+                    f"stdout: {stdout}\nstderr: {stderr}"
+                )
+                primary.add_note("Network diagnostic unavailable")
+                raise primary from secondary
             raise RuntimeError(
                 f"Command failed (exit {exit_code}): {command}\n\n"
                 f"Network diagnostic:\n{diag}\n\n"
@@ -1724,6 +1736,11 @@ def launch(
         result["request_id"] = request_id
         result["owner_root"] = owner_root
         result["offline"] = offline
+    except incus.OutputCaptureError:
+        # The client returned, but output observation failed. Keep the existing
+        # unresolved receipt and provisioning marker; status remains UNKNOWN
+        # and the same request cannot replay. Do not stop/delete any resource.
+        raise
     except Exception:
         # Best-effort cleanup on failure, only for this successfully-created
         # instance. An uncertain creation above never enters this path.
@@ -1778,6 +1795,8 @@ def _read_profile_snapshot(container_id: str) -> str | None:
             tmp_path = tmp.name
         try:
             incus.file_pull(container_id, [_PROFILE_SNAPSHOT_PATH], tmp_path)
+        except incus.OutputCaptureError:
+            raise
         except IncusError:
             return None
         return Path(tmp_path).read_text()

@@ -50,6 +50,11 @@ Run these before opening a PR. The reviewer expects evidence in the PR body, not
 
 ## Common pitfalls (from session experience)
 
+- **Exec capture faults are not command failures**: post-return spool seek/read
+  I/O or decoding errors raise `OutputCaptureError` with the observed return code
+  and original cause. Do not retry them as missing gateway/profile data or enter
+  provisioning cleanup. A previously complete nonzero command result remains
+  primary if only its optional network diagnostic fails to capture.
 - **Admission receipt identity**: unresolved reservations match instances only
   by complete, exact name/request/owner identity in the same daemon/project.
   Missing or empty owner metadata must not suppress a reservation. Disk receipts
