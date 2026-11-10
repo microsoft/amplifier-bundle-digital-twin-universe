@@ -261,7 +261,7 @@ def run():
                 save("results.json", results)
         save("qualification.json", {"passed": True, "results": results,
              "scope": "Real Incus ordinary CLI launch via installed library; call counts cover this library's observed CLI invocations, not a daemon-wide lifecycle event census",
-             "operator_cleanup": "Separate always-step after retained observations; not product automatic cleanup"})
+             "operator_cleanup": "Per-case teardown after retained observations, plus always-step residual cleanup; not product automatic cleanup"})
     finally:
         incus._run = native
 
