@@ -213,9 +213,26 @@ def test_snapshot_capture_fault_is_not_absence_or_fallback(monkeypatch):
     monkeypatch.setattr(incus, "check_incus", lambda: None)
     monkeypatch.setattr(engine, "load_profile", fallback)
     monkeypatch.setattr(incus, "container_exists", lambda name: True)
+    monkeypatch.setattr(incus, "get_instance_state", lambda name: "Running")
+    monkeypatch.setattr(engine, "_wait_for_gateway", lambda name: "10.1.0.1")
     monkeypatch.setattr(incus, "get_config", lambda *a: "old-profile")
     with spools(monkeypatch, error=UnicodeError("PRIVATE"), code=1) as (calls, _):
         with pytest.raises((UnicodeError, incus.IncusError)) as raised:
             engine.update("candidate", {})
         assert type(raised.value).__name__ == "OutputCaptureError"
         assert len(calls) == 1 and not fallback.called
+
+
+def test_gateway_missing_route_still_retries(monkeypatch):
+    gateway = MagicMock(side_effect=[incus.IncusError("not ready"), "10.1.0.1"])
+    sleep = MagicMock()
+    monkeypatch.setattr(incus, "get_host_gateway_ip", gateway)
+    monkeypatch.setattr(engine.time, "sleep", sleep)
+    assert engine._wait_for_gateway("candidate") == "10.1.0.1"
+    assert gateway.call_count == 2
+    sleep.assert_called_once_with(1)
+
+
+def test_missing_snapshot_remains_eligible_for_fallback(monkeypatch):
+    monkeypatch.setattr(incus, "file_pull", MagicMock(side_effect=incus.IncusError("absent")))
+    assert engine._read_profile_snapshot("candidate") is None
