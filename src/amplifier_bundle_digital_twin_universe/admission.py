@@ -229,6 +229,11 @@ def read_receipt(root: Path, request_id: str) -> dict | None:
 
 def save_receipt(root: Path, receipt: dict) -> None:
     _validate_receipt(receipt)
+    # Bound the replacement, not only the old file. Reconciliation can grow a
+    # checkpoint too; every writer must leave a receipt the reader can load.
+    serialized = json.dumps(receipt)
+    if len(serialized.encode("utf-8")) > 262144:
+        raise AdmissionError("state_unsafe", "Admission receipt exceeded its size bound")
     _private_directory(root)
     path = receipt_path(root, receipt["request_id"])
     try:
@@ -241,7 +246,7 @@ def save_receipt(root: Path, receipt: dict) -> None:
     tmp = Path(temporary)
     try:
         with os.fdopen(descriptor, "w") as handle:
-            json.dump(receipt, handle)
+            handle.write(serialized)
             handle.flush()
             os.fsync(handle.fileno())
         tmp.replace(path)
