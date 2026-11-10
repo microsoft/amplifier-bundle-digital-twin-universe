@@ -383,6 +383,26 @@ Returns (default, no `--stream`):
 With `--stream`, stdout and stderr are passed through as raw text (no JSON
 envelope). The CLI exit code is the command's exit code.
 
+#### Output capture errors
+
+If a buffered exec client returns but seeking or reading its output fails
+(including decoding errors), the library raises `OutputCaptureError`, an
+`IncusError` subtype. Its `returncode` retains the observed client exit code and
+`__cause__` retains the original local exception. The exception message is fixed
+and does not expose output, commands or paths; a chained Python traceback may
+still contain the original cause. No partial success tuple is returned.
+
+A capture fault alone does not authorize launch cleanup, publish readiness or
+release its unresolved reservation. `launch-status` remains `unknown`, and
+repeating that request does not repeat creation or provisioning. Gateway polling
+and profile fallback propagate the fault rather than treating it as missing
+data. A fully captured nonzero command failure still owns normal failure cleanup,
+even if its optional network diagnostic subsequently fails to capture.
+
+This does not cap output, change complete-string results, or establish safety for
+spool creation/close failures or general execution timeouts. Stream and interactive
+exec are unchanged.
+
 #### Internal shell wrapping
 
 When a command is provided (JSON or stream mode), it is internally wrapped in

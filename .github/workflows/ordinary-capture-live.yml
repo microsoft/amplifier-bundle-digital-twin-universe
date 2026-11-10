@@ -1,0 +1,108 @@
+name: Ordinary capture live Incus
+
+on:
+  pull_request:
+    branches: [main]
+    # Explicit maintainer trigger, not every push/synchronize. This supports
+    # qualification before this new workflow exists on the default branch.
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One specialist VM at a time; do not cancel an owner's cleanup to admit another.
+concurrency:
+  group: ordinary-capture-live
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    name: Installed ordinary capture / Incus 6.0
+    if: >-
+      github.run_attempt == 1 &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.label.name == 'run-ordinary-capture-live' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # Ubuntu Noble official archive/security package, not a third-party installer.
+      # https://packages.ubuntu.com/noble/incus (amd64). A missing pin fails closed.
+      INCUS_PACKAGE_VERSION: 6.0.0-1ubuntu0.3
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Bind disposable hosted paths
+        env:
+          HOSTED_RUNNER: ${{ runner.environment }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$HOSTED_RUNNER" = github-hosted
+          printf 'ARTIFACTS=%s/ordinary-capture-artifacts\nQUALIFICATION=%s/ordinary-capture-private\nHOSTED_RUNNER=%s\n' \
+            "$RUNNER_TEMP" "$RUNNER_TEMP" "$HOSTED_RUNNER" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Build and install exact noneditable wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$HOSTED_RUNNER" = github-hosted
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          mkdir -m 700 "$ARTIFACTS" "$QUALIFICATION"
+          git ls-tree -r HEAD > "$ARTIFACTS/git-tree.txt"
+          git rev-parse HEAD HEAD^{tree} > "$ARTIFACTS/git-identity.txt"
+          uv build --wheel --out-dir "$ARTIFACTS/dist"
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file "$ARTIFACTS/runtime-requirements.txt"
+          uv venv --python /usr/bin/python3 "$QUALIFICATION/venv"
+          uv pip install --python "$QUALIFICATION/venv/bin/python" --require-hashes -r "$ARTIFACTS/runtime-requirements.txt"
+          uv pip install --python "$QUALIFICATION/venv/bin/python" --no-deps "$ARTIFACTS"/dist/*.whl
+          sha256sum "$ARTIFACTS"/dist/*.whl > "$ARTIFACTS/wheel.sha256"
+      - name: Install fixed Incus package in disposable hosted VM only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$HOSTED_RUNNER" = github-hosted
+          sudo apt-get update
+          apt-cache policy incus incus-client > "$ARTIFACTS/package-policy.txt"
+          sudo apt-get install --no-install-recommends -y "incus=$INCUS_PACKAGE_VERSION" "incus-client=$INCUS_PACKAGE_VERSION"
+          dpkg-query -W incus incus-client liblxc1t64 > "$ARTIFACTS/packages.txt"
+          test "$(dpkg-query -W -f='${Version}' incus)" = "$INCUS_PACKAGE_VERSION"
+          sudo systemctl start incus
+          sudo timeout 60 incus admin waitready
+      - name: Qualify ordinary launch and retain exact observations
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          sudo env GITHUB_ACTIONS=true HOSTED_RUNNER="$HOSTED_RUNNER" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            CANDIDATE_SHA="$CANDIDATE_SHA" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            QUALIFICATION="$QUALIFICATION" ARTIFACTS="$ARTIFACTS" \
+            LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONUTF8=1 \
+            "$QUALIFICATION/venv/bin/python" "$GITHUB_WORKSPACE/tests/inputs/run_ordinary_capture_live.py" run
+      - name: Remove only this job's owned project resources after evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -f "$QUALIFICATION/ownership.json"; then
+            cd "$RUNNER_TEMP"
+            sudo env GITHUB_ACTIONS=true HOSTED_RUNNER="$HOSTED_RUNNER" \
+              GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+              CANDIDATE_SHA="$CANDIDATE_SHA" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+              QUALIFICATION="$QUALIFICATION" ARTIFACTS="$ARTIFACTS" \
+              LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONUTF8=1 \
+              "$QUALIFICATION/venv/bin/python" "$GITHUB_WORKSPACE/tests/inputs/run_ordinary_capture_live.py" cleanup
+          fi
+      - name: Export source identity, raw observations and cleanup
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ordinary-capture-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ARTIFACTS }}
+          if-no-files-found: error
+          retention-days: 14
