@@ -29,6 +29,12 @@ def owned(launch_infra, monkeypatch):
     monkeypatch.setattr(incus, "delete_container", delete)
     root = admission.state_directory(admission.context())
     path = admission.receipt_path(root, "r")
+    query = incus.query
+    def instance_query(endpoint):
+        if endpoint == "/1.0/instances/owned":
+            return {"config": dict(observed[0]["config"])}
+        return query(endpoint)
+    monkeypatch.setattr(incus, "query", instance_query)
     return profile, observed, create, stop, delete, path
 
 
@@ -55,7 +61,7 @@ def test_no_mock_launch_destroys_without_docker(owned, monkeypatch, state):
     assert run.call_count == 1
 
 
-@pytest.mark.parametrize("marker", [None, "", "required", "unexpected"])
+@pytest.mark.parametrize("marker", [None, "", "required", "unexpected", " none ", "none\n"])
 def test_missing_docker_with_uncertain_or_required_mocks_refuses(owned, monkeypatch, marker):
     _, observed, _, stop, delete, path = owned
     if marker is None:
@@ -141,6 +147,24 @@ def test_unknown_marker_never_reads_snapshot_to_infer_no_mocks(owned, monkeypatc
         engine.destroy("owned")
     assert not snapshot.called and not stop.called and not delete.called
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("marker,allowed", [("none", True), (" none ", False), ("none\n", False)])
+def test_marker_uses_raw_json_not_normalized_config(monkeypatch, marker, allowed):
+    def backend(command, **kwargs):
+        if command[0] == "docker":
+            raise FileNotFoundError("missing docker")
+        if command[:3] == ["incus", "config", "get"]:
+            return response(output=marker + "\n")
+        assert command == ["incus", "query", "/1.0/instances/owned"]
+        return response(output=json.dumps({"config": {KEY: marker}}))
+    monkeypatch.setattr(incus.subprocess, "run", backend)
+    monkeypatch.delenv("AMPLIFIER_DTU_INCUS_PROJECT", raising=False)
+    if allowed:
+        engine._stop_mock_containers("owned")
+    else:
+        with pytest.raises(RuntimeError):
+            engine._stop_mock_containers("owned")
 
 
 def test_marker_overrides_profile_config_and_is_not_downgraded(launch_infra, monkeypatch):

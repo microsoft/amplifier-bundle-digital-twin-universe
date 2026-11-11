@@ -848,6 +848,25 @@ Returns:
 `destroy NAME` retains its manual behavior. Neither form discovers teardown
 authority for legacy instances. Preserve required artifacts before destruction.
 
+### Docker-free cleanup
+
+New launches record `user.dtu.mock-cleanup=none` when they declare no mock
+services, or `required` before mock setup can begin. The latter is never cleared
+by a partial setup failure or an empty completed-service list. A reloaded profile
+that introduces mocks is marked `required` before its setup runs.
+
+Explicit `destroy` still inventories matching Docker sidecars when Docker is
+available, even for a `none` launch. Inventory or removal errors stop destruction
+before Incus stop/delete and receipt retirement; earlier successful sidecar
+removals are not rolled back. If the Docker executable itself is missing,
+destruction may proceed only for the exact `none` marker.
+
+Older unmarked instances, unknown marker values and declared mocks still require
+a working Docker inventory. Missing or unreadable profile snapshots are not
+proof of no mocks. No legacy metadata is inferred or rewritten, and the marker
+does not establish anything about orphaned sidecars from a previous same-name
+lifetime. Existing owner/request checks remain unchanged.
+
 ### Retaining exact offline images
 
 An offline launch using `local:<64-character fingerprint>` checks that exact image
