@@ -65,7 +65,14 @@ Run these before opening a PR. The reviewer expects evidence in the PR body, not
   before checkpoint/final writes; never overwrite a newer terminal outcome.
   Checkpoint recovery is an observation, not provisioning replay or a collector.
 - **Hardcoded subprocess timeouts**: `subprocess.run(..., timeout=N)` values that look reasonable on a quiet laptop are too short on loaded systems. Prefer environment-variable overrides like `AMPLIFIER_DTU_INCUS_LAUNCH_TIMEOUT_SECONDS` where they exist; add one where they don't, rather than picking a new fixed number.
-- **Directory recursion in file-push / file-pull**: both code paths now handle directories recursively. Older code assumed file-only and silently no-op'd on directories. If you find a "file not transferred" bug, check whether the caller is passing a directory through a path that still assumes a single file.
+- **Directory recursion in file-push / file-pull**: pull enumerates directories
+  and regular files separately with `find -print0`, preserving empty descendants
+  and pathname whitespace (including CR/CRLF through capture). Validate the whole
+  tree before local writes; never substitute a basename for an out-of-tree entry.
+  Canonicalize caller-selected ancestry above the local parent once; symlinks
+  at that parent or below it and destination type conflicts fail closed. These
+  path checks are not race-proof; use stable trees. Root symlinks are unsupported;
+  descendant symlinks/special files are not copied. Push's walk is independent.
 - **`mirror-from-github` fragility on ARM64**: the `amplifier-bundle-gitea` mirror-from-github path has known ARM64 reliability issues. When reliability matters (e.g., in test setup), prefer direct Gitea API calls over mirror-from-github.
 - **Incus is not Docker**: `incus exec`, `incus file push`, and `incus file pull` have different ergonomics from their Docker equivalents. Bind-mount semantics, networking defaults, and user-namespace behavior all differ. Don't transliterate Docker patterns; check the `incus` man pages.
 

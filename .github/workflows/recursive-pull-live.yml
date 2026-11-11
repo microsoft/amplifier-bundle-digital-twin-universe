@@ -1,0 +1,139 @@
+name: Recursive pull live Incus
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+# Reuse the existing specialist slot; never cancel another check's cleanup.
+concurrency:
+  group: ordinary-capture-live
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    name: Installed recursive pull / Incus 6.0
+    if: >-
+      github.run_attempt == 1 &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.label.name == 'run-recursive-pull-live' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # Same official Ubuntu package pin as the maintained capture lane.
+      INCUS_PACKAGE_VERSION: 6.0.0-1ubuntu0.3
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Bind disposable hosted paths
+        env:
+          HOSTED_RUNNER: ${{ runner.environment }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$HOSTED_RUNNER" = github-hosted
+          printf 'ARTIFACTS=%s/recursive-pull-artifacts\nQUALIFICATION=%s/recursive-pull-private\nHOSTED_RUNNER=%s\n' \
+            "$RUNNER_TEMP" "$RUNNER_TEMP" "$HOSTED_RUNNER" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Build and install exact noneditable wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          mkdir -m 700 "$ARTIFACTS" "$QUALIFICATION"
+          git ls-tree -r HEAD > "$ARTIFACTS/git-tree.txt"
+          git rev-parse HEAD HEAD^{tree} > "$ARTIFACTS/git-identity.txt"
+          uv build --wheel --out-dir "$ARTIFACTS/dist"
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file "$ARTIFACTS/runtime-requirements.txt"
+          uv venv --python /usr/bin/python3 "$QUALIFICATION/venv"
+          uv pip install --python "$QUALIFICATION/venv/bin/python" --require-hashes -r "$ARTIFACTS/runtime-requirements.txt"
+          uv pip install --python "$QUALIFICATION/venv/bin/python" --no-deps "$ARTIFACTS"/dist/*.whl
+          sha256sum "$ARTIFACTS"/dist/*.whl > "$ARTIFACTS/wheel.sha256"
+      - name: Focused predecessor and candidate checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen
+          git fetch --no-tags origin c07e81c24a8bacedd3e6bd525e2fbef7c4b2e207
+          mkdir "$QUALIFICATION/predecessor"
+          git archive c07e81c24a8bacedd3e6bd525e2fbef7c4b2e207 | tar -x -C "$QUALIFICATION/predecessor"
+          cp tests/unit/test_file_pull_directory_recursion.py "$QUALIFICATION/predecessor/tests/unit/"
+          export QUALIFICATION ARTIFACTS GITHUB_WORKSPACE
+          uv run --no-sync python - <<'PY'
+          import json, os, pathlib, subprocess, sys, xml.etree.ElementTree as ET
+          source = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+          old = pathlib.Path(os.environ["QUALIFICATION"]) / "predecessor"
+          output = pathlib.Path(os.environ["ARTIFACTS"])
+          def check(root, name, files):
+              env = {**os.environ, "PYTHONPATH": str(root / "src"), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
+              xml = output / (name + ".xml")
+              result = subprocess.run([sys.executable, "-m", "pytest", *files, "-q", "--tb=short", "--junitxml=" + str(xml)],
+                                      cwd=root, env=env, capture_output=True, text=True, timeout=300, check=False)
+              (output / (name + ".stdout")).write_text(result.stdout)
+              (output / (name + ".stderr")).write_text(result.stderr)
+              cases = ET.parse(xml).findall(".//testcase")
+              assert cases and not any(c.find("error") is not None or c.find("skipped") is not None for c in cases)
+              failed = [c.get("name") for c in cases if c.find("failure") is not None]
+              return {"exit_code": result.returncode, "cases": len(cases), "failed": failed}
+          selected = ["tests/unit/test_file_pull_directory_recursion.py"]
+          red = check(old, "pull-predecessor", selected)
+          assert red["exit_code"] == 1
+          assert any(n.startswith("test_pull_preserves_empty_descendants_and_file_bytes") for n in red["failed"])
+          assert any(n.startswith("test_pull_preserves_pathnames_through_real_capture") for n in red["failed"])
+          green = check(source, "pull-candidate", selected + ["tests/unit/test_file_push_directory_recursion.py", "tests/unit/test_output_capture.py"])
+          (output / "focused-results.json").write_text(json.dumps({"predecessor": red, "candidate": green}, indent=2))
+          assert green["exit_code"] == 0 and not green["failed"]
+          PY
+      - name: Install fixed Incus package in disposable hosted VM only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$HOSTED_RUNNER" = github-hosted
+          sudo apt-get update
+          apt-cache policy incus incus-client > "$ARTIFACTS/package-policy.txt"
+          sudo apt-get install --no-install-recommends -y "incus=$INCUS_PACKAGE_VERSION" "incus-client=$INCUS_PACKAGE_VERSION"
+          dpkg-query -W incus incus-client liblxc1t64 > "$ARTIFACTS/packages.txt"
+          test "$(dpkg-query -W -f='${Version}' incus)" = "$INCUS_PACKAGE_VERSION"
+          sudo systemctl start incus
+          sudo timeout 60 incus admin waitready
+      - name: Qualify installed recursive pull
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          sudo env GITHUB_ACTIONS=true HOSTED_RUNNER="$HOSTED_RUNNER" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            CANDIDATE_SHA="$CANDIDATE_SHA" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            QUALIFICATION="$QUALIFICATION" ARTIFACTS="$ARTIFACTS" \
+            LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONUTF8=1 \
+            "$QUALIFICATION/venv/bin/python" "$GITHUB_WORKSPACE/tests/inputs/run_recursive_pull_live.py" run
+      - name: Remove only owned resources after evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -f "$QUALIFICATION/ownership.json"; then
+            cd "$RUNNER_TEMP"
+            sudo env GITHUB_ACTIONS=true HOSTED_RUNNER="$HOSTED_RUNNER" \
+              GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+              CANDIDATE_SHA="$CANDIDATE_SHA" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+              QUALIFICATION="$QUALIFICATION" ARTIFACTS="$ARTIFACTS" \
+              LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONUTF8=1 \
+              "$QUALIFICATION/venv/bin/python" "$GITHUB_WORKSPACE/tests/inputs/run_recursive_pull_live.py" cleanup
+          fi
+      - name: Export exact source, observations and cleanup
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: recursive-pull-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ARTIFACTS }}
+          if-no-files-found: error
+          retention-days: 14
