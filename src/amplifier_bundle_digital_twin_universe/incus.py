@@ -611,6 +611,10 @@ def _is_remote_directory(name: str, remote_path: str, *, timeout: int = 30) -> b
 def _check_pull_destination(local_path: str, *, directory: bool) -> None:
     """Reject existing symlinks/type conflicts without resolving away links.
 
+    The caller canonicalizes ancestry above its selected local parent once.
+    The selected parent and every destination component below it remain
+    unresolved so their symlinks are still rejected here.
+
     This is a preflight observation, not protection against concurrent renames
     or link replacement between this check and mkdir/the Incus file client.
     """
@@ -725,7 +729,7 @@ def _file_pull_dir(
         if relative and relative[:-1] not in directories:
             raise IncusError("Directory listing is missing a parent directory")
 
-    # Preflight the whole tree, including leaves and local_parent's ancestors,
+    # Preflight the whole tree, including leaves and the selected local_parent,
     # before the first mkdir or pull. No basename fallback for untrusted entries.
     for entries, is_directory in ((directories, True), (files, False)):
         for relative in entries:
@@ -779,6 +783,18 @@ def file_pull(
 
     if has_dir:
         import posixpath
+        from pathlib import Path
+
+        # Trust the caller's ancestry (e.g. macOS /tmp -> /private/tmp), not
+        # links at or below the selected parent. Resolve only its parent once,
+        # then use the resulting path for both checks and writes.
+        selected_parent = Path(local_path).absolute()
+        try:
+            local_path = str(selected_parent.parent.resolve() / selected_parent.name)
+        except (OSError, RuntimeError) as exc:
+            raise IncusError(
+                f"Could not resolve pull destination ancestry {local_path!r}"
+            ) from exc
 
         for container_path in container_paths:
             if path_is_dir[container_path]:

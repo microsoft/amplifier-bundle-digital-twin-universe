@@ -808,10 +808,13 @@ Directory metadata is not preserved; local directories use the caller's defaults
 Each directory's complete listing and existing destination components are
 validated before that tree's first local write. Out-of-tree entries, malformed
 listings, missing directory parents, duplicates and file/directory conflicts are
-rejected. Existing destination symlinks (including dangling links and file leaves)
-are rejected. Existing regular files may be overwritten; unrelated local entries
-are retained. These are path preflight checks, **not race-proof containment or an
-atomic snapshot**. Use stable, trusted source and destination trees. A later
+rejected. Caller-selected ancestry **above** `<local_path>` is canonicalized once,
+so aliases such as macOS `/tmp` or a symlinked workspace above the destination
+are allowed. Symlinks at `<local_path>` itself or anywhere below it (including
+the copied root, dangling links and file leaves) are rejected. Existing regular
+files may be overwritten; unrelated local entries are retained. These are path
+preflight checks, **not race-proof containment or an atomic snapshot**.
+Use stable, trusted source and destination trees. A later
 transfer failure can leave a partial copy, and earlier sources in a mixed pull
 are not rolled back. All-file pulls retain their existing direct Incus behavior.
 

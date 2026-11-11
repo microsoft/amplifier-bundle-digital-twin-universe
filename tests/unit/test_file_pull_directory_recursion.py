@@ -683,15 +683,20 @@ def test_pull_requires_complete_nonempty_nul_records(tmp_path, output):
     pull.assert_not_called()
 
 
+@pytest.mark.parametrize("aliased_ancestor", [False, True])
 @pytest.mark.parametrize(
     "conflict",
     ["parent-link", "root-link", "nested-link", "file-link", "dangling-link",
      "parent-file", "root-file", "nested-file", "file-directory"],
 )
 def test_pull_rejects_existing_destination_links_and_type_conflicts(
-    monkeypatch, tmp_path, conflict
+    monkeypatch, tmp_path, conflict, aliased_ancestor
 ):
-    output = tmp_path / "output"
+    workspace = tmp_path
+    if aliased_ancestor:
+        workspace = tmp_path / "alias"
+        workspace.symlink_to(tmp_path, target_is_directory=True)
+    output = workspace / "output"
     root = output / "tree"
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -728,6 +733,43 @@ def test_pull_rejects_existing_destination_links_and_type_conflicts(
     assert not any(cmd[:3] == ["incus", "file", "pull"] for cmd in calls)
 
 
+@pytest.mark.parametrize("parent_exists", [False, True])
+def test_pull_allows_symlink_above_selected_local_parent(
+    monkeypatch, tmp_path, parent_exists
+):
+    real_workspace = tmp_path / "workspace"
+    real_workspace.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real_workspace, target_is_directory=True)
+    output = alias / "output"
+    if parent_exists:
+        output.mkdir()
+    calls = _mock_remote_tree(
+        monkeypatch, ["/tree", "/tree/empty", "/tree/nested"],
+        {"/tree/nested/data": b"tree data", "/readme": b"readme"},
+    )
+
+    # File first exercises mixed-source creation as well as the directory path.
+    incus.file_pull(_DTU, ["/readme", "/tree"], str(output), create_dirs=True)
+
+    canonical_output = real_workspace.resolve() / "output"
+    assert {
+        p.relative_to(canonical_output).as_posix()
+        for p in canonical_output.rglob("*")
+    } == {
+        "readme", "tree", "tree/empty", "tree/nested", "tree/nested/data",
+    }
+    assert (canonical_output / "tree/empty").is_dir()
+    assert (canonical_output / "tree/nested/data").read_bytes() == b"tree data"
+    assert (canonical_output / "readme").read_bytes() == b"readme"
+    assert [cmd[4] for cmd in calls if cmd[:3] == ["incus", "file", "pull"]] == [
+        str(canonical_output / "readme"),
+        str(canonical_output / "tree/nested/data"),
+    ]
+    assert alias.is_symlink()
+    assert alias.resolve() == real_workspace.resolve()
+
+
 def test_pull_merges_existing_real_directories_and_overwrites_regular_files(monkeypatch, tmp_path):
     root = tmp_path / "tree"
     (root / "nested").mkdir(parents=True)
@@ -760,10 +802,17 @@ def test_pull_mixed_sources_keeps_files_beside_complete_tree(monkeypatch, tmp_pa
     assert (tmp_path / "tree/empty").is_dir()
 
 
-def test_pull_mixed_file_does_not_follow_destination_symlink(monkeypatch, tmp_path):
+@pytest.mark.parametrize("aliased_ancestor", [False, True])
+def test_pull_mixed_file_does_not_follow_destination_symlink(
+    monkeypatch, tmp_path, aliased_ancestor
+):
     outside = tmp_path / "outside"
     outside.write_bytes(b"keep")
-    output = tmp_path / "output"
+    workspace = tmp_path
+    if aliased_ancestor:
+        workspace = tmp_path / "alias"
+        workspace.symlink_to(tmp_path, target_is_directory=True)
+    output = workspace / "output"
     output.mkdir()
     (output / "readme").symlink_to(outside)
     calls = _mock_remote_tree(monkeypatch, ["/tree"], {"/readme": b"replace"})
