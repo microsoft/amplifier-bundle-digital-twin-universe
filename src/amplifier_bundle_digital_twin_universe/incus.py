@@ -296,6 +296,8 @@ def exec_command(
     command: list[str],
     env: dict[str, str] | None = None,
     timeout: int | None = 600,
+    *,
+    _newline: str | None = None,
 ) -> tuple[int, str, str]:
     """Run *command* inside *name*.  Returns ``(exit_code, stdout, stderr)``.
 
@@ -312,7 +314,12 @@ def exec_command(
         for k, v in env.items():
             cmd.extend(["--env", f"{k}={v}"])
     cmd.extend(["--", *command])
-    with tempfile.TemporaryFile("w+") as out_f, tempfile.TemporaryFile("w+") as err_f:
+    # NUL-framed pathname listings must retain CR and CRLF bytes as characters.
+    # Ordinary command output keeps the existing universal-newline behavior.
+    with (
+        tempfile.TemporaryFile("w+", newline=_newline) as out_f,
+        tempfile.TemporaryFile("w+", newline=_newline) as err_f,
+    ):
         result = _run(
             cmd,
             stdin=subprocess.DEVNULL,
@@ -595,8 +602,35 @@ def _is_remote_directory(name: str, remote_path: str, *, timeout: int = 30) -> b
     Uses ``incus exec <name> -- test -d <path>``.  Exit code 0 → directory,
     non-zero → file or nonexistent path.
     """
-    ec, _, _ = exec_command(name, ["test", "-d", remote_path], timeout=timeout)
+    # Incus file paths are relative to the container root, not exec's cwd.
+    path = "/" + remote_path.lstrip("/")
+    ec, _, _ = exec_command(name, ["test", "-d", path], timeout=timeout)
     return ec == 0
+
+
+def _check_pull_destination(local_path: str, *, directory: bool) -> None:
+    """Reject existing symlinks/type conflicts without resolving away links.
+
+    This is a preflight observation, not protection against concurrent renames
+    or link replacement between this check and mkdir/the Incus file client.
+    """
+    from pathlib import Path
+
+    path = Path(local_path).absolute()
+    for item in (*reversed(path.parents), path):
+        try:
+            mode = item.lstat().st_mode
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise IncusError(f"Could not inspect pull destination {str(item)!r}") from exc
+        want_dir = item != path or directory
+        if stat.S_ISLNK(mode) or not (
+            stat.S_ISDIR(mode) if want_dir else stat.S_ISREG(mode)
+        ):
+            raise IncusError(
+                f"Unsafe pull destination {str(item)!r}: symbolic link or type conflict"
+            )
 
 
 def _file_pull_single(
@@ -612,6 +646,7 @@ def _file_pull_single(
     mixed-source path in :func:`file_pull`.  *local_file* is the full
     destination path on the local host (not a parent directory).
     """
+    _check_pull_destination(local_file, directory=False)
     src = f"{name}/{remote_file.lstrip('/')}"
     cmd = ["incus", "file", "pull", src, local_file]
     result = _run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -628,54 +663,82 @@ def _file_pull_dir(
 ) -> None:
     """Recursively pull *remote_dir* from *name* into *local_parent*, preserving dir name.
 
-    Algorithm:
-
-    1. Compute ``local_root = <local_parent>/<basename(remote_dir)>``.
-    2. Create ``local_root`` with ``os.makedirs``.
-    3. Enumerate all files: ``incus exec <name> -- find <remote_dir> -type f``.
-    4. For each file path:
-
-       * Compute relative path under remote_dir.
-       * Create local parent directories (``os.makedirs``).
-       * Pull the file via ``incus file pull``.
+    Enumerate directories and regular files separately with ``find -print0``.
+    Validate both complete listings and all existing destination components
+    before creating directories (including empty ones) or pulling any files.
 
     This sidesteps the ``Can't pull a directory`` error from the Incus CLI
     (``GET /1.0/instances/{id}/files?path=...`` is file-only on many Incus
     versions).  The remote directory structure is mirrored locally under
-    *local_parent*, with the directory's own name preserved — matching
-    ``cp -r`` and ``incus file pull --recursive`` conventions.
+    *local_parent*, with the directory's own name preserved. For source ``/``,
+    its contents land directly in *local_parent*. Relative sources are rooted
+    at ``/``, matching Incus file paths. Symlink roots are unsupported; find
+    does not follow descendant symlinks or copy special files. This is not an
+    atomic snapshot or a race-proof transfer against concurrent tree changes.
     """
     import posixpath
     from pathlib import Path
 
-    # Normalize: strip trailing slash, extract basename.
-    norm_dir = remote_dir.rstrip("/") or "/"
+    if not remote_dir or "\0" in remote_dir or ".." in remote_dir.split("/"):
+        raise IncusError(f"Unsafe remote directory path: {remote_dir!r}")
+    norm_dir = posixpath.normpath("/" + remote_dir.lstrip("/"))
     dir_name = posixpath.basename(norm_dir)
     local_root = Path(local_parent) / dir_name
+    prefix = norm_dir.rstrip("/") + "/"
+    manifests: dict[str, dict[tuple[str, ...], str]] = {}
 
-    # Always create the local root directory (even for an empty remote dir).
-    local_root.mkdir(parents=True, exist_ok=True)
-
-    # Enumerate all files under the remote directory.
-    ec, stdout, stderr = exec_command(
-        name, ["find", norm_dir, "-type", "f"], timeout=timeout
-    )
-    if ec != 0:
-        raise IncusError(
-            f"Failed to enumerate files in {remote_dir!r} on {name!r}: {stderr.strip()}"
+    for kind in ("d", "f"):
+        ec, stdout, stderr = exec_command(
+            name, ["find", norm_dir, "-type", kind, "-print0"],
+            timeout=timeout, _newline="",
         )
+        if ec != 0:
+            raise IncusError(
+                f"Failed to enumerate {kind!r} entries in {remote_dir!r} "
+                f"on {name!r}: {stderr.strip()}"
+            )
+        if stdout and not stdout.endswith("\0"):
+            raise IncusError("Incomplete NUL-delimited directory listing")
+        entries: dict[tuple[str, ...], str] = {}
+        for remote_path in stdout.split("\0")[:-1]:
+            if remote_path == norm_dir and kind == "d":
+                relative = ()
+            else:
+                if not remote_path.startswith(prefix):
+                    raise IncusError(f"Out-of-tree directory entry: {remote_path!r}")
+                relative = tuple(remote_path[len(prefix):].split("/"))
+                if any(part in ("", ".", "..") for part in relative):
+                    raise IncusError(f"Unsafe directory entry: {remote_path!r}")
+            if relative in entries:
+                raise IncusError(f"Duplicate directory entry: {remote_path!r}")
+            entries[relative] = remote_path
+        manifests[kind] = entries
 
-    remote_files = [line.strip() for line in stdout.splitlines() if line.strip()]
+    directories, files = manifests["d"], manifests["f"]
+    if () not in directories:
+        raise IncusError(
+            f"No directory root reported for {remote_dir!r}; symlink roots are unsupported"
+        )
+    if directories.keys() & files.keys():
+        raise IncusError("Directory listing contains a file/directory conflict")
+    for relative in (*directories, *files):
+        if relative and relative[:-1] not in directories:
+            raise IncusError("Directory listing is missing a parent directory")
 
-    for remote_file in remote_files:
-        # Compute relative path from norm_dir.
-        if remote_file.startswith(norm_dir + "/"):
-            rel = remote_file[len(norm_dir) + 1 :]
-        else:
-            rel = posixpath.basename(remote_file)
+    # Preflight the whole tree, including leaves and local_parent's ancestors,
+    # before the first mkdir or pull. No basename fallback for untrusted entries.
+    for entries, is_directory in ((directories, True), (files, False)):
+        for relative in entries:
+            _check_pull_destination(
+                str(local_root.joinpath(*relative)), directory=is_directory
+            )
 
-        local_file = local_root / rel
-        local_file.parent.mkdir(parents=True, exist_ok=True)
+    for relative in sorted(directories, key=lambda parts: (len(parts), parts)):
+        local_dir = local_root.joinpath(*relative)
+        _check_pull_destination(str(local_dir), directory=True)
+        local_dir.mkdir(parents=True, exist_ok=True)
+    for relative, remote_file in files.items():
+        local_file = local_root.joinpath(*relative)
         _file_pull_single(name, remote_file, str(local_file), timeout=timeout)
 
 
@@ -691,8 +754,8 @@ def file_pull(
     """``incus file pull <name>/<path>... <local_path>``
 
     When any source is a remote directory, the function automatically walks
-    that source recursively: the remote file tree is enumerated via
-    ``incus exec -- find`` and each file is pulled individually via
+    that source recursively: remote directories and regular files are enumerated
+    via ``incus exec -- find -print0`` and each file is pulled individually via
     ``incus file pull``.  This sidesteps the
     ``Can't pull a directory without --recursive`` error from the Incus CLI
     (``GET /1.0/instances/{id}/files?path=...`` is file-only on many Incus
@@ -724,7 +787,10 @@ def file_pull(
                 # Mixed source: file alongside a directory.
                 # Pull to <local_path>/<filename> so it lands next to the dir.
                 filename = posixpath.basename(container_path.rstrip("/"))
+                if filename in ("", ".", ".."):
+                    raise IncusError(f"Unsafe remote file path: {container_path!r}")
                 local_file = os.path.join(local_path, filename)
+                _check_pull_destination(local_file, directory=False)
                 if create_dirs:
                     os.makedirs(local_path, exist_ok=True)
                 _file_pull_single(name, container_path, local_file, timeout=timeout)

@@ -782,8 +782,8 @@ amplifier-digital-twin file-pull <id> <container_path>... <local_path> [flags]
   an existing directory.
 
 `-r/--recursive` (default: off)
-  Recursively transfer directories. Required when any source is a directory;
-  leave off for single-file or multi-file pulls.
+  Recursively transfer directories. Directory sources are also detected
+  automatically; leave off for single-file or multi-file pulls.
 
 `-p/--create-dirs` (default: on)
   Create any intermediate directories necessary on the host.
@@ -791,6 +791,29 @@ amplifier-digital-twin file-pull <id> <container_path>... <local_path> [flags]
 
 `--timeout`
   Timeout in seconds (default: 120).
+
+For a directory source, `<local_path>` is its **parent destination**:
+`/root/output/` pulled to `./results/` creates `./results/output/`. All directories
+in that tree are created, including empty descendants and missing local parents.
+Relative container paths are relative to the container root. Pulling `/` places
+its contents directly in `<local_path>`, without flattening nested paths. Mixed
+file/directory sources place each file beside the copied directory.
+
+Directory pulls copy regular files and directories using native `find -print0`
+listings. Spaces, tabs, newlines, CR and CRLF in decodable pathnames are preserved.
+Source-root symlinks are unsupported and fail rather than appearing to be empty
+directories. Descendant symlinks and special files are not followed or copied.
+Directory metadata is not preserved; local directories use the caller's defaults.
+
+Each directory's complete listing and existing destination components are
+validated before that tree's first local write. Out-of-tree entries, malformed
+listings, missing directory parents, duplicates and file/directory conflicts are
+rejected. Existing destination symlinks (including dangling links and file leaves)
+are rejected. Existing regular files may be overwritten; unrelated local entries
+are retained. These are path preflight checks, **not race-proof containment or an
+atomic snapshot**. Use stable, trusted source and destination trees. A later
+transfer failure can leave a partial copy, and earlier sources in a mixed pull
+are not rolled back. All-file pulls retain their existing direct Incus behavior.
 
 ```bash
 # Single file
