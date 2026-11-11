@@ -50,6 +50,12 @@ Run these before opening a PR. The reviewer expects evidence in the PR body, not
 
 ## Common pitfalls (from session experience)
 
+- **Destroy without Docker**: fresh launches record `user.dtu.mock-cleanup`.
+  Only exact `none` permits a missing Docker executable during mock inventory;
+  missing/unknown/`required` does not. Persist `required` before any mock setup,
+  including after profile reload. Inventory/removal errors must stop explicit
+  destroy before Incus deletion or receipt retirement. This marker is not
+  authority, evidence about older same-name sidecars, or a legacy migration.
 - **Exec capture faults are not command failures**: post-return spool seek/read
   I/O or decoding errors raise `OutputCaptureError` with the observed return code
   and original cause. Do not retry them as missing gateway/profile data or enter

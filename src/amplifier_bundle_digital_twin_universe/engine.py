@@ -46,6 +46,7 @@ from amplifier_bundle_digital_twin_universe.profile import (
 # at launch time.  ``update`` reads from this path so it does not depend on
 # the original on-host profile file still being present.
 _PROFILE_SNAPSHOT_PATH = "/opt/dtu/profile.yaml"
+_MOCK_CLEANUP_KEY = "user.dtu.mock-cleanup"
 
 # Port used by the local pypiserver inside the container.
 _PYPI_SERVER_PORT = 8081
@@ -797,30 +798,32 @@ def _start_mock_container(
 
 
 def _stop_mock_containers(env_id: str) -> None:
-    """Stop and remove all Docker mock containers for *env_id*."""
-    result = subprocess.run(
-        [
-            "docker",
-            "ps",
-            "-a",
-            "--filter",
-            f"label={_DOCKER_LABEL_ENV_ID}={env_id}",
-            "--format",
-            "{{.Names}}",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if result.returncode != 0:
-        return
-    names = [n.strip() for n in result.stdout.strip().split("\n") if n.strip()]
-    for name in names:
-        subprocess.run(
-            ["docker", "rm", "-f", name],
-            capture_output=True,
-            timeout=30,
+    """Remove observed mocks; missing Docker is safe only for marked launches.
+
+    An empty/missing snapshot or a partial setup result is not evidence of no
+    sidecars. Legacy instances without the marker still require Docker inventory.
+    """
+    try:
+        stdout = _run_host_command(
+            ["docker", "ps", "-a", "--filter",
+             f"label={_DOCKER_LABEL_ENV_ID}={env_id}", "--format", "{{.Names}}"],
+            timeout=10,
         )
+    except FileNotFoundError as exc:
+        # get_config strips whitespace. This exception requires the exact raw
+        # marker, not a normalized unknown value such as " none ".
+        config = incus.query(f"/1.0/instances/{quote(env_id, safe='')}").get("config", {})
+        if config.get(_MOCK_CLEANUP_KEY) == "none":
+            return
+        raise RuntimeError(
+            "Docker is unavailable and mock cleanup cannot be established; "
+            "the Incus environment was not destroyed"
+        ) from exc
+    names = [n.strip() for n in stdout.splitlines() if n.strip()]
+    if any(not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", name) for name in names):
+        raise RuntimeError("Docker returned an invalid mock container name")
+    for name in names:
+        _run_host_command(["docker", "rm", "-f", name], timeout=30)
 
 
 def _setup_services(
@@ -1370,6 +1373,7 @@ def launch(
         "user.dtu.request-id": request_id,
         "user.dtu.launch-state": "provisioning",
         "user.dtu.offline": str(offline).lower(),
+        _MOCK_CLEANUP_KEY: "required" if host_profile.mock_services else "none",
     }
     with admission.locked(ctx) as root:
         previous = admission.read_receipt(root, request_id)
@@ -1529,6 +1533,9 @@ def launch(
         # Mock services -- resolve, build, and start Docker sidecars.
         running_services: list[RunningService] = []
         if profile.mock_services:
+            # The profile is reloaded after creation. Persist possible sidecars
+            # before the first Docker effect; partial setup must stay required.
+            incus.set_config(container_name, _MOCK_CLEANUP_KEY, "required")
             print("Setting up mock services...", file=sys.stderr)
             running_services = _setup_services(container_name, profile)
 
@@ -2242,6 +2249,9 @@ def destroy(
             {"id": container_id},
         )
 
+    # Refuse before destructive effects if mock inventory/removal is uncertain.
+    _stop_mock_containers(container_id)
+
     # Unregister hostname before destroying the container.
     try:
         _hostname = incus.get_config(container_id, "user.dtu.hostname")
@@ -2253,9 +2263,6 @@ def destroy(
             HostnameManager(_hostname.removesuffix(".local"), container_id).unregister()
     except Exception:
         pass  # best-effort
-
-    # Stop mock service Docker containers before destroying the Incus container.
-    _stop_mock_containers(container_id)
 
     incus.stop_container(container_id)
     incus.delete_container(container_id)

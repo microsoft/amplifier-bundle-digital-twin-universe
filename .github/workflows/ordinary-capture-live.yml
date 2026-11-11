@@ -7,6 +7,12 @@ on:
     # qualification before this new workflow exists on the default branch.
     types: [labeled]
   workflow_dispatch:
+    inputs:
+      scenario:
+        description: Reviewed specialist scenario to run once
+        type: choice
+        options: [capture, destroy]
+        default: capture
 
 permissions:
   contents: read
@@ -31,6 +37,7 @@ jobs:
       # https://packages.ubuntu.com/noble/incus (amd64). A missing pin fails closed.
       INCUS_PACKAGE_VERSION: 6.0.0-1ubuntu0.3
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      QUALIFIER: ${{ inputs.scenario == 'destroy' && 'run_destroy_mock_cleanup_live.py' || 'run_ordinary_capture_live.py' }}
     steps:
       - name: Bind disposable hosted paths
         env:
@@ -61,6 +68,43 @@ jobs:
           uv pip install --python "$QUALIFICATION/venv/bin/python" --require-hashes -r "$ARTIFACTS/runtime-requirements.txt"
           uv pip install --python "$QUALIFICATION/venv/bin/python" --no-deps "$ARTIFACTS"/dist/*.whl
           sha256sum "$ARTIFACTS"/dist/*.whl > "$ARTIFACTS/wheel.sha256"
+      - name: Focused destroy predecessor and candidate checks
+        if: inputs.scenario == 'destroy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen
+          git fetch --no-tags origin c07e81c24a8bacedd3e6bd525e2fbef7c4b2e207
+          mkdir "$QUALIFICATION/predecessor"
+          git archive c07e81c24a8bacedd3e6bd525e2fbef7c4b2e207 | tar -x -C "$QUALIFICATION/predecessor"
+          cp tests/unit/test_destroy_mock_cleanup.py "$QUALIFICATION/predecessor/tests/unit/"
+          export QUALIFICATION ARTIFACTS GITHUB_WORKSPACE
+          uv run --no-sync python - <<'PY'
+          import json, os, pathlib, subprocess, sys, xml.etree.ElementTree as ET
+          source = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+          old = pathlib.Path(os.environ["QUALIFICATION"]) / "predecessor"
+          output = pathlib.Path(os.environ["ARTIFACTS"])
+          def check(root, name, files):
+              env = {**os.environ, "PYTHONPATH": str(root / "src"), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
+              xml = output / (name + ".xml")
+              result = subprocess.run([sys.executable, "-m", "pytest", *files, "-q", "--tb=short", "--junitxml=" + str(xml)],
+                                      cwd=root, env=env, capture_output=True, text=True, timeout=300, check=False)
+              (output / (name + ".stdout")).write_text(result.stdout)
+              (output / (name + ".stderr")).write_text(result.stderr)
+              cases = ET.parse(xml).findall(".//testcase")
+              assert cases and not any(c.find("error") is not None or c.find("skipped") is not None for c in cases)
+              failed = [c.get("name") for c in cases if c.find("failure") is not None]
+              return {"exit_code": result.returncode, "cases": len(cases), "failed": failed}
+          selected = ["tests/unit/test_destroy_mock_cleanup.py"]
+          red = check(old, "destroy-predecessor", selected)
+          assert red["exit_code"] == 1
+          assert any(n.startswith("test_no_mock_launch_destroys_without_docker") for n in red["failed"])
+          assert any(n.startswith("test_inventory_failure_never_reports_destroyed") for n in red["failed"])
+          assert any(n.startswith("test_remove_failure_preserves_incus_and_receipt") for n in red["failed"])
+          green = check(source, "destroy-candidate", selected + ["tests/unit/test_output_capture.py", "tests/unit/test_admission.py::test_destroy_checks_owner_and_retires_receipt"])
+          (output / "focused-results.json").write_text(json.dumps({"predecessor": red, "candidate": green}, indent=2))
+          assert green["exit_code"] == 0 and not green["failed"]
+          PY
       - name: Install fixed Incus package in disposable hosted VM only
         shell: bash
         run: |
@@ -83,7 +127,7 @@ jobs:
             CANDIDATE_SHA="$CANDIDATE_SHA" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
             QUALIFICATION="$QUALIFICATION" ARTIFACTS="$ARTIFACTS" \
             LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONUTF8=1 \
-            "$QUALIFICATION/venv/bin/python" "$GITHUB_WORKSPACE/tests/inputs/run_ordinary_capture_live.py" run
+            "$QUALIFICATION/venv/bin/python" "$GITHUB_WORKSPACE/tests/inputs/$QUALIFIER" run
       - name: Remove only this job's owned project resources after evidence
         if: always()
         shell: bash
@@ -96,7 +140,7 @@ jobs:
               CANDIDATE_SHA="$CANDIDATE_SHA" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
               QUALIFICATION="$QUALIFICATION" ARTIFACTS="$ARTIFACTS" \
               LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONUTF8=1 \
-              "$QUALIFICATION/venv/bin/python" "$GITHUB_WORKSPACE/tests/inputs/run_ordinary_capture_live.py" cleanup
+              "$QUALIFICATION/venv/bin/python" "$GITHUB_WORKSPACE/tests/inputs/$QUALIFIER" cleanup
           fi
       - name: Export source identity, raw observations and cleanup
         if: always()
